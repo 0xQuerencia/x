@@ -16,9 +16,22 @@ var slides=[
  ["task","it says what it did","a finished browser task, with the step it took and what it saw on screen to call it done. this run used a scripted stand-in model on a test page."],
  ["result","and the page it landed on","the link was clicked by x through the accessibility tree, on a plain local test page."]
 ];
+var heroImg=$("#hero-img"),heroSrc=$("#hero-src"),heroBusy=0;
+["dictation","models","agent","result"].forEach(function(n){var i=new Image();i.src="img/"+n+".webp"});
+function swapHero(name,alt){
+  var reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
+  var next=new Image();next.src="img/"+name+".webp";
+  var token=++heroBusy;
+  if(!reduce)heroImg.classList.add("out");
+  var ready=next.decode?next.decode().catch(function(){}):Promise.resolve();
+  Promise.all([ready,new Promise(function(r){setTimeout(r,reduce?0:230)})]).then(function(){
+    if(token!==heroBusy)return;
+    heroSrc.srcset="img/"+name+".webp";heroImg.src="img/"+name+".png";heroImg.alt=alt;
+    requestAnimationFrame(function(){heroImg.classList.remove("out")})})}
 $$("#hero-tabs button").forEach(function(b){b.onclick=function(){
+  if(b.classList.contains("on"))return;
   $$("#hero-tabs button").forEach(function(x){x.classList.toggle("on",x===b)});
-  $("#hero-src").srcset="img/"+b.dataset.i+".webp";var im=$("#hero-img");im.src="img/"+b.dataset.i+".png";im.alt=b.dataset.a}});
+  swapHero(b.dataset.i,b.dataset.a)}});
 var host=$(".slides");
 slides.forEach(function(s,i){
   var d=document.createElement("div");d.className="slide"+(i?"":" on");

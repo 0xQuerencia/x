@@ -126,3 +126,7 @@ footer a::after{left:0;right:0}
 .slides{min-height:0}
 .slide{display:none}.slide.on{display:block}
 @media (prefers-reduced-motion:reduce){.pill a::after,footer a::after,.tabs button::after{transition:none}}
+
+.stage img{aspect-ratio:1200/780;transition:opacity .26s ease,transform .32s cubic-bezier(.4,0,.2,1),filter .26s ease}
+.stage img.out{opacity:0;transform:translateY(10px) scale(.985);filter:blur(3px)}
+@media (prefers-reduced-motion:reduce){.stage img{transition:none}}
