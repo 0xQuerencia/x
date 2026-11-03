@@ -268,6 +268,26 @@ fn locale_from_env(lc_all: Option<&str>, lc_messages: Option<&str>, lang: Option
 /// Translate one UI string. Returns the input unchanged for English or for
 /// strings missing from the table, so dynamic values pass through safely.
 pub(crate) fn tr(english: &str) -> &str {
+    branded(lookup(english))
+}
+
+/// X builds show "X" wherever the interface says "Hex". The few distinct strings
+/// that contain the word are rewritten once and kept for the life of the process.
+fn branded(text: &str) -> &str {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    if !crate::app_paths::is_x_build() || !text.contains("Hex") {
+        return text;
+    }
+    static SEEN: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    let Ok(mut seen) = SEEN.get_or_init(Default::default).lock() else {
+        return text;
+    };
+    seen.entry(text.to_owned())
+        .or_insert_with(|| Box::leak(text.replace("Hex", "X").into_boxed_str()))
+}
+
+fn lookup(english: &str) -> &str {
     let column = current();
     if column == ENGLISH {
         return english;

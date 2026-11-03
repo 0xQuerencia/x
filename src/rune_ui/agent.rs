@@ -249,7 +249,11 @@ fn access_row(p: Paint, snapshot: &Snapshot) -> El {
         text(format!(
             "{}{}",
             tr("Screen access"),
-            if snapshot.computer_remote { " (remote)" } else { "" }
+            if snapshot.computer_remote {
+                " (remote)"
+            } else {
+                ""
+            }
         ))
         .key("access-label")
         .font(DESCRIPTION)
