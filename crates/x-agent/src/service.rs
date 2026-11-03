@@ -71,6 +71,8 @@ pub struct Snapshot {
     pub events: Vec<Event>,
     pub workspace: Option<String>,
     pub opencode_found: bool,
+    #[serde(default)]
+    pub trusted_actions: bool,
 }
 
 /// Launches validated actions (faked in tests).
@@ -97,6 +99,7 @@ struct State {
     stop_requested: bool,
     voice_mode: Mode,
     workspace: Option<PathBuf>,
+    trust_actions: bool,
 }
 
 #[derive(Clone)]
@@ -128,6 +131,7 @@ impl Service {
             actions: vec![],
             canceller: None,
             stop_requested: false,
+            trust_actions: false,
             voice_mode: Mode::Actions,
             workspace: None,
         };
@@ -154,6 +158,7 @@ impl Service {
             task: s.task.clone(),
             events: s.events.iter().filter(|e| e.n > since).cloned().collect(),
             workspace: s.workspace.as_ref().map(|p| p.display().to_string()),
+            trusted_actions: s.trust_actions,
             opencode_found: self
                 .opencode_exe
                 .lock()
@@ -176,7 +181,24 @@ impl Service {
 
     // ---- planning ----------------------------------------------------------------------
 
+    /// Opted-in Actions run as soon as they are planned: the registry holds only
+    /// validated launches. Work and anything unplanned always wait for approval.
+    pub fn set_trust_actions(&self, on: bool) {
+        let mut s = self.lock();
+        s.trust_actions = on;
+        emit(&mut s, "info", if on { "Trusted Actions on" } else { "Trusted Actions off" });
+    }
+
     pub fn plan(&self, text: &str, mode: Mode) -> Result<Task, String> {
+        let task = self.plan_task(text, mode)?;
+        if mode == Mode::Actions && self.lock().trust_actions {
+            self.emit("info", "Trusted Actions: running without a prompt");
+            self.approve(task.id)?;
+        }
+        Ok(task)
+    }
+
+    fn plan_task(&self, text: &str, mode: Mode) -> Result<Task, String> {
         let text = text.trim();
         if text.is_empty() || text.chars().count() > MAX_INPUT {
             return Err("Enter a task of 1-1,500 characters".into());
@@ -673,6 +695,20 @@ mod tests {
             s.approve(t.id).is_err(),
             "a finished task cannot be re-approved"
         );
+    }
+
+    #[test]
+    fn trusted_actions_run_at_once_but_work_and_bad_input_still_wait() {
+        let (s, _, l) = rig();
+        s.set_trust_actions(true);
+        s.plan("open firefox", Mode::Actions).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        assert_eq!(l.launched.lock().unwrap().len(), 1);
+        assert!(s.plan("run rm -rf /", Mode::Actions).is_err());
+        assert_eq!(l.launched.lock().unwrap().len(), 1);
+        s.set_trust_actions(false);
+        s.plan("open firefox", Mode::Actions).unwrap();
+        assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
     }
 
     #[test]

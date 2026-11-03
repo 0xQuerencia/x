@@ -228,6 +228,8 @@ pub enum AgentAction {
     Approve { id: u64 },
     Stop,
     Workspace { path: String },
+    /// Run validated Actions as soon as they are planned (`on`), or ask first (`off`).
+    Trust { on: bool },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

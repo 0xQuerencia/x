@@ -31,8 +31,37 @@ pub fn service() -> &'static Service {
             |_| "hex".into(),
             |path| path.display().to_string().trim_end_matches(" (deleted)").to_string(),
         );
-        Service::new(Arc::new(HexCli { exe }), Arc::new(RealLauncher), opencode_exe())
+        let service = Service::new(Arc::new(HexCli { exe }), Arc::new(RealLauncher), opencode_exe());
+        service.set_trust_actions(trust_file().is_some_and(|path| path.is_file()));
+        service
     })
+}
+
+/// Present when the person opted into trusted Actions. It lives beside the other trust
+/// files in the data folder, so nothing in a config can switch it on.
+fn trust_file() -> Option<PathBuf> {
+    crate::app_paths::support_dir().ok().map(|dir| dir.join("x-trusted-actions"))
+}
+
+fn set_trust(on: bool) -> ControlReply {
+    let Some(path) = trust_file() else {
+        return ControlReply::error("failed", "the data folder is unavailable");
+    };
+    let saved = if on {
+        std::fs::write(&path, b"1")
+    } else {
+        std::fs::remove_file(&path).or_else(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => Ok(()),
+            _ => Err(error),
+        })
+    };
+    match saved {
+        Ok(()) => {
+            service().set_trust_actions(on);
+            ControlReply::done(if on { "Trusted Actions on" } else { "Trusted Actions off" })
+        }
+        Err(error) => ControlReply::error("failed", format!("couldn't save the setting: {error}")),
+    }
 }
 
 fn snapshot(since: u64) -> ControlReply {
@@ -83,6 +112,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
             background(Service::cancel);
             ControlReply::done("Stop requested")
         }
+        AgentAction::Trust { on } => set_trust(on),
         AgentAction::Workspace { path } => match svc.set_workspace(&path) {
             Ok(shown) => ControlReply::done(format!("Workspace is {shown}")),
             Err(error) => ControlReply::error("refused", error),

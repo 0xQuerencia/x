@@ -355,6 +355,14 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// `on` runs allowlisted Actions (open an app, open or search a public site) as soon as
+    /// they are planned; `off` asks first. Work always asks.
+    Trust {
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// The project folder Work runs in (never `/` or your home directory).
     Workspace {
         path: String,
@@ -524,6 +532,9 @@ pub fn run(command: ControlCli) -> u8 {
                 }
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Trust { state, output } => {
+                    (AgentAction::Trust { on: state == "on" }, output)
+                }
                 AgentCommand::Workspace { path, output } => {
                     let absolute = std::path::absolute(&path)
                         .map_or(path, |p| p.display().to_string());
