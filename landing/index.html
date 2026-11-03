@@ -11,6 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%231b1b1b%27/%3E%3Cpath d=%27M9 9l14 14M23 9L9 23%27 stroke=%27%2349a3e3%27 stroke-width=%273.4%27 stroke-linecap=%27round%27/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -19,14 +20,20 @@
 </nav>
 
 <header id="top" class="hero">
-  <h1>talk. it types.</h1>
-  <p class="sub">private voice dictation for <code class="c-blue">linux</code>. hold a key, speak, and the words land wherever your cursor is.</p>
+  <h1>talk. it types. say a word, it acts.</h1>
+  <p class="sub">private voice dictation for <code class="c-blue">linux</code> that can also act. speak and it types. start with your wake word and it opens apps and drives your browser.</p>
   <a class="btn" href="https://github.com/0xQuerencia/x/releases/tag/v0.1.0-alpha.1">
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8m0 0L5 7m3 3 3-3M3 13h10"/></svg>
     download for linux <span class="ver">v0.1.0-alpha.1</span>
   </a>
   <p class="tiny">pre-release · built and tested on arch with hyprland</p>
-  <div class="stage"><picture><source srcset="img/dictation.webp" type="image/webp"><img src="img/dictation.png" width="1200" height="780" alt="the x settings window: shortcut, speech model, vocabulary and microphone"></picture></div>
+  <div class="tabs" role="tablist" id="hero-tabs">
+    <button role="tab" class="on" data-i="dictation" data-a="the x settings window: shortcut, speech model, vocabulary and microphone">dictation</button>
+    <button role="tab" data-i="models" data-a="the speech model picker comparing wait, wrong words and languages">speech models</button>
+    <button role="tab" data-i="agent" data-a="the x agent pane after a finished browser task">agent</button>
+    <button role="tab" data-i="result" data-a="a browser page x opened by clicking a link">browser</button>
+  </div>
+  <div class="stage"><picture><source id="hero-src" srcset="img/dictation.webp" type="image/webp"><img id="hero-img" src="img/dictation.png" width="1200" height="780" alt="the x settings window: shortcut, speech model, vocabulary and microphone"></picture></div>
   <p class="tiny cap">real screenshot of x on arch + hyprland</p>
 </header>
 
@@ -39,15 +46,23 @@
   <p>the first run downloads a model. after that your voice never leaves the computer, and a name list in <code class="c-purple">vocabulary</code> helps the models that read it (the picker marks which).</p>
 </section>
 
+<section id="agent">
+  <p class="num"><i>2</i>the agent</p>
+  <h2>say a word, and it does things.</h2>
+  <p>on top of dictation there's an agent. it's off until you turn on the labs switch. start a sentence with your wake word (<code class="c-orange">friday</code> by default, or any single word you pick) and x treats it as a command instead of text.</p>
+  <p>it can open apps, search, switch workspaces, start <a href="https://opencode.ai">opencode</a> in a fresh folder, and operate a browser you've allowed. for browser work it reads the page through the accessibility tree, acts, and only says done when it can see the result.</p>
+  <p>page text is data, not orders. <span class="chip">it can't leave its list of steps</span>, and it never types into password fields or presses send, buy or delete.</p>
+</section>
+
 <section>
-  <p class="num"><i>2</i>speech models</p>
+  <p class="num"><i>3</i>speech models</p>
   <h2>pick the one that fits how you talk.</h2>
   <p><code class="c-green">parakeet</code> writes while you speak, so there is no wait after you let go. <code class="c-blue">cohere transcribe</code> has the fewest wrong words. <code class="c-orange">whisper large-v3-turbo</code> covers 41 languages and reads your vocabulary list.</p>
   <p>the model picker shows the wait, the error rate and the languages for each one before you download anything. there are more in the list, and you can <span class="chip">add your own gguf file</span>.</p>
 </section>
 
 <section id="install">
-  <p class="num"><i>3</i>installation</p>
+  <p class="num"><i>4</i>installation</p>
   <h2>arch first. one script, or the aur.</h2>
   <p><code class="c-blue">x86_64</code> only for now. i've only run it on arch with hyprland, so treat other setups as untested.</p>
   <div class="codetabs">
@@ -64,14 +79,6 @@ cd packaging/aur-x &amp;&amp; makepkg -si</pre></div>
   <p>x keeps its own data in <code class="c-red">~/.local/share/x</code> and runs as <code class="c-teal">x.service</code>, so it can sit beside a normal hex install. bind your dictation key to <code class="c-purple">x dictation toggle</code>.</p>
 </section>
 
-<section id="agent">
-  <p class="num"><i>4</i>the agent</p>
-  <h2>and when you want more, say a word.</h2>
-  <p>dictation is the main thing. on top of it there's an optional agent, off until you turn on the labs switch. start a sentence with your wake word (<code class="c-orange">friday</code> by default, or any single word you pick) and x treats it as a command instead of text.</p>
-  <p>it can open apps, search, switch workspaces, start <a href="https://opencode.ai">opencode</a> in a fresh folder, and operate a browser you've allowed. for browser work it reads the page through the accessibility tree, acts, and only says done when it can see the result.</p>
-  <p>page text is data, not orders. <span class="chip">it can't leave its list of steps</span>, and it never types into password fields or presses send, buy or delete.</p>
-</section>
-
 <section>
   <p class="num"><i>5</i>what you get</p>
   <h2>what it can do today.</h2>
@@ -80,10 +87,10 @@ cd packaging/aur-x &amp;&amp; makepkg -si</pre></div>
     <li><svg viewBox="0 0 16 16"><rect x="3" y="6" width="10" height="5" rx="1.5"/><path d="M5 8.5h6"/></svg>hold-to-talk or tap-to-toggle, on a shortcut you choose</li>
     <li><svg viewBox="0 0 16 16"><path d="M3 4h10v8H3zM3 7h10"/></svg>a vocabulary list, and a history you can clear</li>
     <li><svg viewBox="0 0 16 16"><path d="M8 2v7M5 6l3 3 3-3M3 13h10"/></svg>nothing is sent anywhere for transcription</li>
-    <li><svg viewBox="0 0 16 16"><path d="M3 8h10M8 3v10"/></svg>optional: open and switch apps, jump workspaces on hyprland</li>
-    <li><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 7l2 1.5L5 10"/></svg>optional: start opencode in a fresh folder</li>
-    <li><svg viewBox="0 0 16 16"><path d="M2 8c2-3 4-4 6-4s4 1 6 4c-2 3-4 4-6 4S4 11 2 8z"/><circle cx="8" cy="8" r="1.6"/></svg>optional: click, type and navigate in a browser you've granted</li>
-    <li><svg viewBox="0 0 16 16"><path d="M3 8l3 3 7-7"/></svg>optional: done means it saw the result on screen</li>
+    <li><svg viewBox="0 0 16 16"><path d="M3 8h10M8 3v10"/></svg>open and switch apps, jump workspaces on hyprland</li>
+    <li><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 7l2 1.5L5 10"/></svg>start opencode in a fresh folder</li>
+    <li><svg viewBox="0 0 16 16"><path d="M2 8c2-3 4-4 6-4s4 1 6 4c-2 3-4 4-6 4S4 11 2 8z"/><circle cx="8" cy="8" r="1.6"/></svg>click, type and navigate in a browser you've granted</li>
+    <li><svg viewBox="0 0 16 16"><path d="M3 8l3 3 7-7"/></svg>done means it saw the result on screen</li>
     <li><svg viewBox="0 0 16 16"><path d="M8 2l5 2v4c0 3-2 5-5 6-3-1-5-3-5-6V4z"/></svg>risky steps ask first, and a stop button always works</li>
   </ul>
 </section>

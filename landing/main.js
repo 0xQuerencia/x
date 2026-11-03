@@ -16,6 +16,9 @@ var slides=[
  ["task","it says what it did","a finished browser task, with the step it took and what it saw on screen to call it done. this run used a scripted stand-in model on a test page."],
  ["result","and the page it landed on","the link was clicked by x through the accessibility tree, on a plain local test page."]
 ];
+$$("#hero-tabs button").forEach(function(b){b.onclick=function(){
+  $$("#hero-tabs button").forEach(function(x){x.classList.toggle("on",x===b)});
+  $("#hero-src").srcset="img/"+b.dataset.i+".webp";var im=$("#hero-img");im.src="img/"+b.dataset.i+".png";im.alt=b.dataset.a}});
 var host=$(".slides");
 slides.forEach(function(s,i){
   var d=document.createElement("div");d.className="slide"+(i?"":" on");
