@@ -32,13 +32,15 @@ Allowed steps:\n\
 {{\"kind\":\"url\",\"target\":\"https://...\"}} (public https only)\n\
 {{\"kind\":\"search\",\"target\":\"google|youtube|github|wikipedia|...\",\"query\":\"...\"}}\n\
 {{\"kind\":\"type\",\"text\":\"plain text, one line\"}} (types into the window an app step just opened)\n\
-{{\"kind\":\"session\",\"goal\":\"...\"}} (a temporary coding-agent session in a fresh folder for \
-coding, writing or research work; it must be the only step)\n\
+{{\"kind\":\"opencode\"}} (opens the OpenCode coding agent interactively in a new terminal and temporary folder; use it \
+when they just want an OpenCode session)\n\
+{{\"kind\":\"session\",\"goal\":\"...\"}} (a headless coding-agent run in a fresh folder, only when they name a \
+concrete task to do; it must be the only step)\n\
 Examples:\n\
 Request open a terminal and type hello gives {{\"steps\":[{{\"kind\":\"app\",\"target\":\"terminal\"}},{{\"kind\":\"type\",\"text\":\"hello\"}}]}}\n\
 Request look up rust lifetimes on youtube gives {{\"steps\":[{{\"kind\":\"search\",\"target\":\"youtube\",\"query\":\"rust lifetimes\"}}]}}\n\
 Request go back to the browser gives {{\"steps\":[{{\"kind\":\"focus\",\"target\":\"firefox\"}}]}}\n\
-Every step has a kind of exactly app, focus, workspace, url, search, type or session.\n\
+Every step has a kind of exactly app, focus, workspace, url, search, type, opencode or session.\n\
 {dictation}At most {max} steps. You cannot run commands, press Enter, delete, install, send or buy \
 anything. If the request needs anything else, reply {{\"steps\":[]}}.\n\
 Request: {utterance:?}",

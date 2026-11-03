@@ -103,6 +103,8 @@ pub enum Action {
     Workspace {
         number: u8,
     },
+    /// OpenCode's own interface in a new terminal, started in a fresh temporary folder.
+    Opencode,
     /// A temporary OpenCode session in a fresh folder. It runs as a Work task, never as
     /// an Action step, and must be the only step.
     Session {
@@ -129,6 +131,7 @@ impl Action {
         match self {
             Self::App { target } => format!("Open {target}"),
             Self::Type { text } => format!("Type \"{text}\" into the focused window"),
+            Self::Opencode => "Open OpenCode in a new temporary folder".to_string(),
             Self::Focus { target } => format!("Switch to {target}"),
             Self::Workspace { number } => format!("Go to workspace {number}"),
             Self::Session { goal } => format!("Start a temporary OpenCode session: {goal}"),
@@ -147,6 +150,7 @@ impl Action {
             Self::App { target } => {
                 lookup(APPS, target).ok_or("Unapproved app")?;
             }
+            Self::Opencode => {}
             Self::Focus { target } => {
                 lookup(APPS, target).ok_or("Unapproved app")?;
             }
@@ -219,6 +223,7 @@ impl Action {
                 number.to_string(),
             ]),
             Self::Session { .. } => Err("A session runs as Work, not as an Action".into()),
+            Self::Opencode => opencode_argv(&session_dir("opencode"), resolve),
             Self::Type { text } => {
                 let typer = resolve("wtype").ok_or("wtype not found (install wtype)")?;
                 Ok(vec![typer, "--".into(), text.clone()])
@@ -241,14 +246,21 @@ impl Action {
     pub fn launches_window(&self) -> bool {
         matches!(
             self,
-            Self::App { .. } | Self::Url { .. } | Self::Search { .. }
+            Self::App { .. } | Self::Url { .. } | Self::Search { .. } | Self::Opencode
         )
     }
 
     /// Validate, then launch detached. Success means *launched*, not *page loaded*.
     pub fn execute(&self) -> Result<String, String> {
         let valid = self.clone().validate()?;
-        let argv = valid.argv(&|name| which(name))?;
+        let argv = if matches!(valid, Self::Opencode) {
+            let dir = session_dir("opencode");
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+            opencode_argv(&dir, &|name| which(name))?
+        } else {
+            valid.argv(&|name| which(name))?
+        };
         let (exe, args) = argv.split_first().ok_or("empty command")?;
         if let Self::Type { text } = &valid {
             let status = Command::new(exe)
@@ -302,6 +314,56 @@ impl Action {
 
 /// Hyprland's Lua config takes `hl.dsp.*` expressions; older ones take named dispatchers.
 /// Both are built here from allowlisted values only. The first the desktop accepts wins.
+fn session_dir(prefix: &str) -> std::path::PathBuf {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join("x-sessions")
+        .join(format!("{prefix}-{secs}"))
+}
+
+/// A terminal that starts in `dir` running OpenCode. The terminals listed here are the
+/// ones whose "start in this folder" flag is known; any other is refused, not guessed.
+fn opencode_argv(
+    dir: &std::path::Path,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Result<Vec<String>, String> {
+    let opencode = resolve("opencode")
+        .or_else(|| {
+            dirs::home_dir()
+                .map(|h| h.join(".opencode/bin/opencode"))
+                .filter(|p| p.is_file())
+                .map(|p| p.display().to_string())
+        })
+        .ok_or("OpenCode not found")?;
+    let terminal = exe_for("terminal", resolve)?;
+    let dir = dir.display().to_string();
+    let name = std::path::Path::new(&terminal)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    let mut argv = vec![terminal.clone()];
+    match name {
+        "kitty" => argv.extend(["--directory".into(), dir, opencode]),
+        "foot" => argv.extend(["--working-directory".into(), dir, opencode]),
+        "alacritty" => argv.extend(["--working-directory".into(), dir, "-e".into(), opencode]),
+        other => return Err(format!("X does not know how to start {other} in a folder")),
+    }
+    Ok(argv)
+}
+
+/// "open an OpenCode session": the person wants OpenCode itself, with no task named.
+fn wants_opencode_terminal(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let mentions = lower.contains("opencode") || lower.contains("open code");
+    mentions
+        && lower.contains("session")
+        && !lower.contains(" to ")
+        && lower.split_whitespace().count() <= 12
+}
+
 fn desktop_step(exe: &str, legacy: &[String], lua: &str) -> Result<(), String> {
     let mut last = String::new();
     for args in [
@@ -534,6 +596,9 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
             browser,
         };
         return action.validate().ok().map(|a| vec![a]);
+    }
+    if wants_opencode_terminal(text) {
+        return Some(vec![Action::Opencode]);
     }
     if let Some(goal) = strip_prefix_ci(
         text,
@@ -789,6 +854,28 @@ mod tests {
             text: "--help".into(),
         };
         assert_eq!(dash.argv(&fake_path).unwrap()[1], "--");
+    }
+
+    #[test]
+    fn an_opencode_session_request_opens_opencode_in_a_terminal_not_a_headless_run() {
+        for said in [
+            "Open code session. Start a open code session",
+            "start an opencode session",
+            "spin up an OpenCode session",
+        ] {
+            assert_eq!(plan_rules(said), Some(vec![Action::Opencode]), "{said}");
+        }
+        assert!(matches!(
+            plan_rules("start a temporary session to write a poem").unwrap()[0],
+            Action::Session { .. }
+        ));
+        let dir = std::path::Path::new("/home/u/x-sessions/s");
+        let argv = opencode_argv(dir, &|n| Some(format!("/usr/bin/{n}"))).unwrap();
+        assert_eq!(
+            argv[..3],
+            ["/usr/bin/kitty", "--directory", "/home/u/x-sessions/s"]
+        );
+        assert!(is_low_risk(&[Action::Opencode]));
     }
 
     #[test]

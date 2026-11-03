@@ -247,7 +247,7 @@ impl Service {
         match planner.plan(text, smart) {
             Ok(tools::Reply::Steps(actions)) if !actions.is_empty() => Ok(Some(actions)),
             Ok(tools::Reply::Dictation) => Err(tools::NOT_A_COMMAND.into()),
-            Ok(_) => Ok(None),
+            Ok(_) => Err(format!("X can't do that yet: {}", text.trim())),
             Err(error) => {
                 self.emit("error", &format!("Planner: {error}"));
                 Ok(None)
