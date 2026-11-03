@@ -70,6 +70,8 @@ pub enum Pane {
     Modes,
     History,
     Meetings,
+    /// X's Agent pane (Labs › X agent).
+    Agent,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -230,6 +232,10 @@ pub enum AgentAction {
     Workspace { path: String },
     /// Run validated Actions as soon as they are planned (`on`), or ask first (`off`).
     Trust { on: bool },
+    /// What the dictation shortcut's transcript becomes: dictate, actions, work or auto.
+    Voice { mode: String },
+    /// Rerun the last Work goal with one refused command allowed for that run only.
+    Allow { index: usize },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

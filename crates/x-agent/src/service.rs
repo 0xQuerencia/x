@@ -54,6 +54,8 @@ pub struct Task {
     pub summary: Option<String>,
     pub changed_files: Option<Vec<String>>,
     pub workspace: Option<String>,
+    /// Commands OpenCode asked to run that X refused; each can be allowed for one rerun.
+    pub blocked: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -100,6 +102,7 @@ struct State {
     voice_mode: Mode,
     workspace: Option<PathBuf>,
     trust_actions: bool,
+    grants: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -132,6 +135,7 @@ impl Service {
             canceller: None,
             stop_requested: false,
             trust_actions: false,
+            grants: vec![],
             voice_mode: Mode::Actions,
             workspace: None,
         };
@@ -186,7 +190,15 @@ impl Service {
     pub fn set_trust_actions(&self, on: bool) {
         let mut s = self.lock();
         s.trust_actions = on;
-        emit(&mut s, "info", if on { "Trusted Actions on" } else { "Trusted Actions off" });
+        emit(
+            &mut s,
+            "info",
+            if on {
+                "Trusted Actions on"
+            } else {
+                "Trusted Actions off"
+            },
+        );
     }
 
     pub fn plan(&self, text: &str, mode: Mode) -> Result<Task, String> {
@@ -207,6 +219,7 @@ impl Service {
         if s.phase.is_busy() {
             return Err(busy(s.phase));
         }
+        s.grants.clear();
         let (steps, actions, workspace) = match mode {
             Mode::Actions => {
                 let actions = tools::plan_rules(text).ok_or(
@@ -261,6 +274,7 @@ impl Service {
             summary: None,
             changed_files: None,
             workspace,
+            blocked: vec![],
         };
         s.phase = Phase::AwaitingApproval;
         s.actions = actions;
@@ -300,6 +314,35 @@ impl Service {
             Mode::Work => me.run_work(&task),
         });
         Ok(())
+    }
+
+    /// Allows one command OpenCode was refused, for one rerun of the same goal. The rerun
+    /// is planned like any other Work task: it still waits for approval.
+    pub fn allow_once(&self, index: usize) -> Result<Task, String> {
+        let (text, command) = {
+            let s = self.lock();
+            if s.phase.is_busy() {
+                return Err(busy(s.phase));
+            }
+            let task = s
+                .task
+                .as_ref()
+                .filter(|t| t.mode == Mode::Work)
+                .ok_or("No Work task to rerun")?;
+            let command = task
+                .blocked
+                .get(index)
+                .ok_or("No such blocked command")?
+                .clone();
+            (task.text.clone(), command)
+        };
+        if command.contains(['*', '?', '\n']) {
+            return Err("That command contains wildcards and cannot be allowed".into());
+        }
+        let task = self.plan_task(&text, Mode::Work)?;
+        self.lock().grants = vec![command.clone()];
+        self.emit("info", &format!("Allowing `{command}` for this rerun only"));
+        Ok(task)
     }
 
     fn run_actions(&self, actions: &[Action]) {
@@ -360,8 +403,18 @@ impl Service {
         }
         self.set_step(0, "running");
         let me = self.clone();
-        let on_event: opencode::OnEvent = Arc::new(move |k, t| me.emit(k, t));
-        let run = match Run::start(RunConfig::new(exe, task.text.clone(), ws), on_event) {
+        let on_event: opencode::OnEvent = Arc::new(move |k, t| {
+            let blocked = t
+                .strip_prefix("Blocked bash: ")
+                .filter(|_| k == "permission");
+            if let (Some(command), Some(task)) = (blocked, me.lock().task.as_mut()) {
+                task.blocked.push(command.to_string());
+            }
+            me.emit(k, t)
+        });
+        let mut config = RunConfig::new(exe, task.text.clone(), ws);
+        config.allow_commands = std::mem::take(&mut self.lock().grants);
+        let run = match Run::start(config, on_event) {
             Ok(r) => r,
             Err(e) => {
                 self.set_step(0, "failed");
@@ -843,6 +896,54 @@ mod tests {
         );
         s.set_workspace(repo.to_str().unwrap()).unwrap();
         (s, dir, repo)
+    }
+
+    #[test]
+    fn a_refused_command_is_reported_and_can_be_allowed_for_one_rerun_only() {
+        let (s, _d, repo) = work_rig(
+            "printf '%s' \"$OPENCODE_CONFIG_CONTENT\" > policy.json\necho '{\"type\":\"tool_use\",\"part\":{\"tool\":\"bash\",\"state\":{\"status\":\"error\",\"error\":\"The user rejected permission to use this specific tool call.\",\"input\":{\"command\":\"make deploy\"}}}}'",
+        );
+        let t = s.plan("ship it", Mode::Work).unwrap();
+        s.approve(t.id).unwrap();
+        let done = wait_for(&s, |x| x.phase == Phase::Completed).task.unwrap();
+        assert_eq!(done.blocked, vec!["make deploy".to_string()]);
+        let first = std::fs::read_to_string(repo.join("policy.json")).unwrap();
+        assert!(
+            !first.contains("make deploy"),
+            "not allowed before the person says so"
+        );
+        assert!(first.contains("\"external_directory\":\"deny\""));
+
+        let rerun = s.allow_once(0).unwrap();
+        assert_eq!(
+            s.snapshot(0).phase,
+            Phase::AwaitingApproval,
+            "the rerun still asks"
+        );
+        s.approve(rerun.id).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        let second = std::fs::read_to_string(repo.join("policy.json")).unwrap();
+        assert!(second.contains("\"make deploy\":\"allow\""));
+
+        let again = s.plan("ship it", Mode::Work).unwrap();
+        s.approve(again.id).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        let third = std::fs::read_to_string(repo.join("policy.json")).unwrap();
+        assert!(
+            !third.contains("\"make deploy\":\"allow\""),
+            "the grant lasts one run"
+        );
+    }
+
+    #[test]
+    fn wildcard_commands_cannot_be_allowed() {
+        let (s, _d, _) = work_rig(
+            "echo '{\"type\":\"tool_use\",\"part\":{\"tool\":\"bash\",\"state\":{\"status\":\"error\",\"error\":\"rejected permission\",\"input\":{\"command\":\"rm -rf *\"}}}}'",
+        );
+        let t = s.plan("clean", Mode::Work).unwrap();
+        s.approve(t.id).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        assert!(s.allow_once(0).is_err());
     }
 
     #[test]

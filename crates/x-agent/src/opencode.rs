@@ -88,6 +88,25 @@ pub fn summarize_event(obj: &serde_json::Value) -> (String, String) {
     }
     if let Some(tool) = part.and_then(|p| p.get("tool")).and_then(|t| t.as_str()) {
         let state = part.and_then(|p| p.get("state"));
+        let refused = state
+            .and_then(|s| s.get("error"))
+            .and_then(|e| e.as_str())
+            .is_some_and(|e| e.contains("rejected permission"));
+        if refused {
+            let command = state
+                .and_then(|s| s.get("input"))
+                .and_then(|i| {
+                    i.get("command")
+                        .or_else(|| i.get("filePath"))
+                        .or_else(|| i.get("url"))
+                })
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            return (
+                "permission".into(),
+                clip(&format!("Blocked {tool}: {command}")),
+            );
+        }
         let field = |k: &str| {
             state
                 .and_then(|s| s.get(k))
@@ -181,7 +200,41 @@ pub struct RunConfig {
     pub prompt: String,
     pub workspace: PathBuf,
     pub stall_after: Duration,
+    /// Exact shell commands the person allowed for this one run.
+    pub allow_commands: Vec<String>,
 }
+
+/// Commands that only read or check a project; everything else OpenCode wants to run is
+/// refused (a headless run cannot ask) and reported so the person can allow it once.
+const SAFE_COMMANDS: &[&str] = &[
+    "ls*",
+    "pwd",
+    "cat *",
+    "head *",
+    "tail *",
+    "wc *",
+    "grep *",
+    "rg *",
+    "find * -name *",
+    "git status*",
+    "git diff*",
+    "git log*",
+    "git show*",
+    "git branch",
+    "cargo check*",
+    "cargo test*",
+    "cargo clippy*",
+    "cargo fmt --check*",
+    "npm test*",
+    "npm run test*",
+    "pnpm test*",
+    "yarn test*",
+    "pytest*",
+    "python -m pytest*",
+    "go test*",
+    "go vet*",
+    "make test*",
+];
 
 impl RunConfig {
     pub fn new(exe: PathBuf, prompt: impl Into<String>, workspace: PathBuf) -> Self {
@@ -190,7 +243,35 @@ impl RunConfig {
             prompt: prompt.into(),
             workspace,
             stall_after: STALL_AFTER,
+            allow_commands: vec![],
         }
+    }
+
+    /// OpenCode config merged over the person's own for this run only: edits stay in the
+    /// workspace, unknown shell commands and other directories are refused, secrets stay unread.
+    pub fn policy(&self) -> String {
+        let mut bash = serde_json::Map::new();
+        bash.insert("*".into(), "ask".into());
+        for command in SAFE_COMMANDS {
+            bash.insert((*command).into(), "allow".into());
+        }
+        for command in self
+            .allow_commands
+            .iter()
+            .filter(|c| !c.contains(['*', '?', '\n']))
+        {
+            bash.insert(command.clone(), "allow".into());
+        }
+        serde_json::json!({
+            "permission": {
+                "bash": bash,
+                "edit": "allow",
+                "external_directory": "deny",
+                "webfetch": "ask",
+                "read": { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.pem": "deny", "*id_rsa*": "deny" },
+            }
+        })
+        .to_string()
     }
 
     /// The exact argv. There is deliberately no way to add `--auto`.
@@ -240,6 +321,7 @@ impl Run {
                 .args(&args)
                 .current_dir(&cfg.workspace)
                 .env("PWD", &cfg.workspace)
+                .env("OPENCODE_CONFIG_CONTENT", cfg.policy())
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())

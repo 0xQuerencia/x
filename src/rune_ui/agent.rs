@@ -261,6 +261,20 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             agent_host::handle(AgentAction::Stop);
         }));
     }
+    if !snapshot.phase.is_busy() {
+        for (index, command) in task.blocked.iter().enumerate() {
+            let command = command.clone();
+            card = card.child(button(
+                p,
+                &format!("agent-allow{index}"),
+                &format!("{} `{command}`", tr("Allow once and rerun")),
+                ButtonKind::Secondary,
+                move |_: &mut Ui, _| {
+                    agent_host::handle(AgentAction::Allow { index });
+                },
+            ));
+        }
+    }
     if let Some(error) = &task.error {
         card = card.child(text(error.clone()).key("task-error").font(DESCRIPTION).color(p.danger()));
     }

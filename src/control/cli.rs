@@ -363,6 +363,22 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// What your dictation shortcut does with speech: `dictate` types it (Hex as usual),
+    /// `actions` or `work` send it to X, `auto` sends only speech that starts with "x" or
+    /// "hey x" and types the rest.
+    Voice {
+        #[arg(value_parser = ["dictate", "actions", "work", "auto"])]
+        mode: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Rerun the last Work goal with command number `index` (from `status`, 0 first) that
+    /// OpenCode was refused allowed for that one run. The rerun still asks for approval.
+    Allow {
+        index: usize,
+        #[command(flatten)]
+        output: Output,
+    },
     /// The project folder Work runs in (never `/` or your home directory).
     Workspace {
         path: String,
@@ -532,6 +548,8 @@ pub fn run(command: ControlCli) -> u8 {
                 }
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Allow { index, output } => (AgentAction::Allow { index }, output),
+                AgentCommand::Voice { mode, output } => (AgentAction::Voice { mode }, output),
                 AgentCommand::Trust { state, output } => {
                     (AgentAction::Trust { on: state == "on" }, output)
                 }

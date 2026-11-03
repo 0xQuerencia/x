@@ -207,7 +207,9 @@ impl DictationOutput {
         }
         let printed = paster.is_none();
         if let Some(paster) = paster {
-            paster.paste(&processed.text)?;
+            if !crate::agent_host::intercept(&processed.text) {
+                paster.paste(&processed.text)?;
+            }
         }
         if let Some(history) = &self.history {
             let mut draft = crate::dictation::modes::history_draft(
