@@ -71,7 +71,9 @@ use rune::{
     Anim, AppSpec, Cx, El, Icon, ScrollSpec, TextEdit, Tx, Waker, col, el, icon, row, text,
 };
 
+use crate::agent_host;
 use crate::app_settings::{AppSettings, HotkeyBinding, HotkeyKey, HotkeyModifiers, ModifierSide};
+use crate::control::AgentAction;
 use crate::desktop::host::{
     DesktopAction, DesktopGrantedShortcut, DesktopListenerSnapshot, DesktopShortcuts,
     DesktopTranscriptionSnapshot, DesktopUpdateStatus,
@@ -1163,6 +1165,9 @@ fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     } else if ui.meetings.renaming.is_some() || ui.meetings.delete_armed.is_some() {
         ui.meetings.renaming = None;
         ui.meetings.delete_armed = None;
+        true
+    } else if ui.pane == Pane::Agent && ui.agent.is_busy() {
+        agent_host::handle(AgentAction::Stop);
         true
     } else {
         false

@@ -292,7 +292,7 @@ impl Service {
             Ok(_) => Err(format!("X can't do that yet: {}", text.trim())),
             Err(error) => {
                 self.emit("error", &format!("Planner: {error}"));
-                Ok(None)
+                Err(format!("Planner failed: {error}"))
             }
         }
     }
@@ -495,6 +495,7 @@ impl Service {
             set_phase(&mut s, Phase::Running);
             s.stop_requested = false;
             emit(&mut s, "info", "Approved");
+            emit(&mut s, "approval", &format!("approved task {task_id}"));
             (s.task.clone().ok_or("no task")?, s.actions.clone())
         };
         let me = self.clone();
@@ -763,8 +764,10 @@ impl Service {
         let mut s = self.lock();
         match s.phase {
             Phase::AwaitingApproval => {
+                let id = s.task.as_ref().map(|task| task.id).unwrap_or_default();
                 set_phase(&mut s, Phase::Cancelled);
                 emit(&mut s, "info", "Plan discarded");
+                emit(&mut s, "approval", &format!("discarded task {id}"));
             }
             Phase::Running => {
                 s.stop_requested = true;
@@ -1075,7 +1078,7 @@ mod tests {
                 elements: vec![crate::desktop::Element {
                     id: "e1".into(),
                     reference: "@s:e1".into(),
-                    role: "button".into(),
+                    role: "link".into(),
                     name: "Press me".into(),
                     value: String::new(),
                     actions: vec!["Click".into()],
@@ -1184,6 +1187,11 @@ mod tests {
         assert_eq!(
             s.plan_smart("remember to buy milk tomorrow").unwrap_err(),
             tools::NOT_A_COMMAND
+        );
+        s.set_planner(Some(Arc::new(FakePlanner(Err("model not loaded".into())))));
+        assert_eq!(
+            s.plan_smart("open a pull request").unwrap_err(),
+            "Planner failed: model not loaded"
         );
         assert!(s.snapshot(0).task.is_none());
         s.set_planner(None);

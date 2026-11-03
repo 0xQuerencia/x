@@ -119,21 +119,41 @@ impl Observation {
 
     /// The model-facing text. Only address and search field contents are kept.
     pub fn render(&self) -> String {
-        let mut out = format!("window: {:?}\ncontrols:\n", self.title);
+        let mut out = format!("window: {:?}\ncontrols:\n", prompt_text(&self.title));
         for e in &self.elements {
             let value = if e.value.is_empty() {
                 String::new()
             } else {
-                format!(" value={:?}", e.value)
+                format!(" value={:?}", prompt_text(&e.value))
             };
-            out.push_str(&format!("{} {} {:?}{value}\n", e.id, e.role, e.name));
+            out.push_str(&format!(
+                "{} {} {:?}{value}\n",
+                e.id,
+                e.role,
+                prompt_text(&e.name)
+            ));
         }
         out.push_str("text:\n");
         for t in &self.texts {
-            out.push_str(&format!("- {t}\n"));
+            out.push_str(&format!("- {}\n", prompt_text(t)));
         }
         out
     }
+}
+
+fn prompt_text(text: &str) -> String {
+    clip(text, MAX_NAME)
+        .split_whitespace()
+        .map(|word| {
+            let digits = word.chars().filter(char::is_ascii_digit).count();
+            if word.contains('@') || digits >= 7 || word.chars().count() >= 48 {
+                "[redacted]"
+            } else {
+                word
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn mentions(text: &str, words: &[&str]) -> bool {
@@ -580,6 +600,16 @@ mod tests {
         assert!(!rendered.contains("hunter2"));
         assert!(observed().element("e3").unwrap().is_secret());
         assert!(observed().element("e2").unwrap().is_omnibox());
+    }
+
+    #[test]
+    fn prompt_text_redacts_email_phone_and_long_tokens() {
+        let safe = prompt_text(
+            "Contact alice@example.org or 555-123-4567 token abcdefghijklmnopqrstuvwxyz1234567890",
+        );
+        assert!(!safe.contains("alice@example.org"));
+        assert!(!safe.contains("555-123-4567"));
+        assert!(!safe.contains("abcdefghijklmnopqrstuvwxyz1234567890"));
     }
 
     #[test]

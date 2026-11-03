@@ -554,6 +554,9 @@ fn strip_wake_word(utterance: &str) -> String {
         "hey friday",
         "hi friday",
         "okay friday",
+        "hey, friday",
+        "hi, friday",
+        "okay, friday",
         "ok friday",
         "friday",
         "hey x",
@@ -916,6 +919,21 @@ mod tests {
         assert_eq!(plan("Hey X, launch VS Code."), ["Open vscode"]);
         assert_eq!(plan("open github"), ["Open https://github.com"]);
         assert_eq!(plan("open example.org"), ["Open https://example.org"]);
+    }
+
+    #[test]
+    fn removes_friday_wake_word_variants_before_planning() {
+        for utterance in [
+            "Friday, go to workspace 3",
+            "Hey Friday, go to workspace 3",
+            "Hey, Friday, go to workspace 3",
+        ] {
+            assert_eq!(strip_wake_word(utterance), "go to workspace 3");
+        }
+        assert_eq!(
+            strip_wake_word("Friday, use Chrome to find the latest PR"),
+            "use Chrome to find the latest PR"
+        );
     }
 
     #[test]

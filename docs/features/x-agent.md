@@ -11,8 +11,9 @@ Off by default. Turn it on in Settings › Labs › X agent, or `hex labs on x-a
 | Mode | What it does | Runs |
 | --- | --- | --- |
 | Dictate | Hex as before, on Hex's own shortcut | unchanged |
-| Actions | "open Firefox and search YouTube for Mars rover" | a fixed set of typed launches |
+| Actions | "open Firefox and search YouTube for Mars rover" | a fixed set of typed launches; uncommon requests go to the selected planner |
 | Work | "find the bug in this project and fix it" | `opencode run` in a folder you chose |
+| Computer | "find the latest pull request on GitHub" | a granted browser, using accessibility controls and on-screen evidence |
 
 Every task passes through the same phases, and nothing runs before you approve:
 
@@ -35,14 +36,19 @@ hex agent stop                         # discard the plan, drop the recording, o
 The Agent pane in the window (sidebar, while the Labs switch is on) does the same with
 buttons and shows the plan, steps, changed files, and event stream.
 
+**Voice routing.** The Agent pane controls the dictation shortcut's mode: Dictate, Actions,
+Work, Auto, or Smart. Auto only routes speech beginning with Friday or X. Smart asks the
+planner whether speech is a command. A planner error is reported and consumed; it is not
+passed to the focused app as dictation. Escape cancels an active Agent task while the Agent
+pane is selected.
+
 **The Agent shortcut.** Bind `hex agent toggle` (and `hex agent stop`) to a key in your
-desktop or compositor, as Hex's Wayland notes suggest for `hex dictation cancel`. Dictation's own
-shortcut keeps working, and the two never record at once: X refuses to start while any task
-or recording of its own is in flight.
+desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
+once: X refuses to start while any task or recording of its own is in flight.
 
 ## What X will and won't do
 
-* **Actions** are a closed registry: launch one of seven approved apps, open a public
+* **Actions** are a closed registry: launch an approved app, open a public
   `https://` URL, or search one of five sites. A planned step is data, never a command line:
   no shell, no `sh -c`, search text is percent-encoded into one URL argument.
 * **Launched is not verified.** X reports "launched"; it does not claim a page loaded.
@@ -52,15 +58,21 @@ or recording of its own is in flight.
 * **Stop really stops**: SIGTERM to the run's process group, SIGKILL after 5 s. X then
   lists files whose git state changed (when the folder is a git repo). Nothing is rolled
   back, and X says so.
-* **Local by default.** Speech uses Hex's local model. X sends nothing anywhere itself;
+* **Local by default.** Speech uses Hex's local model. Screen text is sent to a local
+  planner unless you explicitly allow remote screen access. X sends nothing else itself;
   OpenCode talks to whichever provider you configured.
+* **Computer use** requires a per-browser grant and runs a bounded observe, act, verify
+  loop. Links and a small set of navigation buttons may be clicked; other buttons and
+  consequential controls are refused. The on-screen text sent in prompts redacts email
+  addresses, long digit strings, and long tokens. Approval decisions are appended to a
+  private local audit file.
 
 ## Not done yet
 
 * A native listener shortcut inside Hex (today: bind `hex agent toggle` in your desktop).
-* The optional local-model planner for phrasing the rules don't cover.
-* Desktop automation (typing, clicking). Wayland restricts it; X reports unavailable
-  instead of guessing.
+* Real Firefox and Chrome profile workflows have not been verified on this build.
+* HUD phase indicators for Agent work are not implemented; phase state is visible in the
+  Agent pane.
 * Permission prompts raised by OpenCode are shown as a stall warning after 120 s of silence,
   not yet as an in-pane approve button.
 

@@ -224,6 +224,36 @@ fn consequential(name: &str) -> bool {
     })
 }
 
+fn click_allowed(role: &str, name: &str) -> bool {
+    if consequential(name) {
+        return false;
+    }
+    if role == "link" {
+        return true;
+    }
+    let first = name
+        .split(|c: char| !c.is_alphanumeric())
+        .find(|word| !word.is_empty())
+        .unwrap_or_default()
+        .to_lowercase();
+    matches!(
+        first.as_str(),
+        "open"
+            | "view"
+            | "show"
+            | "search"
+            | "go"
+            | "next"
+            | "back"
+            | "previous"
+            | "expand"
+            | "collapse"
+            | "select"
+            | "choose"
+            | "switch"
+    )
+}
+
 fn rebind(desktop: &dyn Desktop, app: &str, win: &Win, host: &dyn Host) -> Result<Win, String> {
     let now = desktop.find_window(app)?;
     if now.address != win.address {
@@ -457,6 +487,12 @@ fn act(
                     e.name
                 )));
             }
+            if !click_allowed(&e.role, &e.name) {
+                return Err(Refusal::Stop(format!(
+                    "Stopped: {:?} is not an approved navigation control. X will not press it; do that yourself.",
+                    e.name
+                )));
+            }
             host.emit("act", &format!("click {:?}", e.name));
             desktop
                 .act(win, &UiAct::Click(e.reference.clone()))
@@ -624,8 +660,8 @@ mod tests {
 
     #[test]
     fn clicks_then_finishes_only_on_new_evidence() {
-        let before = screen("idle", vec![el("e1", "button", "Press me")]);
-        let after = screen("clicked", vec![el("e1", "button", "Press me")]);
+        let before = screen("idle", vec![el("e1", "link", "Press me")]);
+        let after = screen("clicked", vec![el("e1", "link", "Press me")]);
         let (outcome, acts) = drive(
             vec![before, after],
             &[
@@ -694,6 +730,9 @@ mod tests {
         assert!(matches!(outcome, Outcome::Failed(_)));
         assert!(acts.is_empty());
         assert!(consequential("Place your order") && !consequential("Posts"));
+        assert!(!click_allowed("button", "Posts"));
+        assert!(click_allowed("button", "Open profile"));
+        assert!(click_allowed("link", "Latest pull request"));
     }
 
     #[test]
@@ -716,7 +755,7 @@ mod tests {
 
     #[test]
     fn stalls_unknown_ids_and_step_limits_end_the_task() {
-        let s = screen("same", vec![el("e1", "button", "Press me")]);
+        let s = screen("same", vec![el("e1", "link", "Press me")]);
         let (outcome, _) = drive(
             vec![s.clone()],
             &[

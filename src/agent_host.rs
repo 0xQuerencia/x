@@ -123,7 +123,7 @@ fn set_planner(model: &str) -> ControlReply {
     let saved = if off {
         std::fs::remove_file(&path).or_else(ignore_missing)
     } else {
-        std::fs::write(&path, model)
+        write_private(&path, model.as_bytes())
     };
     if let Err(error) = saved {
         return ControlReply::error("failed", format!("couldn't save the setting: {error}"));
@@ -164,6 +164,30 @@ fn computer_remote_file() -> Option<PathBuf> {
         .map(|dir| dir.join("x-computer-remote"))
 }
 
+fn approval_audit_file() -> Option<PathBuf> {
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("x-approval-audit.ndjson"))
+}
+
+fn append_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(contents)
+}
+
 fn load_computer_apps() -> Vec<String> {
     computer_apps_file()
         .and_then(|path| std::fs::read_to_string(path).ok())
@@ -200,7 +224,7 @@ fn computer_access(command: &str, value: &str) -> ControlReply {
         "list" => return ControlReply::done(computer_summary(&apps)),
         "remote" if matches!(value, "on" | "off") => {
             let saved = if value == "on" {
-                std::fs::write(&remote_path, b"1")
+                write_private(&remote_path, b"1")
             } else {
                 std::fs::remove_file(&remote_path).or_else(ignore_missing)
             };
@@ -216,7 +240,7 @@ fn computer_access(command: &str, value: &str) -> ControlReply {
                 apps.push(value.to_string());
             }
             service().set_computer_apps(apps.clone());
-            std::fs::write(&apps_path, apps.join("\n"))
+            write_private(&apps_path, apps.join("\n").as_bytes())
         }
         _ => return ControlReply::error("usage", "grant|revoke <app>, list, or remote on|off"),
     };
@@ -224,6 +248,24 @@ fn computer_access(command: &str, value: &str) -> ControlReply {
         Ok(()) => ControlReply::done(computer_summary(&load_computer_apps())),
         Err(error) => ControlReply::error("failed", format!("couldn't save the setting: {error}")),
     }
+}
+
+fn write_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(contents)
 }
 
 fn ignore_missing(error: std::io::Error) -> std::io::Result<()> {
@@ -239,7 +281,7 @@ fn set_trust(on: bool) -> ControlReply {
         return ControlReply::error("failed", "the data folder is unavailable");
     };
     let saved = if on {
-        std::fs::write(&path, b"1")
+        write_private(&path, b"1")
     } else {
         std::fs::remove_file(&path).or_else(|error| match error.kind() {
             std::io::ErrorKind::NotFound => Ok(()),
@@ -326,7 +368,7 @@ pub fn set_voice_mode(mode: VoiceMode) -> ControlReply {
     let Some(path) = voice_file() else {
         return ControlReply::error("failed", "the data folder is unavailable");
     };
-    if let Err(error) = std::fs::write(path, mode.name()) {
+    if let Err(error) = write_private(&path, mode.name().as_bytes()) {
         return ControlReply::error("failed", format!("couldn't save the mode: {error}"));
     }
     service();
@@ -403,8 +445,17 @@ pub fn intercept(text: &str) -> bool {
 }
 
 fn toast(title: &str, body: &str) {
+    let brand = |text: &str| {
+        if crate::app_paths::is_x_build() {
+            text.replace("Hex", "X")
+        } else {
+            text.to_string()
+        }
+    };
     if let Ok(mut child) = Command::new("notify-send")
-        .args(["-a", "X", "-t", "5000", "--", title, body])
+        .args(["-a", "X", "-t", "5000", "--"])
+        .arg(brand(title))
+        .arg(brand(body))
         .stdin(Stdio::null())
         .spawn()
     {
@@ -507,6 +558,17 @@ fn watch(svc: &Service) {
             seen = last.n;
         }
         for event in &snapshot.events {
+            if event.kind == "approval"
+                && let Some(path) = approval_audit_file()
+            {
+                let line = serde_json::json!({"timestamp": event.t, "event": event.text});
+                if let Ok(mut bytes) = serde_json::to_vec(&line) {
+                    bytes.push(b'\n');
+                    if let Err(error) = append_private(&path, &bytes) {
+                        tracing::warn!(%error, "could not append X approval audit");
+                    }
+                }
+            }
             match event.kind.as_str() {
                 "error" => toast("X: problem", &event.text),
                 "permission" if event.text.starts_with("Blocked ") => toast(
@@ -644,6 +706,17 @@ mod tests {
         assert_eq!(
             spoken_command("Hey Friday, open Firefox."),
             Some((Mode::Actions, "open Firefox".into()))
+        );
+        assert_eq!(
+            spoken_command("Friday, go to workspace 3."),
+            Some((Mode::Actions, "go to workspace 3".into()))
+        );
+        assert_eq!(
+            spoken_command("Hey Friday, use Chrome to find the latest pull request."),
+            Some((
+                Mode::Actions,
+                "use Chrome to find the latest pull request".into()
+            ))
         );
         assert_eq!(
             spoken_command("friday work fix the failing tests"),

@@ -1404,6 +1404,16 @@ mod tests {
     use super::{language_from_env, primary_subtag};
 
     #[test]
+    fn x_build_branding_rewrites_translated_ui_copy() {
+        let branded = super::branded("Hex is ready");
+        if crate::app_paths::is_x_build() {
+            assert_eq!(branded, "X is ready");
+        } else {
+            assert_eq!(branded, "Hex is ready");
+        }
+    }
+
+    #[test]
     fn system_language_tags_choose_their_interface_column() {
         use super::{
             ENGLISH, LANGUAGE_CHOICES, PORTUGUESE_COLUMN, column_for_code, column_for_language_tag,

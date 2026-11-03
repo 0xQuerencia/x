@@ -38,6 +38,12 @@ impl Default for AgentPane {
 }
 
 impl AgentPane {
+    pub(super) fn is_busy(&self) -> bool {
+        self.snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.phase.is_busy())
+    }
+
     /// Reads X's state while the pane shows; true when it changed.
     pub(super) fn poll(&mut self, showing: bool) -> bool {
         if !showing || !crate::labs::x_agent() {
@@ -153,6 +159,58 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         mode_button("mode-actions", tr("Actions"), Mode::Actions),
         mode_button("mode-work", tr("Work"), Mode::Work),
     ];
+    let voice = agent_host::voice_mode();
+    let voice_modes = [
+        agent_host::VoiceMode::Dictate,
+        agent_host::VoiceMode::Actions,
+        agent_host::VoiceMode::Work,
+        agent_host::VoiceMode::Auto,
+        agent_host::VoiceMode::Smart,
+    ];
+    let mut voice_row = row()
+        .key("agent-voice-mode")
+        .gap(6.0)
+        .center_y()
+        .child(text(tr("Shortcut mode")).font(DESCRIPTION).color(p.muted()));
+    for mode in voice_modes {
+        let selected = mode == voice;
+        let name = mode.name();
+        voice_row = voice_row.child(button(
+            p,
+            &format!("agent-voice-{name}"),
+            &format!("{}{}", name[..1].to_uppercase(), &name[1..]),
+            if selected {
+                ButtonKind::Primary
+            } else {
+                ButtonKind::Secondary
+            },
+            move |_: &mut Ui, _| {
+                agent_host::handle(AgentAction::Voice { mode: name.into() });
+            },
+        ));
+    }
+    let trusted = snapshot.trusted_actions;
+    let trust_control = row()
+        .key("agent-trust-row")
+        .gap(8.0)
+        .center_y()
+        .child(button(
+            p,
+            "agent-trust-toggle",
+            if trusted {
+                "Trusted Actions on"
+            } else {
+                "Trusted Actions off"
+            },
+            if trusted {
+                ButtonKind::Primary
+            } else {
+                ButtonKind::Secondary
+            },
+            move |_: &mut Ui, _| {
+                agent_host::handle(AgentAction::Trust { on: !trusted });
+            },
+        ));
 
     let input = TextInput::new(&pane.input)
         .placeholder(if pane.mode == Mode::Actions {
@@ -212,10 +270,13 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     } else {
         capture
     };
-    let mut body = col().key("agent-body").gap(16.0).child(capture);
-    if !snapshot.computer_apps.is_empty() {
-        body = body.child(access_row(p, snapshot));
-    }
+    let mut body = col()
+        .key("agent-body")
+        .gap(16.0)
+        .child(capture)
+        .child(voice_row)
+        .child(trust_control);
+    body = body.child(access_row(p, snapshot));
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
     }
@@ -274,6 +335,40 @@ fn access_row(p: Paint, snapshot: &Snapshot) -> El {
             },
         ));
     }
+    for app in ["chrome", "firefox"] {
+        if !snapshot.computer_apps.iter().any(|granted| granted == app) {
+            let name = app.to_string();
+            access = access.child(button(
+                p,
+                &format!("agent-grant-{app}"),
+                &format!("{app} · Grant"),
+                ButtonKind::Secondary,
+                move |_: &mut Ui, _| {
+                    agent_host::handle(AgentAction::Computer {
+                        command: "grant".into(),
+                        value: name.clone(),
+                    });
+                },
+            ));
+        }
+    }
+    let remote = snapshot.computer_remote;
+    access = access.child(button(
+        p,
+        "agent-computer-remote",
+        if remote {
+            "Remote models on"
+        } else {
+            "Remote models off"
+        },
+        ButtonKind::Secondary,
+        move |_: &mut Ui, _| {
+            agent_host::handle(AgentAction::Computer {
+                command: "remote".into(),
+                value: if remote { "off" } else { "on" }.into(),
+            });
+        },
+    ));
     access
 }
 
