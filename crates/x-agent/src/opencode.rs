@@ -9,9 +9,9 @@ use std::io::{BufRead, BufReader};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -65,34 +65,63 @@ pub fn summarize_event(obj: &serde_json::Value) -> (String, String) {
     let part = obj.get("part").filter(|p| p.is_object());
     if kind == "error" {
         let msg = match obj.get("error") {
-            Some(e) => e.get("message").and_then(|m| m.as_str()).map(str::to_string).unwrap_or_else(|| e.to_string()),
+            Some(e) => e
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| e.to_string()),
             None => "unknown error".into(),
         };
         return ("error".into(), clip(&msg));
     }
     if let Some(tool) = part.and_then(|p| p.get("tool")).and_then(|t| t.as_str()) {
         let state = part.and_then(|p| p.get("state"));
-        let field = |k: &str| state.and_then(|s| s.get(k)).and_then(|v| v.as_str()).unwrap_or("");
-        return ("tool".into(), clip(format!("{tool} {} {}", field("status"), field("title")).trim()));
+        let field = |k: &str| {
+            state
+                .and_then(|s| s.get(k))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+        };
+        return (
+            "tool".into(),
+            clip(format!("{tool} {} {}", field("status"), field("title")).trim()),
+        );
     }
     if kind == "text" {
-        let text = part.and_then(|p| p.get("text")).and_then(|t| t.as_str()).unwrap_or("");
+        let text = part
+            .and_then(|p| p.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
         return ("text".into(), clip(text));
     }
     if kind.contains("permission") {
-        return ("permission".into(), clip(&format!("{kind}: {}", part.unwrap_or(obj))));
+        return (
+            "permission".into(),
+            clip(&format!("{kind}: {}", part.unwrap_or(obj))),
+        );
     }
     (kind.into(), kind.into())
 }
 
 fn git(workspace: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(workspace).args(args).stdin(Stdio::null()).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// path -> porcelain status. `None` when the workspace is not a git repo.
 pub fn change_snapshot(workspace: &Path) -> Option<BTreeMap<String, String>> {
-    let raw = git(workspace, &["status", "--porcelain", "-z", "--untracked-files=all"])?;
+    let raw = git(
+        workspace,
+        &["status", "--porcelain", "-z", "--untracked-files=all"],
+    )?;
     let mut entries = raw.split('\0');
     let mut snap = BTreeMap::new();
     while let Some(e) = entries.next() {
@@ -112,16 +141,27 @@ pub fn diff_snapshots(
 ) -> Option<Vec<String>> {
     let (b, a) = (before?, after?);
     let paths: BTreeSet<&String> = b.keys().chain(a.keys()).collect();
-    Some(paths.into_iter().filter(|p| b.get(*p) != a.get(*p)).cloned().collect())
+    Some(
+        paths
+            .into_iter()
+            .filter(|p| b.get(*p) != a.get(*p))
+            .cloned()
+            .collect(),
+    )
 }
 
 fn supports_standalone(exe: &Path) -> bool {
-    Command::new(exe)
-        .args(["run", "--help"])
-        .stdin(Stdio::null())
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("--standalone") || String::from_utf8_lossy(&o.stderr).contains("--standalone"))
-        .unwrap_or(false)
+    crate::retry_busy(|| {
+        Command::new(exe)
+            .args(["run", "--help"])
+            .stdin(Stdio::null())
+            .output()
+    })
+    .map(|o| {
+        String::from_utf8_lossy(&o.stdout).contains("--standalone")
+            || String::from_utf8_lossy(&o.stderr).contains("--standalone")
+    })
+    .unwrap_or(false)
 }
 
 pub struct RunConfig {
@@ -133,7 +173,12 @@ pub struct RunConfig {
 
 impl RunConfig {
     pub fn new(exe: PathBuf, prompt: impl Into<String>, workspace: PathBuf) -> Self {
-        Self { exe, prompt: prompt.into(), workspace, stall_after: STALL_AFTER }
+        Self {
+            exe,
+            prompt: prompt.into(),
+            workspace,
+            stall_after: STALL_AFTER,
+        }
     }
 
     /// The exact argv. There is deliberately no way to add `--auto`.
@@ -148,34 +193,57 @@ impl RunConfig {
 }
 
 pub struct Run {
+    canceller: Canceller,
+    handle: JoinHandle<RunResult>,
+}
+
+/// A cloneable handle that can Stop a run from any thread.
+#[derive(Clone)]
+pub struct Canceller {
     pgid: Arc<AtomicI32>,
     cancel: Arc<AtomicBool>,
-    handle: JoinHandle<RunResult>,
+}
+
+impl Canceller {
+    /// SIGTERM the whole process group; the supervisor escalates to SIGKILL.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+        signal_group(self.pgid.load(Ordering::SeqCst), libc::SIGTERM);
+    }
 }
 
 impl Run {
     pub fn start(cfg: RunConfig, on_event: OnEvent) -> Result<Self, String> {
         let before = change_snapshot(&cfg.workspace);
-        let mut child = Command::new(&cfg.exe)
-            .args(cfg.args())
-            .current_dir(&cfg.workspace)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0)
-            .spawn()
-            .map_err(|e| format!("could not start {}: {e}", cfg.exe.display()))?;
+        let args = cfg.args();
+        let mut child = crate::retry_busy(|| {
+            Command::new(&cfg.exe)
+                .args(&args)
+                .current_dir(&cfg.workspace)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .process_group(0)
+                .spawn()
+        })
+        .map_err(|e| format!("could not start {}: {e}", cfg.exe.display()))?;
         let pgid = Arc::new(AtomicI32::new(child.id() as i32));
         let cancel = Arc::new(AtomicBool::new(false));
         let (p, c) = (pgid.clone(), cancel.clone());
         let handle = thread::spawn(move || supervise(&mut child, &cfg, before, &c, &p, on_event));
-        Ok(Self { pgid, cancel, handle })
+        Ok(Self {
+            canceller: Canceller { pgid, cancel },
+            handle,
+        })
+    }
+
+    pub fn canceller(&self) -> Canceller {
+        self.canceller.clone()
     }
 
     /// Stop the run: SIGTERM the whole process group, SIGKILL after a grace period.
     pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::SeqCst);
-        signal_group(self.pgid.load(Ordering::SeqCst), libc::SIGTERM);
+        self.canceller.cancel();
     }
 
     pub fn join(self) -> RunResult {
@@ -220,7 +288,11 @@ enum Line {
 fn pump(stream: impl std::io::Read + Send + 'static, out: bool, tx: mpsc::Sender<Line>) {
     thread::spawn(move || {
         for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            let _ = tx.send(if out { Line::Out(line) } else { Line::Err(line) });
+            let _ = tx.send(if out {
+                Line::Out(line)
+            } else {
+                Line::Err(line)
+            });
         }
         let _ = tx.send(Line::Closed);
     });
@@ -249,9 +321,13 @@ fn supervise(
             Err(RecvTimeoutError::Timeout) => {
                 if !stalled && last.elapsed() > cfg.stall_after {
                     stalled = true;
-                    on_event("stall", &format!(
-                        "No output for {}s: the agent may be waiting on a permission or the provider. Stop to abort.",
-                        cfg.stall_after.as_secs()));
+                    on_event(
+                        "stall",
+                        &format!(
+                            "No output for {}s: the agent may be waiting on a permission or the provider. Stop to abort.",
+                            cfg.stall_after.as_secs()
+                        ),
+                    );
                 }
             }
             Err(RecvTimeoutError::Disconnected) => break,
@@ -306,7 +382,13 @@ fn supervise(
         RunStatus::Completed
     };
     stderr_tail.retain(|l| !l.is_empty());
-    RunResult { status, exit_code, errors, stderr: stderr_tail, changed_files }
+    RunResult {
+        status,
+        exit_code,
+        errors,
+        stderr: stderr_tail,
+        changed_files,
+    }
 }
 
 fn wait_with_grace(child: &mut Child) -> Option<std::process::ExitStatus> {
@@ -333,26 +415,44 @@ mod tests {
     }
 
     fn sh(dir: &Path, args: &[&str]) {
-        assert!(Command::new("git").arg("-C").arg(dir).args(args).status().unwrap().success());
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
     }
 
     fn fixture() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("repo");
         std::fs::create_dir(&repo).unwrap();
-        for a in [&["init", "-q"][..], &["config", "user.email", "t@t"], &["config", "user.name", "t"]] {
+        for a in [
+            &["init", "-q"][..],
+            &["config", "user.email", "t@t"],
+            &["config", "user.name", "t"],
+        ] {
             sh(&repo, a);
         }
         std::fs::write(repo.join("a.py"), "x=1\n").unwrap();
         sh(&repo, &["add", "."]);
         sh(&repo, &["commit", "-qm", "i"]);
-        Fixture { dir, repo, events: Arc::default() }
+        Fixture {
+            dir,
+            repo,
+            events: Arc::default(),
+        }
     }
 
     impl Fixture {
         fn fake(&self, body: &str) -> PathBuf {
             let path = self.dir.path().join("fake-opencode");
-            let script = format!("#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then echo '--standalone'; exit 0; fi\n{body}\n");
+            let script = format!(
+                "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then echo '--standalone'; exit 0; fi\n{body}\n"
+            );
             std::fs::write(&path, script).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
             path
@@ -362,7 +462,11 @@ mod tests {
             let ev = self.events.clone();
             let mut cfg = RunConfig::new(self.fake(body), "p", self.repo.clone());
             cfg.stall_after = stall;
-            Run::start(cfg, Arc::new(move |k, t| ev.lock().unwrap().push((k.into(), t.into())))).unwrap()
+            Run::start(
+                cfg,
+                Arc::new(move |k, t| ev.lock().unwrap().push((k.into(), t.into()))),
+            )
+            .unwrap()
         }
 
         fn run(&self, body: &str) -> RunResult {
@@ -376,7 +480,12 @@ mod tests {
         let r = f.run("echo 'x=2' > a.py\necho '{\"type\":\"tool_use\",\"part\":{\"tool\":\"edit\",\"state\":{\"status\":\"completed\",\"title\":\"a.py\"}}}'");
         assert_eq!(r.status, RunStatus::Completed);
         assert_eq!(r.changed_files, Some(vec!["a.py".to_string()]));
-        assert!(f.events.lock().unwrap().contains(&("tool".into(), "edit completed a.py".into())));
+        assert!(
+            f.events
+                .lock()
+                .unwrap()
+                .contains(&("tool".into(), "edit completed a.py".into()))
+        );
     }
 
     #[test]
@@ -385,7 +494,10 @@ mod tests {
         let t = Instant::now();
         let r = f.run("echo '{\"type\":\"error\",\"error\":{\"message\":\"boom\"}}'\nsleep 60");
         assert!(t.elapsed() < Duration::from_secs(15));
-        assert_eq!((r.status, r.errors), (RunStatus::Failed, vec!["boom".to_string()]));
+        assert_eq!(
+            (r.status, r.errors),
+            (RunStatus::Failed, vec!["boom".to_string()])
+        );
     }
 
     #[test]
@@ -398,7 +510,10 @@ mod tests {
     fn stop_kills_a_silent_process_and_its_children() {
         let f = fixture();
         let pidfile = f.dir.path().join("child.pid");
-        let run = f.start(&format!("sleep 60 &\necho $! > {}\nsleep 60", pidfile.display()), STALL_AFTER);
+        let run = f.start(
+            &format!("sleep 60 &\necho $! > {}\nsleep 60", pidfile.display()),
+            STALL_AFTER,
+        );
         for _ in 0..50 {
             if std::fs::read_to_string(&pidfile).is_ok_and(|s| !s.trim().is_empty()) {
                 break;
@@ -407,10 +522,18 @@ mod tests {
         }
         run.cancel();
         assert_eq!(run.join().status, RunStatus::Cancelled);
-        let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        let pid: i32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         thread::sleep(Duration::from_millis(300));
         // SAFETY: signal 0 only probes for existence.
-        assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "child {pid} survived Stop");
+        assert_ne!(
+            unsafe { libc::kill(pid, 0) },
+            0,
+            "child {pid} survived Stop"
+        );
     }
 
     #[test]
@@ -439,7 +562,12 @@ mod tests {
     fn non_json_lines_are_kept_raw() {
         let f = fixture();
         f.run("echo hello");
-        assert!(f.events.lock().unwrap().contains(&("raw".into(), "hello".into())));
+        assert!(
+            f.events
+                .lock()
+                .unwrap()
+                .contains(&("raw".into(), "hello".into()))
+        );
     }
 
     #[test]
@@ -457,7 +585,10 @@ mod tests {
         assert!(validate_workspace(&dirs::home_dir().unwrap()).is_err());
         assert!(validate_workspace(&f.dir.path().join("missing")).is_err());
         assert!(validate_workspace(&f.repo.join("a.py")).is_err());
-        assert_eq!(validate_workspace(&f.repo).unwrap(), f.repo.canonicalize().unwrap());
+        assert_eq!(
+            validate_workspace(&f.repo).unwrap(),
+            f.repo.canonicalize().unwrap()
+        );
     }
 
     #[test]
@@ -466,6 +597,12 @@ mod tests {
         let plain = f.dir.path().join("plain");
         std::fs::create_dir(&plain).unwrap();
         let cfg = RunConfig::new(f.fake(""), "p", plain);
-        assert_eq!(Run::start(cfg, Arc::new(|_, _| {})).unwrap().join().changed_files, None);
+        assert_eq!(
+            Run::start(cfg, Arc::new(|_, _| {}))
+                .unwrap()
+                .join()
+                .changed_files,
+            None
+        );
     }
 }

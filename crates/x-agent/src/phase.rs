@@ -21,7 +21,11 @@ impl Phase {
     pub fn is_busy(self) -> bool {
         matches!(
             self,
-            Self::Listening | Self::Transcribing | Self::Planning | Self::AwaitingApproval | Self::Running
+            Self::Listening
+                | Self::Transcribing
+                | Self::Planning
+                | Self::AwaitingApproval
+                | Self::Running
         )
     }
 
@@ -32,7 +36,10 @@ impl Phase {
             (Idle | Completed | Failed | Cancelled, Listening | Planning)
                 | (Listening, Transcribing | Idle)
                 | (Transcribing, Planning | Idle)
-                | (Planning, AwaitingApproval | Idle | Completed | Failed | Cancelled)
+                | (
+                    Planning,
+                    AwaitingApproval | Idle | Completed | Failed | Cancelled
+                )
                 | (AwaitingApproval, Running | Cancelled)
                 | (Running, Completed | Failed | Cancelled)
         )

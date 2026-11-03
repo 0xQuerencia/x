@@ -12,11 +12,24 @@ const MAX_QUERY: usize = 300;
 /// Executable candidates per approved app alias (names looked up on PATH).
 pub const APPS: &[(&str, &[&str])] = &[
     ("firefox", &["firefox"]),
-    ("chrome", &["google-chrome-stable", "google-chrome", "chromium"]),
+    (
+        "chrome",
+        &["google-chrome-stable", "google-chrome", "chromium"],
+    ),
     ("chromium", &["chromium"]),
     ("brave", &["brave", "brave-browser"]),
     ("vscode", &["code", "codium"]),
-    ("terminal", &["kitty", "alacritty", "foot", "konsole", "gnome-terminal", "xterm"]),
+    (
+        "terminal",
+        &[
+            "kitty",
+            "alacritty",
+            "foot",
+            "konsole",
+            "gnome-terminal",
+            "xterm",
+        ],
+    ),
     ("files", &["nautilus", "dolphin", "thunar", "pcmanfm"]),
 ];
 const BROWSERS: &[&str] = &["firefox", "chrome", "chromium", "brave"];
@@ -61,9 +74,20 @@ fn lookup<'a, T>(table: &'a [(&'a str, T)], key: &str) -> Option<&'a T> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Action {
-    App { target: String },
-    Url { target: String, #[serde(default)] browser: String },
-    Search { target: String, query: String, #[serde(default)] browser: String },
+    App {
+        target: String,
+    },
+    Url {
+        target: String,
+        #[serde(default)]
+        browser: String,
+    },
+    Search {
+        target: String,
+        query: String,
+        #[serde(default)]
+        browser: String,
+    },
 }
 
 impl Action {
@@ -71,9 +95,11 @@ impl Action {
         match self {
             Self::App { target } => format!("Open {target}"),
             Self::Url { target, browser } => with_browser(format!("Open {target}"), browser),
-            Self::Search { target, query, browser } => {
-                with_browser(format!("Search {target} for {query:?}"), browser)
-            }
+            Self::Search {
+                target,
+                query,
+                browser,
+            } => with_browser(format!("Search {target} for {query:?}"), browser),
         }
     }
 
@@ -87,7 +113,11 @@ impl Action {
                 check_browser(browser)?;
                 safe_url(target)?;
             }
-            Self::Search { target, query, browser } => {
+            Self::Search {
+                target,
+                query,
+                browser,
+            } => {
                 check_browser(browser)?;
                 lookup(SEARCH, target).ok_or("Unapproved search site")?;
                 if query.trim().is_empty() || query.chars().count() > MAX_QUERY {
@@ -116,7 +146,11 @@ impl Action {
             Self::Url { target, browser } => {
                 browser_or_opener(browser, safe_url(target)?.to_string())
             }
-            Self::Search { target, query, browser } => {
+            Self::Search {
+                target,
+                query,
+                browser,
+            } => {
                 let base = lookup(SEARCH, target).ok_or("Unapproved search site")?;
                 let url = format!("{base}{}", percent_encode(query));
                 browser_or_opener(browser, safe_url(&url)?.to_string())
@@ -130,7 +164,10 @@ impl Action {
         let argv = valid.argv(&|name| which(name))?;
         let (exe, args) = argv.split_first().ok_or("empty command")?;
         let mut cmd = Command::new(exe);
-        cmd.args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        cmd.args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         // SAFETY: setsid is async-signal-safe and runs between fork and exec; it detaches
         // the launched app from X's process group so Stop/exit never kills the user's browser.
         #[cfg(unix)]
@@ -141,13 +178,18 @@ impl Action {
                 Ok(())
             });
         }
-        cmd.spawn().map_err(|e| format!("could not launch {exe}: {e}"))?;
+        cmd.spawn()
+            .map_err(|e| format!("could not launch {exe}: {e}"))?;
         Ok(format!("Launched {}", valid.describe()))
     }
 }
 
 fn with_browser(base: String, browser: &str) -> String {
-    if browser.is_empty() { base } else { format!("{base} in {browser}") }
+    if browser.is_empty() {
+        base
+    } else {
+        format!("{base} in {browser}")
+    }
 }
 
 fn check_browser(browser: &str) -> Result<(), String> {
@@ -172,7 +214,9 @@ pub fn which(name: &str) -> Option<String> {
         .map(|dir| dir.join(name))
         .find(|p| {
             use std::os::unix::fs::PermissionsExt;
-            p.metadata().map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+            p.metadata()
+                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
         })
         .map(|p| p.to_string_lossy().into_owned())
 }
@@ -212,11 +256,16 @@ pub fn safe_url(raw: &str) -> Result<&str, String> {
     if host == "localhost" || host.ends_with(".local") || host.ends_with(".localhost") {
         return Err("Local addresses are not supported".into());
     }
-    let valid_chars = host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
+    let valid_chars = host
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
     if !valid_chars || host.len() < 3 || host.len() > 253 || !host.contains('.') {
         return Err("A public domain is required".into());
     }
-    if host.split('.').any(|l| l.is_empty() || l.starts_with('-') || l.ends_with('-')) {
+    if host
+        .split('.')
+        .any(|l| l.is_empty() || l.starts_with('-') || l.ends_with('-'))
+    {
         return Err("Invalid domain".into());
     }
     if host.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
@@ -226,7 +275,10 @@ pub fn safe_url(raw: &str) -> Result<&str, String> {
 }
 
 fn normalize_app(name: &str) -> Option<&'static str> {
-    let key = name.trim().trim_matches(|c| " .!?".contains(c)).to_lowercase();
+    let key = name
+        .trim()
+        .trim_matches(|c| " .!?".contains(c))
+        .to_ascii_lowercase();
     ALIASES.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
 }
 
@@ -237,23 +289,26 @@ fn collapse_ws(s: &str) -> String {
 fn strip_wake_word(utterance: &str) -> String {
     let clean = collapse_ws(utterance);
     let clean = clean.trim_matches(|c| " .!?,".contains(c));
-    let lower = clean.to_lowercase();
+    let lower = clean.to_ascii_lowercase();
     for wake in ["hey x", "okay x", "ok x", "x"] {
-        if let Some(rest) = lower.strip_prefix(wake) {
-            if rest.starts_with([',', '.', ':', '!', ' ']) {
-                let n = clean.len() - rest.len();
-                return clean[n..].trim_start_matches(|c| " ,.:!".contains(c)).to_string();
-            }
+        if let Some(rest) = lower.strip_prefix(wake)
+            && rest.starts_with([',', '.', ':', '!', ' '])
+        {
+            let n = clean.len() - rest.len();
+            return clean[n..]
+                .trim_start_matches(|c| " ,.:!".contains(c))
+                .to_string();
         }
     }
     clean.to_string()
 }
 
 fn strip_prefix_ci<'a>(s: &'a str, prefixes: &[&str]) -> Option<&'a str> {
-    let lower = s.to_lowercase();
+    let lower = s.to_ascii_lowercase();
     prefixes.iter().find_map(|p| {
         let rest = lower.strip_prefix(p)?;
-        rest.starts_with(' ').then(|| s[s.len() - rest.len()..].trim_start())
+        rest.starts_with(' ')
+            .then(|| s[s.len() - rest.len()..].trim_start())
     })
 }
 
@@ -263,48 +318,73 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
     let mut search_text = text.to_string();
     if let Some(rest) = strip_prefix_ci(text, &["open", "launch", "start"]) {
         // "open Firefox and search YouTube for ..." is ONE browser launch with the destination.
-        let lower = rest.to_lowercase();
+        let lower = rest.to_ascii_lowercase();
         for joiner in [" and ", " then "] {
             if let Some(i) = lower.find(joiner) {
                 let tail = &rest[i + joiner.len()..];
-                if let Some(app) = normalize_app(&rest[..i]).filter(|a| BROWSERS.contains(a)) {
-                    if strip_prefix_ci(tail, &["search", "look up", "find"]).is_some() {
-                        browser = app.to_string();
-                        search_text = tail.to_string();
-                    }
+                if let Some(app) = normalize_app(&rest[..i]).filter(|a| BROWSERS.contains(a))
+                    && strip_prefix_ci(tail, &["search", "look up", "find"]).is_some()
+                {
+                    browser = app.to_string();
+                    search_text = tail.to_string();
                 }
             }
         }
     }
     if let Some(rest) = strip_prefix_ci(&search_text, &["search", "look up", "find"]) {
-        let lower = rest.to_lowercase();
+        let lower = rest.to_ascii_lowercase();
         let (site, rest) = SEARCH
             .iter()
             .map(|(s, _)| *s)
-            .find_map(|s| lower.strip_prefix(s).filter(|r| r.starts_with(' ')).map(|r| (s, rest[rest.len() - r.len()..].trim_start())))
+            .find_map(|s| {
+                lower
+                    .strip_prefix(s)
+                    .filter(|r| r.starts_with(' '))
+                    .map(|r| (s, rest[rest.len() - r.len()..].trim_start()))
+            })
             .unwrap_or(("google", rest));
-        let query = strip_prefix_ci(rest, &["for"]).unwrap_or(rest).trim().to_string();
-        let action = Action::Search { target: site.into(), query, browser };
+        let query = strip_prefix_ci(rest, &["for"])
+            .unwrap_or(rest)
+            .trim()
+            .to_string();
+        let action = Action::Search {
+            target: site.into(),
+            query,
+            browser,
+        };
         return action.validate().ok().map(|a| vec![a]);
     }
     let rest = strip_prefix_ci(text, &["open", "launch", "start"])?;
     if let Some(app) = normalize_app(rest) {
         return Some(vec![Action::App { target: app.into() }]);
     }
-    let name = rest.trim().to_lowercase();
+    let name = rest.trim().to_ascii_lowercase();
     if let Some(url) = lookup(SITES, &name) {
-        return Some(vec![Action::Url { target: (*url).into(), browser: String::new() }]);
+        return Some(vec![Action::Url {
+            target: (*url).into(),
+            browser: String::new(),
+        }]);
     }
-    let url = if rest.starts_with("https://") { rest.to_string() } else { format!("https://{rest}") };
+    let url = if rest.starts_with("https://") {
+        rest.to_string()
+    } else {
+        format!("https://{rest}")
+    };
     if rest.contains('.') && !rest.contains(char::is_whitespace) {
-        return Action::Url { target: url, browser: String::new() }.validate().ok().map(|a| vec![a]);
+        return Action::Url {
+            target: url,
+            browser: String::new(),
+        }
+        .validate()
+        .ok()
+        .map(|a| vec![a]);
     }
     None
 }
 
 fn split_steps(text: &str) -> Vec<String> {
     // Split only where another action verb follows, so "and" inside a query survives.
-    let lower = text.to_lowercase();
+    let lower = text.to_ascii_lowercase();
     let mut parts = Vec::new();
     let mut start = 0;
     let mut i = 0;
@@ -312,7 +392,10 @@ fn split_steps(text: &str) -> Vec<String> {
         for joiner in [" and then ", " then ", " and "] {
             if lower[i..].starts_with(joiner) {
                 let after = &lower[i + joiner.len()..];
-                if ["open ", "launch ", "start ", "search ", "look up "].iter().any(|v| after.starts_with(v)) {
+                if ["open ", "launch ", "start ", "search ", "look up "]
+                    .iter()
+                    .any(|v| after.starts_with(v))
+                {
                     parts.push(text[start..i].trim().to_string());
                     start = i + joiner.len();
                     i = start;
@@ -356,7 +439,8 @@ pub fn parse_plan_json(raw: &str) -> Result<Vec<Action>, String> {
     if raw.len() > 100_000 {
         return Err("Planner output too large".into());
     }
-    let plan: Plan = serde_json::from_str(raw).map_err(|e| format!("Malformed planner output: {e}"))?;
+    let plan: Plan =
+        serde_json::from_str(raw).map_err(|e| format!("Malformed planner output: {e}"))?;
     if plan.steps.len() > MAX_STEPS {
         return Err("Planner exceeded maximum allowed steps".into());
     }
@@ -372,7 +456,11 @@ mod tests {
     }
 
     fn plan(text: &str) -> Vec<String> {
-        plan_rules(text).unwrap_or_default().iter().map(Action::describe).collect()
+        plan_rules(text)
+            .unwrap_or_default()
+            .iter()
+            .map(Action::describe)
+            .collect()
     }
 
     #[test]
@@ -388,20 +476,33 @@ mod tests {
         let actions = plan_rules("open Firefox and search YouTube for Mars rover").unwrap();
         assert_eq!(actions.len(), 1);
         let argv = actions[0].argv(&fake_path).unwrap();
-        assert_eq!(argv, ["/usr/bin/firefox", "https://www.youtube.com/results?search_query=Mars%20rover"]);
+        assert_eq!(
+            argv,
+            [
+                "/usr/bin/firefox",
+                "https://www.youtube.com/results?search_query=Mars%20rover"
+            ]
+        );
     }
 
     #[test]
     fn two_step_instruction() {
-        assert_eq!(plan("open terminal then search github for ripgrep"),
-                   ["Open terminal", "Search github for \"ripgrep\""]);
-        assert_eq!(plan("open chrome then search github for ripgrep"),
-                   ["Search github for \"ripgrep\" in chrome"]);
+        assert_eq!(
+            plan("open terminal then search github for ripgrep"),
+            ["Open terminal", "Search github for \"ripgrep\""]
+        );
+        assert_eq!(
+            plan("open chrome then search github for ripgrep"),
+            ["Search github for \"ripgrep\" in chrome"]
+        );
     }
 
     #[test]
     fn and_inside_a_query_is_kept() {
-        assert_eq!(plan("search google for salt and pepper"), ["Search google for \"salt and pepper\""]);
+        assert_eq!(
+            plan("search google for salt and pepper"),
+            ["Search google for \"salt and pepper\""]
+        );
     }
 
     #[test]
@@ -414,18 +515,50 @@ mod tests {
 
     #[test]
     fn unsupported_requests_run_nothing() {
-        for t in ["delete all my files", "run rm -rf /", "send an email to bob", "", "open /etc/passwd"] {
+        for t in [
+            "delete all my files",
+            "run rm -rf /",
+            "send an email to bob",
+            "",
+            "open /etc/passwd",
+        ] {
             assert!(plan_rules(t).is_none(), "{t}");
         }
         assert!(plan_rules(&"open firefox ".repeat(200)).is_none());
     }
 
     #[test]
+    fn non_ascii_input_never_panics() {
+        for t in [
+            "İstanbul open firefox",
+            "open İ firefox and search ß for ǅ",
+            "ǅ then open ǅ",
+            "x\u{130}, open firefox",
+            "search youtube for café and open github",
+            "open 日本語.jp",
+        ] {
+            let _ = plan_rules(t);
+        }
+        assert_eq!(
+            plan("search youtube for café"),
+            ["Search youtube for \"café\""]
+        );
+    }
+
+    #[test]
     fn urls_are_locked_down() {
         for bad in [
-            "http://example.com", "file:///etc/passwd", "javascript:alert(1)", "https://localhost/",
-            "https://a.local/", "https://127.0.0.1/", "https://user:pw@example.com/",
-            "https://example.com:8080/", "https://exa mple.com", "https://-bad.com", "https://nodots",
+            "http://example.com",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "https://localhost/",
+            "https://a.local/",
+            "https://127.0.0.1/",
+            "https://user:pw@example.com/",
+            "https://example.com:8080/",
+            "https://exa mple.com",
+            "https://-bad.com",
+            "https://nodots",
             "https://example.com/\u{0007}",
         ] {
             assert!(safe_url(bad).is_err(), "{bad}");
@@ -445,7 +578,8 @@ mod tests {
             r#"{"steps":[{"kind":"url","target":"https://example.com","browser":"curl"}]}"#,
             r#"{"steps":[{"kind":"search","target":"evil","query":"x"}]}"#,
             r#"{"steps":[{"kind":"app","target":"firefox"},{"kind":"app","target":"firefox"},{"kind":"app","target":"firefox"},{"kind":"app","target":"firefox"},{"kind":"app","target":"firefox"},{"kind":"app","target":"firefox"}]}"#,
-            "not json", r#"{"steps":"x"}"#,
+            "not json",
+            r#"{"steps":"x"}"#,
         ] {
             assert!(parse_plan_json(bad).is_err(), "{bad}");
         }
@@ -453,7 +587,9 @@ mod tests {
 
     #[test]
     fn missing_executable_is_reported() {
-        let a = Action::App { target: "firefox".into() };
+        let a = Action::App {
+            target: "firefox".into(),
+        };
         assert!(a.argv(&|_| None).unwrap_err().contains("not installed"));
     }
 }
