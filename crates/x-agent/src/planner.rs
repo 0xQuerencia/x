@@ -171,6 +171,68 @@ impl Planner for Gemini {
     }
 }
 
+/// Any OpenAI-compatible `/chat/completions` endpoint. The base URL must be https (or
+/// loopback); the key comes from a private file and goes to curl on stdin only.
+pub struct OpenAi {
+    pub model: String,
+    pub base_file: PathBuf,
+    pub key_file: PathBuf,
+}
+
+fn secret(path: &PathBuf) -> Result<String, String> {
+    std::fs::read_to_string(path)
+        .map(|text| text.trim().to_string())
+        .ok()
+        .filter(|text| !text.is_empty() && !text.contains(['\n', '"', '\\']))
+        .ok_or_else(|| format!("Missing or invalid {}", path.display()))
+}
+
+fn checked_base(base: &str) -> Result<&str, String> {
+    let base = base.trim_end_matches('/');
+    let local = base.starts_with("http://127.0.0.1") || base.starts_with("http://localhost");
+    if base.starts_with("https://") || local {
+        Ok(base)
+    } else {
+        Err("The endpoint must use https".into())
+    }
+}
+
+impl Planner for OpenAi {
+    fn name(&self) -> String {
+        self.model.clone()
+    }
+
+    fn plan(&self, text: &str, smart: bool) -> Result<Reply, String> {
+        let base = secret(&self.base_file)?;
+        let url = format!("{}/chat/completions", checked_base(&base)?);
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": [{ "role": "user", "content": prompt(text, smart) }],
+            "temperature": 0,
+            "response_format": { "type": "json_object" },
+        })
+        .to_string();
+        let config = format!(
+            "url = {}\nheader = {}\nheader = \"content-type: application/json\"\ndata = {}\n",
+            quoted(&url),
+            quoted(&format!(
+                "Authorization: Bearer {}",
+                secret(&self.key_file)?
+            )),
+            quoted(&body)
+        );
+        let reply = curl(&config)?;
+        if let Some(error) = reply.pointer("/error/message").and_then(|m| m.as_str()) {
+            return Err(format!("{}: {error}", self.model));
+        }
+        let answer = reply
+            .pointer("/choices/0/message/content")
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        reply_from_text(answer, smart)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +287,14 @@ mod tests {
                 goal: "write a poem".into()
             }]
         );
+    }
+
+    #[test]
+    fn only_https_or_loopback_endpoints_are_used() {
+        assert!(checked_base("https://example.com/v1/").is_ok());
+        assert!(checked_base("http://127.0.0.1:8080/v1").is_ok());
+        assert!(checked_base("http://example.com/v1").is_err());
+        assert!(checked_base("ftp://example.com").is_err());
     }
 
     #[test]

@@ -83,6 +83,14 @@ fn gemini_key_file() -> Option<PathBuf> {
 
 /// `gemini` or `gemini:<model>` is Gemini; any other name is a local Ollama model.
 fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
+    if let Some(name) = model.strip_prefix("openai:").filter(|name| !name.is_empty()) {
+        let dir = crate::app_paths::support_dir().unwrap_or_default();
+        return Arc::new(x_agent::planner::OpenAi {
+            model: name.to_string(),
+            base_file: dir.join("openai-base"),
+            key_file: dir.join("openai-key"),
+        });
+    }
     match model.strip_prefix("gemini") {
         Some(rest) if rest.is_empty() || rest.starts_with(':') => {
             Arc::new(x_agent::planner::Gemini {
@@ -119,7 +127,9 @@ fn set_planner(model: &str) -> ControlReply {
     if off {
         return ControlReply::done("Planner off");
     }
-    let note = if model.starts_with("gemini") {
+    let note = if model.starts_with("openai:") {
+        ". What you say is sent to the endpoint saved in X's openai-base file for planning.".to_string()
+    } else if model.starts_with("gemini") {
         let has_key = std::env::var_os("GEMINI_API_KEY").is_some()
             || gemini_key_file().is_some_and(|f| f.is_file());
         format!(
