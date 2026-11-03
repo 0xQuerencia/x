@@ -364,8 +364,8 @@ pub enum AgentCommand {
         output: Output,
     },
     /// What your dictation shortcut does with speech: `dictate` types it (Hex as usual),
-    /// `actions` or `work` send it to X, `auto` sends only speech that starts with "x" or
-    /// "hey x" and types the rest, and `smart` lets the planner model decide each time whether
+    /// `actions` or `work` send it to X, `auto` sends only speech that starts with "Friday" or
+    /// "hey Friday" (or "x") and types the rest, and `smart` lets the planner model decide each time whether
     /// you gave a command or are dictating (needs a planner; unsure counts as dictation).
     Voice {
         #[arg(value_parser = ["dictate", "actions", "work", "auto", "smart"])]

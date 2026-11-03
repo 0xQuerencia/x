@@ -330,7 +330,7 @@ pub fn set_voice_mode(mode: VoiceMode) -> ControlReply {
     ControlReply::done(format!("Voice mode is {}", mode.name()))
 }
 
-/// In `Auto`, speech runs as a command only after a spoken "x" or "hey x"; the rest
+/// In `Auto`, speech runs as a command only after a spoken "Friday" or "hey Friday" ("x" also works); the rest
 /// types as dictation. "work" right after the prefix hands the goal to OpenCode.
 fn spoken_command(text: &str) -> Option<(Mode, String)> {
     let mut words = text.split_whitespace();
@@ -339,10 +339,10 @@ fn spoken_command(text: &str) -> Option<(Mode, String)> {
             .to_lowercase()
     };
     let mut first = clean(words.next()?);
-    if first == "hey" {
+    if matches!(first.as_str(), "hey" | "hi" | "okay" | "ok") {
         first = clean(words.next()?);
     }
-    if first != "x" {
+    if !matches!(first.as_str(), "friday" | "x") {
         return None;
     }
     let mut rest: Vec<&str> = words.collect();
@@ -638,6 +638,14 @@ mod tests {
             Some((Mode::Actions, "open Firefox".into()))
         );
         assert_eq!(
+            spoken_command("Hey Friday, open Firefox."),
+            Some((Mode::Actions, "open Firefox".into()))
+        );
+        assert_eq!(
+            spoken_command("friday work fix the failing tests"),
+            Some((Mode::Work, "fix the failing tests".into()))
+        );
+        assert_eq!(
             spoken_command("x work fix the failing tests"),
             Some((Mode::Work, "fix the failing tests".into()))
         );
@@ -646,6 +654,8 @@ mod tests {
             "xylophone open it",
             "next steps",
             "hey there x",
+            "fridays are great",
+            "friday",
             "x",
             "hey x,",
         ] {

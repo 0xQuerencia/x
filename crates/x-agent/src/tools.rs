@@ -550,7 +550,17 @@ fn strip_wake_word(utterance: &str) -> String {
     let clean = collapse_ws(utterance);
     let clean = clean.trim_matches(|c| " .!?,".contains(c));
     let lower = clean.to_ascii_lowercase();
-    for wake in ["hey x", "okay x", "ok x", "x"] {
+    for wake in [
+        "hey friday",
+        "hi friday",
+        "okay friday",
+        "ok friday",
+        "friday",
+        "hey x",
+        "okay x",
+        "ok x",
+        "x",
+    ] {
         if let Some(rest) = lower.strip_prefix(wake)
             && rest.starts_with([',', '.', ':', '!', ' '])
         {
