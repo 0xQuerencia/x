@@ -12,6 +12,15 @@ pub fn is_local_build() -> bool {
     option_env!("HEX_LOCAL_BUILD") == Some("1")
 }
 
+/// Whether this is an X build (`X_BUILD=1`): its own app, data, config, unit
+/// and desktop identity, so it installs and runs beside the official Hex.
+pub const fn is_x_build() -> bool {
+    match option_env!("X_BUILD") {
+        Some(value) => value.len() == 1 && value.as_bytes()[0] == b'1',
+        None => false,
+    }
+}
+
 /// Whether this is a macOS `Hex Test.app` build (`HEX_TEST_BUILD=1`), which
 /// keeps its data, settings, and user config apart from the installed Hex.
 pub fn is_macos_test_build() -> bool {
@@ -34,7 +43,9 @@ pub fn support_dir() -> Result<PathBuf> {
     }
     let data =
         dirs::data_dir().ok_or_else(|| eyre!("application data directory is unavailable"))?;
-    let folder = if is_macos_test_build() {
+    let folder = if is_x_build() {
+        "x"
+    } else if is_macos_test_build() {
         "hex-test"
     } else {
         "hex"
@@ -111,8 +122,14 @@ fn user_config_dir() -> Result<PathBuf> {
 }
 
 fn user_config_dir_in(home: &std::path::Path, test_build: bool) -> PathBuf {
-    home.join(".config")
-        .join(if test_build { "hex-test" } else { "hex" })
+    let folder = if is_x_build() {
+        "x"
+    } else if test_build {
+        "hex-test"
+    } else {
+        "hex"
+    };
+    home.join(".config").join(folder)
 }
 
 #[cfg(test)]
@@ -122,6 +139,10 @@ mod tests {
     #[test]
     fn each_build_has_its_own_config_folder() {
         let home = std::path::Path::new("/Users/kit");
+        if is_x_build() {
+            assert_eq!(user_config_dir_in(home, false), home.join(".config").join("x"));
+            return;
+        }
         assert_eq!(
             user_config_dir_in(home, false),
             home.join(".config").join("hex")

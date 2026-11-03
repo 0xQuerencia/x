@@ -27,7 +27,10 @@ fn opencode_exe() -> Option<PathBuf> {
 pub fn service() -> &'static Service {
     static SERVICE: OnceLock<Service> = OnceLock::new();
     SERVICE.get_or_init(|| {
-        let exe = std::env::current_exe().map_or_else(|_| "hex".into(), |p| p.display().to_string());
+        let exe = std::env::current_exe().map_or_else(
+            |_| "hex".into(),
+            |path| path.display().to_string().trim_end_matches(" (deleted)").to_string(),
+        );
         Service::new(Arc::new(HexCli { exe }), Arc::new(RealLauncher), opencode_exe())
     })
 }
