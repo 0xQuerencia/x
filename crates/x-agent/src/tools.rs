@@ -546,29 +546,66 @@ fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+static WAKE_WORDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+const DEFAULT_WAKE_WORDS: [&str; 2] = ["friday", "x"];
+const GREETINGS: [&str; 4] = ["hey", "hi", "okay", "ok"];
+
+/// The words that make speech a command. Anyone can choose their own; until they do it
+/// is "friday" and "x".
+pub fn wake_words() -> Vec<String> {
+    match WAKE_WORDS.lock() {
+        Ok(words) if !words.is_empty() => words.clone(),
+        _ => DEFAULT_WAKE_WORDS.map(String::from).to_vec(),
+    }
+}
+
+pub fn set_wake_words(words: Vec<String>) {
+    if let Ok(mut slot) = WAKE_WORDS.lock() {
+        *slot = words;
+    }
+}
+
+/// One spoken word, lowercased: letters or digits only, not a greeting or a mode word.
+pub fn valid_wake_word(word: &str) -> Result<String, String> {
+    let word = word.trim().to_lowercase();
+    let count = word.chars().count();
+    if count == 0 || count > 24 || !word.chars().all(char::is_alphanumeric) {
+        return Err("A wake word is one word of 1-24 letters or digits".into());
+    }
+    if GREETINGS.contains(&word.as_str()) || word == "work" {
+        return Err(format!("{word:?} cannot be a wake word"));
+    }
+    Ok(word)
+}
+
 fn strip_wake_word(utterance: &str) -> String {
+    strip_with(utterance, &wake_words())
+}
+
+fn strip_with(utterance: &str, wake_words: &[String]) -> String {
     let clean = collapse_ws(utterance);
     let clean = clean.trim_matches(|c| " .!?,".contains(c));
-    let lower = clean.to_ascii_lowercase();
-    for wake in [
-        "hey friday",
-        "hi friday",
-        "okay friday",
-        "hey, friday",
-        "hi, friday",
-        "okay, friday",
-        "ok friday",
-        "friday",
-        "hey x",
-        "okay x",
-        "ok x",
-        "x",
-    ] {
-        if let Some(rest) = lower.strip_prefix(wake)
+    let lower = clean.to_lowercase();
+    let mut skip = 0;
+    for greeting in GREETINGS {
+        if let Some(rest) = lower.strip_prefix(greeting)
+            && rest.starts_with([' ', ','])
+        {
+            skip = greeting.len() + rest.len() - rest.trim_start_matches([' ', ',']).len();
+            break;
+        }
+    }
+    for wake in wake_words {
+        if let Some(rest) = lower[skip..].strip_prefix(wake.as_str())
             && rest.starts_with([',', '.', ':', '!', ' '])
         {
-            let n = clean.len() - rest.len();
-            return clean[n..]
+            let keep = rest.chars().count();
+            let at = clean
+                .char_indices()
+                .rev()
+                .nth(keep.saturating_sub(1))
+                .map_or(clean.len(), |(i, _)| i);
+            return clean[at..]
                 .trim_start_matches(|c| " ,.:!".contains(c))
                 .to_string();
         }
@@ -934,6 +971,23 @@ mod tests {
             strip_wake_word("Friday, use Chrome to find the latest PR"),
             "use Chrome to find the latest PR"
         );
+    }
+
+    #[test]
+    fn people_can_choose_their_own_wake_word() {
+        let mine = ["jarvis".to_string(), "computer".to_string()];
+        assert_eq!(
+            strip_with("Hey Jarvis, open Firefox", &mine),
+            "open Firefox"
+        );
+        assert_eq!(strip_with("computer open firefox", &mine), "open firefox");
+        assert_eq!(
+            strip_with("Friday open firefox", &mine),
+            "Friday open firefox"
+        );
+        assert!(valid_wake_word("Jarvis").is_ok() && valid_wake_word("hey").is_err());
+        assert!(valid_wake_word("two words").is_err() && valid_wake_word("").is_err());
+        assert!(valid_wake_word("work").is_err());
     }
 
     #[test]

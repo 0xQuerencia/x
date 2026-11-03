@@ -251,6 +251,11 @@ pub enum AgentAction {
     Allow {
         index: usize,
     },
+    /// The words that make speech a command: `list`, `add <word>`, `remove <word>`, `set <word>`.
+    Wake {
+        command: String,
+        value: String,
+    },
     /// Screen access: `grant <app>`, `revoke <app>`, `list`, or `remote on|off` (whether
     /// on-screen text may go to a model that is not on this machine).
     Computer {

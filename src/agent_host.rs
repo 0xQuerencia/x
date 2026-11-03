@@ -52,6 +52,7 @@ pub fn service() -> &'static Service {
         service.set_computer_apps(load_computer_apps());
         service.set_computer_remote(computer_remote_file().is_some_and(|path| path.is_file()));
         VOICE.store(load_voice_mode() as u8, Ordering::Relaxed);
+        x_agent::tools::set_wake_words(load_wake_words());
         let saved = planner_file()
             .and_then(|path| std::fs::read_to_string(path).ok())
             .map(|model| model.trim().to_string())
@@ -150,6 +151,62 @@ fn set_planner(model: &str) -> ControlReply {
         String::new()
     };
     ControlReply::done(format!("Planner is {model}{note}"))
+}
+
+fn wake_words_file() -> Option<PathBuf> {
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("x-wake-words"))
+}
+
+fn load_wake_words() -> Vec<String> {
+    wake_words_file()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| x_agent::tools::valid_wake_word(line).ok())
+        .collect()
+}
+
+fn wake_summary() -> String {
+    format!("Wake words: {}", x_agent::tools::wake_words().join(", "))
+}
+
+/// `list`, `add <word>`, `remove <word>`, `set <word>`. Any single word works; at least one
+/// always stays so a spoken command is never impossible.
+fn wake_words_command(command: &str, value: &str) -> ControlReply {
+    let mut words = x_agent::tools::wake_words();
+    match command {
+        "list" => return ControlReply::done(wake_summary()),
+        "add" | "set" => match x_agent::tools::valid_wake_word(value) {
+            Ok(word) if command == "set" => words = vec![word],
+            Ok(word) => {
+                if !words.contains(&word) {
+                    words.push(word);
+                }
+            }
+            Err(error) => return ControlReply::error("usage", error),
+        },
+        "remove" => {
+            let word = value.trim().to_lowercase();
+            if !words.contains(&word) {
+                return ControlReply::error("usage", format!("{word:?} is not a wake word"));
+            }
+            if words.len() == 1 {
+                return ControlReply::error("refused", "keep at least one wake word");
+            }
+            words.retain(|w| *w != word);
+        }
+        _ => return ControlReply::error("usage", "list, add <word>, remove <word> or set <word>"),
+    }
+    let Some(path) = wake_words_file() else {
+        return ControlReply::error("failed", "the data folder is unavailable");
+    };
+    if let Err(error) = write_private(&path, words.join("\n").as_bytes()) {
+        return ControlReply::error("failed", format!("couldn't save the setting: {error}"));
+    }
+    x_agent::tools::set_wake_words(words);
+    ControlReply::done(wake_summary())
 }
 
 fn computer_apps_file() -> Option<PathBuf> {
@@ -376,7 +433,7 @@ pub fn set_voice_mode(mode: VoiceMode) -> ControlReply {
     ControlReply::done(format!("Voice mode is {}", mode.name()))
 }
 
-/// In `Auto`, speech runs as a command only after a spoken "Friday" or "hey Friday" ("x" also works); the rest
+/// In `Auto`, speech runs as a command only after a spoken wake word (see `agent wake`); the rest
 /// types as dictation. "work" right after the prefix hands the goal to OpenCode.
 fn spoken_command(text: &str) -> Option<(Mode, String)> {
     let mut words = text.split_whitespace();
@@ -388,7 +445,7 @@ fn spoken_command(text: &str) -> Option<(Mode, String)> {
     if matches!(first.as_str(), "hey" | "hi" | "okay" | "ok") {
         first = clean(words.next()?);
     }
-    if !matches!(first.as_str(), "friday" | "x") {
+    if !x_agent::tools::wake_words().contains(&first) {
         return None;
     }
     let mut rest: Vec<&str> = words.collect();
@@ -663,6 +720,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
         }
         AgentAction::Trust { on } => set_trust(on),
         AgentAction::Planner { model } => set_planner(&model),
+        AgentAction::Wake { command, value } => wake_words_command(&command, &value),
         AgentAction::Computer { command, value } => computer_access(&command, &value),
         AgentAction::Allow { index } => match svc.allow_once(index) {
             Ok(_) => snapshot(0),

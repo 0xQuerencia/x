@@ -380,6 +380,17 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// The word that starts a spoken command, in `auto` voice mode. Pick any single word:
+    /// `set jarvis` replaces them, `add computer` adds one, `remove` drops one, `list` shows them.
+    Wake {
+        #[arg(value_parser = ["list", "add", "remove", "set"])]
+        command: String,
+        /// The word, for add, remove and set.
+        #[arg(default_value = "")]
+        value: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// What X may read and operate on screen. `grant chrome` lets X read that app's windows
     /// and click and type in them; `revoke` takes it back; `list` shows both; `remote on`
     /// allows on-screen text to be sent to a model that is not on this machine (default off).
@@ -572,6 +583,11 @@ pub fn run(command: ControlCli) -> u8 {
                 ),
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Wake {
+                    command,
+                    value,
+                    output,
+                } => (AgentAction::Wake { command, value }, output),
                 AgentCommand::Computer {
                     command,
                     value,
