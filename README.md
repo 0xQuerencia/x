@@ -1,49 +1,104 @@
 # X
 
-X is a local-first voice and agent fork of [Hex](https://github.com/anomalyco/hex) for Linux (built and tested on Arch/Hyprland). Hex's local speech-to-text and dictation are kept as they were. X adds three things on top, all off until you turn on the Labs switch `x-agent`.
+**Hex, but it can do things.**
 
-- **Actions**: say "Friday, open Firefox and search YouTube for Mars rover". X plans it with fixed rules first and a model for anything else, then launches apps, opens sites, switches workspaces and windows, types into a window it just opened, or starts an OpenCode session in a temporary folder.
-- **Work**: hand a goal and a project folder to [OpenCode](https://opencode.ai). X streams its events, blocks commands outside a policy (you can allow one for a single rerun), and reports the files that changed. Stop works at any time.
-- **Computer use**: operate a browser window through its accessibility tree. X observes, picks one step, acts, re-observes and only reports done when it can quote text that is on screen now. It is limited to browsers you grant, and never reads password fields.
+I use [Hex](https://github.com/anomalyco/hex) for dictation. It's great at turning speech into text, but sometimes I don't want to type "open Firefox" into a text box. I want Firefox to open.
 
-Normal speech is typed as dictation as usual. Only speech that starts with "Friday" (or "hey Friday") is treated as a command.
+So I made X.
 
-## Install (Arch Linux)
+It's a fork of Hex. The local transcription and regular dictation are still there, with a few extra things for when you want your computer to actually do something.
 
-```sh
+## The idea
+
+```text
+"Remind me to finish the README"
+  -> types it into the app I'm using
+
+"X, open Firefox and search YouTube for Mars rovers"
+  -> opens the search
+
+"X, switch to workspace three"
+  -> switches Hyprland workspaces
+
+"Hey X, open GitHub"
+  -> opens GitHub
+```
+
+In **Auto** mode, normal speech is just dictation. Start a command with **X** or **Hey X** to make it an action. **You can change the trigger to a word of your choice.** `X` and `Friday` are simply the defaults.
+
+```bash
+x agent wake list                 # See your current trigger words
+x agent wake set <your-word>      # Replace them with a word you choose
+x agent wake add <another-word>   # Or allow more than one
+```
+
+Trigger words are single words, up to 24 letters or digits. A few reserved words (such as `hey` and `work`) aren't accepted.
+
+It's a spoken command prefix, not an always-listening wake-word detector. You still use your dictation shortcut to start speaking.
+
+## What it does
+
+- **Dictation:** Hex's local speech-to-text, pasted into whichever app you're using.
+- **Desktop:** Open or switch apps, focus windows, move between Hyprland workspaces, and open sites or searches.
+- **Browser:** With permission, inspect accessible page elements, click supported controls, and check what changed.
+- **Work:** Give [OpenCode](https://opencode.ai) a coding task, follow its progress, and stop it when you need to.
+- **Flexible commands:** An optional model can turn loosely worded requests into a small set of permitted actions. It doesn't get to run arbitrary shell commands.
+
+X waits for the finished transcript before acting. Half a sentence won't launch anything.
+
+## Install
+
+X is currently built for **Arch Linux**, with most hands-on testing on **Hyprland / Wayland**. There's no stable packaged release yet.
+
+```bash
 sudo pacman -S --needed base-devel git rust openblas wtype nodejs npm
-git clone https://github.com/0xQuerencia/x && cd x
+
+git clone https://github.com/0xQuerencia/x.git
+cd x
 ./scripts/install-arch.sh
+
 systemctl --user enable --now x.service
 x labs on x-agent
 ```
 
-The installer builds with `X_BUILD=1`, which gives X its own identity (data in `~/.local/share/x`, config in `~/.config/x`, `x.service`, app id `anomaly.x`), so it can sit next to an official Hex install. It also installs a pinned [agent-desktop](https://github.com/vercel-labs/agent-desktop) for reading accessibility trees. OpenCode must be on `PATH` for Work.
+X installs its own app and service without replacing the original Hex. The installer also sets up a pinned [agent-desktop](https://github.com/vercel-labs/agent-desktop) for browser accessibility.
 
-## Use
+Try a command without speaking:
 
-```sh
-x agent voice auto                  # only "Friday ..." speech becomes a command
-x agent trust on                    # run simple launches without a prompt
-x agent planner gemma4:e2b-it-qat   # local Ollama model; also gemini or openai:<model>
-x agent say "open firefox"          # same as speaking it
-x agent computer grant chromium     # let X read and operate that browser
-x agent stop
+```bash
+x agent say "open firefox"
 ```
 
-Bind your dictation key to `x dictation toggle`. Chromium and Chrome need `--force-renderer-accessibility` for computer use.
+A few useful settings:
 
-## Safety
+```bash
+x agent voice auto                 # Dictate normally; commands start with "X"
+x agent trust on                   # Skip prompts for allowed basic actions
+x agent planner gemma4:e2b-it-qat  # Optional local Ollama planner
+x agent computer grant chromium    # Let X inspect and operate Chromium
+x agent stop                       # Stop the current task
+```
 
-- Every step a model proposes must fit a closed set and pass validation. Nothing is run through a shell.
-- Screen content is treated as untrusted data, never as instructions. On-screen text goes only to a model on your machine unless you run `x agent computer remote on`.
-- Sending, buying, deleting and signing in are refused. Secret fields are never typed into.
-- Work never runs with `--auto`, and is pinned to the chosen folder.
+Basic launches don't need a model provider. **Work** needs an installed and configured [OpenCode](https://opencode.ai). Chrome and Chromium need `--force-renderer-accessibility` for browser control.
 
-## Status
+For the familiar keyboard flow, bind `x dictation toggle` in your desktop's shortcut settings. **Ctrl+Space** works if nothing else has claimed it.
 
-Verified on one machine (Arch, Hyprland, Wayland): Actions, Work with a real OpenCode run, and computer use against a disposable Chromium profile (click and verify, navigate and verify). Not verified: spoken wake-word commands end to end, Firefox, screenshots and vision (not built). Browser control relies on keyboard input that another window can interrupt if it steals focus.
+## Permissions
 
-## Credits
+"Open Firefox" shouldn't mean "run whatever the model wants."
 
-X is built on Hex by Christopher Langton and contributors, under the MIT licence in `LICENSE`.
+X sticks to a restricted set of actions. You can trust routine launches so they don't ask every time; more sensitive operations still need approval. Browser access is granted separately, password fields are off limits, and OpenCode works within a selected folder with command restrictions.
+
+## Still working on it
+
+It's not a full desktop assistant yet. Browser control works best with Chromium on Hyprland; Firefox, spoken command prefixes, and more complicated page flows still need broader real-world testing. There's no general screenshot-based vision or spoken conversation yet.
+
+Found something broken? [Open an issue](https://github.com/0xQuerencia/x/issues).
+
+## Built on
+
+[Hex](https://github.com/anomalyco/hex) for the app and local transcription, [OpenCode](https://opencode.ai) for coding tasks, and [agent-desktop](https://github.com/vercel-labs/agent-desktop) for browser accessibility.
+
+Thanks to Christopher Langton and everyone who built Hex. X is an independent fork, not an official Hex release.
+
+[MIT licensed](LICENSE).
