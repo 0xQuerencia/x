@@ -16,6 +16,7 @@ pub mod phase;
 pub mod planner;
 pub mod service;
 pub mod tools;
+pub mod wm;
 
 /// Retry a spawn that fails with ETXTBSY: another thread forked while the executable was
 /// still open for writing (only happens right after an executable is created).

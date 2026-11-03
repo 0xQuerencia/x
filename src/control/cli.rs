@@ -380,6 +380,11 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Which window-control backend this desktop has and what it can do.
+    Desktop {
+        #[command(flatten)]
+        output: Output,
+    },
     /// The word that starts a spoken command, in `auto` voice mode. Pick any single word:
     /// `set jarvis` replaces them, `add computer` adds one, `remove` drops one, `list` shows them.
     Wake {
@@ -583,6 +588,7 @@ pub fn run(command: ControlCli) -> u8 {
                 ),
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
                 AgentCommand::Wake {
                     command,
                     value,

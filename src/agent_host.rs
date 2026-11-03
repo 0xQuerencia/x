@@ -712,6 +712,10 @@ pub fn handle(action: AgentAction) -> ControlReply {
         }
         AgentAction::Trust { on } => set_trust(on),
         AgentAction::Planner { model } => set_planner(&model),
+        AgentAction::Desktop => {
+            let r = x_agent::wm::report();
+            ControlReply::done(serde_json::to_string(&r).unwrap_or_default())
+        }
         AgentAction::Wake { command, value } => wake_words_command(&command, &value),
         AgentAction::Computer { command, value } => computer_access(&command, &value),
         AgentAction::Allow { index } => match svc.allow_once(index) {

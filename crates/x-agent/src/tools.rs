@@ -65,6 +65,8 @@ const ALIASES: &[(&str, &str)] = &[
     ("a new terminal", "terminal"),
     ("file manager", "files"),
     ("files", "files"),
+    ("editor", "vscode"),
+    ("my editor", "vscode"),
 ];
 
 fn lookup<'a, T>(table: &'a [(&'a str, T)], key: &str) -> Option<&'a T> {
@@ -103,6 +105,15 @@ pub enum Action {
     Workspace {
         number: u8,
     },
+    /// Focus, move, maximize, minimize, close or list real windows through the desktop's
+    /// window manager, verified and undoable where the desktop allows.
+    Window {
+        op: crate::wm::Op,
+        #[serde(default)]
+        target: crate::wm::Target,
+        #[serde(default)]
+        ws: Option<crate::wm::Ws>,
+    },
     /// OpenCode's own interface in a new terminal, started in a fresh temporary folder.
     Opencode,
     /// A temporary OpenCode session in a fresh folder. It runs as a Work task, never as
@@ -140,6 +151,17 @@ impl Action {
             Self::Opencode => "Open OpenCode in a new temporary folder".to_string(),
             Self::Focus { target } => format!("Switch to {target}"),
             Self::Workspace { number } => format!("Go to workspace {number}"),
+            Self::Window { op, target, ws } => {
+                let who = if target.app.is_empty() {
+                    "this window"
+                } else {
+                    &target.app
+                };
+                match ws {
+                    Some(ws) => format!("{op:?} {who} ({ws:?})"),
+                    None => format!("{op:?} {who}"),
+                }
+            }
             Self::Session { goal } => format!("Start a temporary OpenCode session: {goal}"),
             Self::Computer { app, goal } => format!("Operate {app}: {goal}"),
             Self::Url { target, browser } => with_browser(format!("Open {target}"), browser),
@@ -164,6 +186,20 @@ impl Action {
             Self::Workspace { number } => {
                 if !(1..=10).contains(number) {
                     return Err("Workspace must be 1-10".into());
+                }
+            }
+            Self::Window { op, target, ws } => {
+                if !target.app.is_empty() {
+                    lookup(APPS, &target.app).ok_or("Unapproved app")?;
+                }
+                if matches!(op, crate::wm::Op::Move | crate::wm::Op::Workspace) {
+                    match ws {
+                        Some(crate::wm::Ws::N(n)) if !(1..=10).contains(n) => {
+                            return Err("Workspace must be 1-10".into());
+                        }
+                        None => return Err("Which workspace?".into()),
+                        _ => {}
+                    }
                 }
             }
             Self::Computer { app, goal } => {
@@ -238,6 +274,7 @@ impl Action {
                 "workspace".into(),
                 number.to_string(),
             ]),
+            Self::Window { .. } => Err("Window commands run through the window controller".into()),
             Self::Session { .. } => Err("A session runs as Work, not as an Action".into()),
             Self::Computer { .. } => Err("Computer steps run through the observe loop".into()),
             Self::Opencode => opencode_argv(&session_dir("opencode"), resolve),
@@ -270,6 +307,22 @@ impl Action {
     /// Validate, then launch detached. Success means *launched*, not *page loaded*.
     pub fn execute(&self) -> Result<String, String> {
         let valid = self.clone().validate()?;
+        if let Self::Window { op, target, ws } = &valid {
+            let req = crate::wm::Request {
+                op: op.clone(),
+                target: target.clone(),
+                ws: ws.clone(),
+            };
+            return crate::wm::run(&req)
+                .map(|o| {
+                    if o.undoable {
+                        format!("{} (say undo to revert)", o.message)
+                    } else {
+                        o.message
+                    }
+                })
+                .map_err(|e| e.to_string());
+        }
         let argv = if matches!(valid, Self::Opencode) {
             let dir = session_dir("opencode");
             std::fs::create_dir_all(&dir)
@@ -533,6 +586,17 @@ pub fn safe_url(raw: &str) -> Result<&str, String> {
     Ok(raw)
 }
 
+/// The approved app an alias or spoken name refers to.
+pub(crate) fn resolve_app(name: &str) -> Option<&'static str> {
+    normalize_app(name)
+}
+
+/// Window classes that belong to an approved app.
+pub(crate) fn app_classes(app: &str) -> Option<Vec<&'static str>> {
+    let (name, exes) = APPS.iter().find(|(n, _)| *n == app)?;
+    Some(std::iter::once(*name).chain(exes.iter().copied()).collect())
+}
+
 fn normalize_app(name: &str) -> Option<&'static str> {
     let key = name
         .trim()
@@ -623,6 +687,13 @@ fn strip_prefix_ci<'a>(s: &'a str, prefixes: &[&str]) -> Option<&'a str> {
 
 fn parse_one(text: &str) -> Option<Vec<Action>> {
     let text = text.trim().trim_end_matches(['?', '.', '!', ' ']);
+    if let Some(req) = crate::wm::parse::parse(text) {
+        return Some(vec![Action::Window {
+            op: req.op,
+            target: req.target,
+            ws: req.ws,
+        }]);
+    }
     let mut browser = String::new();
     let mut search_text = text.to_string();
     if let Some(rest) = strip_prefix_ci(text, &["open up", "open", "launch", "start"]) {
@@ -808,6 +879,7 @@ pub fn is_low_risk(actions: &[Action]) -> bool {
         Action::Type { .. } => i > 0 && actions[i - 1].launches_window(),
         Action::Session { .. } => actions.len() == 1,
         Action::Computer { .. } => false,
+        Action::Window { op, .. } => !matches!(op, crate::wm::Op::Close),
         _ => true,
     })
 }

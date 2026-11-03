@@ -251,6 +251,8 @@ pub enum AgentAction {
     Allow {
         index: usize,
     },
+    /// Which window-control backend this desktop has and what it can do.
+    Desktop,
     /// The words that make speech a command: `list`, `add <word>`, `remove <word>`, `set <word>`.
     Wake {
         command: String,
