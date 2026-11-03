@@ -247,7 +247,7 @@ fn rows(ui: &Ui) -> Vec<Row> {
         Feature::XAgent,
         &TERMINAL,
         tr("X agent"),
-        tr("Speak safe desktop actions, or hand a goal to OpenCode with a visible plan, approval and Stop. Dictation is unchanged"),
+        tr("Voice actions and OpenCode work, with a plan you approve first"),
     ));
     rows.push(row(
         Feature::VocabularyBiasing,
