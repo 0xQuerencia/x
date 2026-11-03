@@ -27,12 +27,20 @@ pub(crate) fn start(
     let view = TrayView::default();
     let icon = rune::TrayIcon::rgba(ICON_SIZE, ICON_SIZE, ICON_RGBA.to_vec());
     let spec = rune::TraySpec::new(
-        if crate::app_paths::is_x_build() { "x" } else { "hex" },
-        if crate::app_paths::is_x_build() { "X" } else { "Hex" },
+        if crate::app_paths::is_x_build() {
+            "x"
+        } else {
+            "hex"
+        },
+        if crate::app_paths::is_x_build() {
+            "X"
+        } else {
+            "Hex"
+        },
         icon,
     )
-        .tooltip(view.tooltip())
-        .menu(view.menu());
+    .tooltip(view.tooltip())
+    .menu(view.menu());
     let show = move |token| {
         let activation = Activation {
             token,

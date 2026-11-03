@@ -91,7 +91,7 @@ pub trait Launcher: Send + Sync {
 /// Turns speech the rules do not understand into registry actions. Its output is only
 /// ever a proposal: every step is validated like any other.
 pub trait Planner: Send + Sync {
-    fn plan(&self, text: &str) -> Result<Vec<Action>, String>;
+    fn plan(&self, text: &str, smart: bool) -> Result<tools::Reply, String>;
     fn name(&self) -> String;
 }
 
@@ -129,6 +129,7 @@ pub struct Service {
     launcher: Arc<dyn Launcher>,
     opencode_exe: Arc<Mutex<Option<PathBuf>>>,
     planner: Arc<Mutex<Option<Arc<dyn Planner>>>>,
+    session_root: Arc<Mutex<Option<PathBuf>>>,
 }
 
 fn now() -> u64 {
@@ -163,6 +164,7 @@ impl Service {
             launcher,
             opencode_exe: Arc::new(Mutex::new(opencode_exe)),
             planner: Arc::new(Mutex::new(None)),
+            session_root: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -220,6 +222,12 @@ impl Service {
         );
     }
 
+    pub fn set_session_root(&self, root: PathBuf) {
+        if let Ok(mut slot) = self.session_root.lock() {
+            *slot = Some(root);
+        }
+    }
+
     pub fn set_planner(&self, planner: Option<Arc<dyn Planner>>) {
         if let Ok(mut slot) = self.planner.lock() {
             *slot = planner;
@@ -228,18 +236,21 @@ impl Service {
 
     /// Rules first: they are instant and never wrong about what they accept. Only speech
     /// they do not understand goes to the model, outside the state lock.
-    fn model_plan(&self, text: &str) -> Option<Vec<Action>> {
-        let planner = self.planner.lock().ok()?.clone()?;
+    fn model_plan(&self, text: &str, smart: bool) -> Result<Option<Vec<Action>>, String> {
+        let Some(planner) = self.planner.lock().ok().and_then(|p| p.clone()) else {
+            return Ok(None);
+        };
         if self.lock().phase.is_busy() {
-            return None;
+            return Ok(None);
         }
         self.emit("info", &format!("Asking {} to plan", planner.name()));
-        match planner.plan(text) {
-            Ok(actions) if !actions.is_empty() => Some(actions),
-            Ok(_) => None,
+        match planner.plan(text, smart) {
+            Ok(tools::Reply::Steps(actions)) if !actions.is_empty() => Ok(Some(actions)),
+            Ok(tools::Reply::Dictation) => Err(tools::NOT_A_COMMAND.into()),
+            Ok(_) => Ok(None),
             Err(error) => {
                 self.emit("error", &format!("Planner: {error}"));
-                None
+                Ok(None)
             }
         }
     }
@@ -250,13 +261,58 @@ impl Service {
     }
 
     pub fn plan(&self, text: &str, mode: Mode) -> Result<Task, String> {
-        let preset = (mode == Mode::Actions && tools::plan_rules(text).is_none())
-            .then(|| self.model_plan(text.trim()))
-            .flatten();
+        self.plan_with(text, mode, false)
+    }
+
+    /// Like `plan`, but the model also decides whether the speech was a command at all;
+    /// `Err(NOT_A_COMMAND)` means it was dictation and nothing was planned.
+    pub fn plan_smart(&self, text: &str) -> Result<Task, String> {
+        self.plan_with(text, Mode::Actions, true)
+    }
+
+    fn plan_with(&self, text: &str, mode: Mode, smart: bool) -> Result<Task, String> {
+        let mut preset = None;
+        if mode == Mode::Actions {
+            preset = tools::plan_rules(text);
+            if preset.is_none() {
+                preset = self.model_plan(text.trim(), smart)?;
+            }
+            if preset.is_none() && smart {
+                return Err(tools::NOT_A_COMMAND.into());
+            }
+        }
+        if let Some([Action::Session { goal }]) = preset.as_deref() {
+            return self.plan_session(&goal.clone());
+        }
         let task = self.plan_task(text, mode, preset)?;
         let low_risk = tools::is_low_risk(&self.lock().actions);
         if mode == Mode::Actions && low_risk && self.lock().trust_actions {
             self.emit("info", "Trusted Actions: running without a prompt");
+            self.approve(task.id)?;
+        }
+        Ok(task)
+    }
+
+    /// A throwaway project folder under `~/x-sessions`, then an ordinary Work task in it.
+    /// The folder is never deleted for you. With Trusted Actions on the session starts
+    /// at once: it is confined to the new folder and OpenCode's permission policy.
+    fn plan_session(&self, goal: &str) -> Result<Task, String> {
+        let root = match self.session_root.lock().ok().and_then(|r| r.clone()) {
+            Some(root) => root,
+            None => dirs::home_dir()
+                .ok_or("No home folder for the session")?
+                .join("x-sessions"),
+        };
+        let dir = root.join(format!("session-{}", now()));
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
+        self.set_workspace(&dir.display().to_string())?;
+        let task = self.plan_task(goal, Mode::Work, None)?;
+        if self.lock().trust_actions {
+            self.emit(
+                "info",
+                "Trusted Actions: starting the session without a prompt",
+            );
             self.approve(task.id)?;
         }
         Ok(task)
@@ -833,10 +889,10 @@ mod tests {
         assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
     }
 
-    struct FakePlanner(Result<Vec<Action>, String>);
+    struct FakePlanner(Result<tools::Reply, String>);
 
     impl Planner for FakePlanner {
-        fn plan(&self, _: &str) -> Result<Vec<Action>, String> {
+        fn plan(&self, _: &str, _: bool) -> Result<tools::Reply, String> {
             self.0.clone()
         }
         fn name(&self) -> String {
@@ -853,7 +909,9 @@ mod tests {
         let typed = Action::Type {
             text: "welcome back wiki".into(),
         };
-        s.set_planner(Some(Arc::new(FakePlanner(Ok(vec![terminal, typed])))));
+        s.set_planner(Some(Arc::new(FakePlanner(Ok(tools::Reply::Steps(vec![
+            terminal, typed,
+        ]))))));
         let t = s
             .plan("pop open a shell and greet the wiki", Mode::Actions)
             .unwrap();
@@ -880,6 +938,62 @@ mod tests {
                 .any(|e| e.text.contains("Planner: down"))
         );
         assert!(l.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dictation_is_not_a_command_and_plans_nothing() {
+        let (s, _, l) = rig();
+        s.set_planner(Some(Arc::new(FakePlanner(Ok(tools::Reply::Dictation)))));
+        assert_eq!(
+            s.plan_smart("remember to buy milk tomorrow").unwrap_err(),
+            tools::NOT_A_COMMAND
+        );
+        assert!(s.snapshot(0).task.is_none());
+        s.set_planner(None);
+        assert_eq!(
+            s.plan_smart("remember to buy milk tomorrow").unwrap_err(),
+            tools::NOT_A_COMMAND
+        );
+        assert!(
+            s.plan_smart("open firefox").is_ok(),
+            "rules still catch commands"
+        );
+        assert!(l.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_temporary_session_is_a_work_task_in_a_fresh_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("home").join("x-sessions");
+        let (s, _d, _) = work_rig("echo hi > out.txt");
+        s.set_session_root(root.clone());
+        let t = s
+            .plan("start a temporary session to write a poem", Mode::Actions)
+            .unwrap();
+        assert_eq!(t.mode, Mode::Work);
+        assert_eq!(t.text, "write a poem");
+        let workspace = t.workspace.unwrap();
+        assert!(workspace.starts_with(root.to_str().unwrap()), "{workspace}");
+        assert_eq!(
+            s.snapshot(0).phase,
+            Phase::AwaitingApproval,
+            "asks unless trusted"
+        );
+        s.approve(t.id).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        assert!(std::path::Path::new(&workspace).join("out.txt").exists());
+    }
+
+    #[test]
+    fn desktop_steps_are_actions_the_rules_know() {
+        let (s, _, l) = rig();
+        s.set_trust_actions(true);
+        s.plan("switch to firefox", Mode::Actions).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        s.plan("go to workspace 3", Mode::Actions).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        assert_eq!(l.launched.lock().unwrap().len(), 2);
+        assert!(s.plan("go to workspace 99", Mode::Actions).is_err());
     }
 
     #[test]

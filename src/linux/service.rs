@@ -36,7 +36,11 @@ const IO_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENTS: usize = 8;
 /// A send waits for the router's answer (it waits 8 s itself).
 const SEND_WAIT: Duration = Duration::from_secs(10);
-const UNIT: &str = if crate::app_paths::is_x_build() { "x.service" } else { "hex.service" };
+const UNIT: &str = if crate::app_paths::is_x_build() {
+    "x.service"
+} else {
+    "hex.service"
+};
 /// How long a launch waits for a started unit's socket. `Type=notify`
 /// units are ready when `systemctl start` returns; units an older installer
 /// wrote are `Type=simple` and need the wait.

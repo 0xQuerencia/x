@@ -95,7 +95,30 @@ pub enum Action {
     Type {
         text: String,
     },
+    /// Brings an already-open allowlisted app's window to the front (Hyprland).
+    Focus {
+        target: String,
+    },
+    /// Switches to workspace 1-10 (Hyprland).
+    Workspace {
+        number: u8,
+    },
+    /// A temporary OpenCode session in a fresh folder. It runs as a Work task, never as
+    /// an Action step, and must be the only step.
+    Session {
+        goal: String,
+    },
 }
+
+/// What a planner may answer: steps, or that the speech was meant to be typed as dictation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Reply {
+    Steps(Vec<Action>),
+    Dictation,
+}
+
+/// The error a planner-backed request returns when the speech was dictation, not a command.
+pub const NOT_A_COMMAND: &str = "That was dictation, not a command";
 
 const MAX_TYPED: usize = 300;
 
@@ -106,6 +129,9 @@ impl Action {
         match self {
             Self::App { target } => format!("Open {target}"),
             Self::Type { text } => format!("Type \"{text}\" into the focused window"),
+            Self::Focus { target } => format!("Switch to {target}"),
+            Self::Workspace { number } => format!("Go to workspace {number}"),
+            Self::Session { goal } => format!("Start a temporary OpenCode session: {goal}"),
             Self::Url { target, browser } => with_browser(format!("Open {target}"), browser),
             Self::Search {
                 target,
@@ -120,6 +146,19 @@ impl Action {
         match &self {
             Self::App { target } => {
                 lookup(APPS, target).ok_or("Unapproved app")?;
+            }
+            Self::Focus { target } => {
+                lookup(APPS, target).ok_or("Unapproved app")?;
+            }
+            Self::Workspace { number } => {
+                if !(1..=10).contains(number) {
+                    return Err("Workspace must be 1-10".into());
+                }
+            }
+            Self::Session { goal } => {
+                if goal.trim().is_empty() || goal.chars().count() > MAX_TRANSCRIPT {
+                    return Err("A session goal must be 1-1000 characters".into());
+                }
             }
             Self::Type { text } => {
                 if text.trim().is_empty() || text.chars().count() > MAX_TYPED {
@@ -163,6 +202,23 @@ impl Action {
         };
         match self {
             Self::App { target } => Ok(vec![exe_for(target, resolve)?]),
+            Self::Focus { target } => {
+                let names = lookup(APPS, target).ok_or("Unapproved app")?;
+                let class = format!("class:^({})$", names.join("|"));
+                Ok(vec![
+                    resolve("hyprctl").ok_or("hyprctl not found")?,
+                    "dispatch".into(),
+                    "focuswindow".into(),
+                    class,
+                ])
+            }
+            Self::Workspace { number } => Ok(vec![
+                resolve("hyprctl").ok_or("hyprctl not found")?,
+                "dispatch".into(),
+                "workspace".into(),
+                number.to_string(),
+            ]),
+            Self::Session { .. } => Err("A session runs as Work, not as an Action".into()),
             Self::Type { text } => {
                 let typer = resolve("wtype").ok_or("wtype not found (install wtype)")?;
                 Ok(vec![typer, "--".into(), text.clone()])
@@ -183,7 +239,10 @@ impl Action {
     }
 
     pub fn launches_window(&self) -> bool {
-        !matches!(self, Self::Type { .. })
+        matches!(
+            self,
+            Self::App { .. } | Self::Url { .. } | Self::Search { .. }
+        )
     }
 
     /// Validate, then launch detached. Success means *launched*, not *page loaded*.
@@ -202,6 +261,18 @@ impl Action {
             } else {
                 Err("wtype could not type into the focused window".into())
             };
+        }
+        if let Self::Focus { target } = &valid {
+            let names = lookup(APPS, target).ok_or("Unapproved app")?;
+            let lua = format!(
+                "hl.dsp.focus({{ window = \"class:^({})$\" }})",
+                names.join("|")
+            );
+            return desktop_step(exe, args, &lua).and_then(|()| confirm_focus(target));
+        }
+        if let Self::Workspace { number } = &valid {
+            let lua = format!("hl.dsp.focus({{ workspace = \"{number}\" }})");
+            return desktop_step(exe, args, &lua).and_then(|()| confirm_workspace(*number));
         }
         let mut cmd = Command::new(exe);
         cmd.args(args)
@@ -227,6 +298,57 @@ impl Action {
         });
         Ok(format!("Launched {}", valid.describe()))
     }
+}
+
+/// Hyprland's Lua config takes `hl.dsp.*` expressions; older ones take named dispatchers.
+/// Both are built here from allowlisted values only. The first the desktop accepts wins.
+fn desktop_step(exe: &str, legacy: &[String], lua: &str) -> Result<(), String> {
+    let mut last = String::new();
+    for args in [
+        vec!["dispatch".to_string(), lua.to_string()],
+        legacy.to_vec(),
+    ] {
+        let out = Command::new(exe)
+            .args(&args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("could not run {exe}: {e}"))?;
+        last = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if out.status.success() && last.eq_ignore_ascii_case("ok") {
+            return Ok(());
+        }
+    }
+    Err(format!("The desktop refused: {last}"))
+}
+
+fn hypr_json(args: &[&str]) -> Option<serde_json::Value> {
+    let out = Command::new("hyprctl").args(args).output().ok()?;
+    serde_json::from_slice(&out.stdout).ok()
+}
+
+/// Polls up to two seconds so the answer reflects the desktop, not just the dispatch.
+fn confirm_focus(target: &str) -> Result<String, String> {
+    let names = lookup(APPS, target).ok_or("Unapproved app")?;
+    for _ in 0..10 {
+        let class = hypr_json(&["activewindow", "-j"])
+            .and_then(|j| j.get("class")?.as_str().map(str::to_ascii_lowercase));
+        if class.is_some_and(|c| names.iter().any(|n| c.contains(&n.to_ascii_lowercase()))) {
+            return Ok(format!("Switched to {target}"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    Err(format!("No open {target} window took focus"))
+}
+
+fn confirm_workspace(number: u8) -> Result<String, String> {
+    for _ in 0..10 {
+        let id = hypr_json(&["activeworkspace", "-j"]).and_then(|j| j.get("id")?.as_u64());
+        if id == Some(u64::from(number)) {
+            return Ok(format!("Now on workspace {number}"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    Err(format!("Workspace {number} did not become active"))
 }
 
 fn with_browser(base: String, browser: &str) -> String {
@@ -413,6 +535,35 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
         };
         return action.validate().ok().map(|a| vec![a]);
     }
+    if let Some(goal) = strip_prefix_ci(
+        text,
+        &[
+            "start a temporary session to",
+            "start a temp session to",
+            "spin up a temporary session to",
+            "spin up a session to",
+            "start a session to",
+        ],
+    ) {
+        return Action::Session {
+            goal: goal.trim().to_string(),
+        }
+        .validate()
+        .ok()
+        .map(|a| vec![a]);
+    }
+    if let Some(rest) = strip_prefix_ci(text, &["switch to", "go to", "focus"]) {
+        let rest = rest.trim();
+        if let Some(number) =
+            strip_prefix_ci(rest, &["workspace"]).and_then(|n| n.trim().parse::<u8>().ok())
+        {
+            return Action::Workspace { number }
+                .validate()
+                .ok()
+                .map(|a| vec![a]);
+        }
+        return normalize_app(rest).map(|app| vec![Action::Focus { target: app.into() }]);
+    }
     if let Some(rest) = strip_prefix_ci(text, &["type", "write"]) {
         let typed = rest.trim().trim_matches(['"', '\'', '“', '”']).trim();
         return Action::Type {
@@ -461,7 +612,15 @@ fn split_steps(text: &str) -> Vec<String> {
             if lower[i..].starts_with(joiner) {
                 let after = &lower[i + joiner.len()..];
                 if [
-                    "open ", "launch ", "start ", "search ", "look up ", "type ", "write ",
+                    "open ",
+                    "launch ",
+                    "start ",
+                    "search ",
+                    "look up ",
+                    "type ",
+                    "write ",
+                    "switch to ",
+                    "focus ",
                 ]
                 .iter()
                 .any(|v| after.starts_with(v))
@@ -520,6 +679,7 @@ pub fn wait_for_launched_focus() -> Result<(), String> {
 pub fn is_low_risk(actions: &[Action]) -> bool {
     actions.iter().enumerate().all(|(i, action)| match action {
         Action::Type { .. } => i > 0 && actions[i - 1].launches_window(),
+        Action::Session { .. } => actions.len() == 1,
         _ => true,
     })
 }
@@ -542,6 +702,24 @@ pub fn plan_rules(utterance: &str) -> Option<Vec<Action>> {
         actions.extend(parse_one(part)?);
     }
     Some(actions)
+}
+
+/// Parse untrusted planner JSON (`{"steps":[...]}` or `{"dictate":true}`) into a reply of
+/// validated actions.
+pub fn parse_reply(raw: &str) -> Result<Reply, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Mark {
+        dictate: bool,
+    }
+    if let Ok(Mark { dictate: true }) = serde_json::from_str(raw) {
+        return Ok(Reply::Dictation);
+    }
+    let actions = parse_plan_json(raw)?;
+    if actions.len() > 1 && actions.iter().any(|a| matches!(a, Action::Session { .. })) {
+        return Err("A session must be the only step".into());
+    }
+    Ok(Reply::Steps(actions))
 }
 
 /// Parse untrusted planner JSON (`{"steps":[...]}`) into validated actions.

@@ -224,20 +224,37 @@ pub enum AgentAction {
         since: u64,
     },
     /// Start listening, or stop and plan what was said.
-    Toggle { mode: String },
+    Toggle {
+        mode: String,
+    },
     /// Plan typed text exactly as spoken text would be.
-    Say { text: String, mode: String },
-    Approve { id: u64 },
+    Say {
+        text: String,
+        mode: String,
+    },
+    Approve {
+        id: u64,
+    },
     Stop,
-    Workspace { path: String },
+    Workspace {
+        path: String,
+    },
     /// Run validated Actions as soon as they are planned (`on`), or ask first (`off`).
-    Trust { on: bool },
+    Trust {
+        on: bool,
+    },
     /// What the dictation shortcut's transcript becomes: dictate, actions, work or auto.
-    Voice { mode: String },
+    Voice {
+        mode: String,
+    },
     /// Rerun the last Work goal with one refused command allowed for that run only.
-    Allow { index: usize },
+    Allow {
+        index: usize,
+    },
     /// The local Ollama model that plans speech the rules do not understand, or off.
-    Planner { model: String },
+    Planner {
+        model: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

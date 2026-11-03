@@ -11,8 +11,8 @@ mod human;
 use clap::{Args, Subcommand};
 
 use super::{
-    AgentAction, CONTROL_VERSION, CaptureAction, ControlCommand, ControlReply, ControlRequest, ControlResponse,
-    Pane,
+    AgentAction, CONTROL_VERSION, CaptureAction, ControlCommand, ControlReply, ControlRequest,
+    ControlResponse, Pane,
 };
 
 pub const EXIT_REFUSED: u8 = 1;
@@ -365,9 +365,10 @@ pub enum AgentCommand {
     },
     /// What your dictation shortcut does with speech: `dictate` types it (Hex as usual),
     /// `actions` or `work` send it to X, `auto` sends only speech that starts with "x" or
-    /// "hey x" and types the rest.
+    /// "hey x" and types the rest, and `smart` lets the planner model decide each time whether
+    /// you gave a command or are dictating (needs a planner; unsure counts as dictation).
     Voice {
-        #[arg(value_parser = ["dictate", "actions", "work", "auto"])]
+        #[arg(value_parser = ["dictate", "actions", "work", "auto", "smart"])]
         mode: String,
         #[command(flatten)]
         output: Output,
@@ -550,9 +551,13 @@ pub fn run(command: ControlCli) -> u8 {
             let (action, output) = match command {
                 AgentCommand::Status { since, output } => (AgentAction::Status { since }, output),
                 AgentCommand::Toggle { mode, output } => (AgentAction::Toggle { mode }, output),
-                AgentCommand::Say { mode, text, output } => {
-                    (AgentAction::Say { text: text.join(" "), mode }, output)
-                }
+                AgentCommand::Say { mode, text, output } => (
+                    AgentAction::Say {
+                        text: text.join(" "),
+                        mode,
+                    },
+                    output,
+                ),
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
                 AgentCommand::Planner { model, output } => (AgentAction::Planner { model }, output),
@@ -562,8 +567,8 @@ pub fn run(command: ControlCli) -> u8 {
                     (AgentAction::Trust { on: state == "on" }, output)
                 }
                 AgentCommand::Workspace { path, output } => {
-                    let absolute = std::path::absolute(&path)
-                        .map_or(path, |p| p.display().to_string());
+                    let absolute =
+                        std::path::absolute(&path).map_or(path, |p| p.display().to_string());
                     (AgentAction::Workspace { path: absolute }, output)
                 }
             };

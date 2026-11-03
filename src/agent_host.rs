@@ -24,7 +24,11 @@ const DISABLED: &str = "X is off. Turn it on with `hex labs on x-agent`";
 fn opencode_exe() -> Option<PathBuf> {
     x_agent::tools::which("opencode")
         .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".opencode/bin/opencode")).filter(|p| p.is_file()))
+        .or_else(|| {
+            dirs::home_dir()
+                .map(|h| h.join(".opencode/bin/opencode"))
+                .filter(|p| p.is_file())
+        })
 }
 
 pub fn service() -> &'static Service {
@@ -32,9 +36,18 @@ pub fn service() -> &'static Service {
     SERVICE.get_or_init(|| {
         let exe = std::env::current_exe().map_or_else(
             |_| "hex".into(),
-            |path| path.display().to_string().trim_end_matches(" (deleted)").to_string(),
+            |path| {
+                path.display()
+                    .to_string()
+                    .trim_end_matches(" (deleted)")
+                    .to_string()
+            },
         );
-        let service = Service::new(Arc::new(HexCli { exe }), Arc::new(RealLauncher), opencode_exe());
+        let service = Service::new(
+            Arc::new(HexCli { exe }),
+            Arc::new(RealLauncher),
+            opencode_exe(),
+        );
         service.set_trust_actions(trust_file().is_some_and(|path| path.is_file()));
         VOICE.store(load_voice_mode() as u8, Ordering::Relaxed);
         let saved = planner_file()
@@ -51,15 +64,38 @@ pub fn service() -> &'static Service {
 /// Present when the person opted into trusted Actions. It lives beside the other trust
 /// files in the data folder, so nothing in a config can switch it on.
 fn trust_file() -> Option<PathBuf> {
-    crate::app_paths::support_dir().ok().map(|dir| dir.join("x-trusted-actions"))
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("x-trusted-actions"))
 }
 
 fn planner_file() -> Option<PathBuf> {
-    crate::app_paths::support_dir().ok().map(|dir| dir.join("x-planner"))
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("x-planner"))
 }
 
+fn gemini_key_file() -> Option<PathBuf> {
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("gemini-key"))
+}
+
+/// `gemini` or `gemini:<model>` is Gemini; any other name is a local Ollama model.
 fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
-    Arc::new(x_agent::planner::Ollama { model })
+    match model.strip_prefix("gemini") {
+        Some(rest) if rest.is_empty() || rest.starts_with(':') => {
+            Arc::new(x_agent::planner::Gemini {
+                model: rest
+                    .strip_prefix(':')
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or(x_agent::planner::GEMINI_DEFAULT)
+                    .to_string(),
+                key_file: gemini_key_file(),
+            })
+        }
+        _ => Arc::new(x_agent::planner::Ollama { model }),
+    }
 }
 
 fn set_planner(model: &str) -> ControlReply {
@@ -71,16 +107,41 @@ fn set_planner(model: &str) -> ControlReply {
         return ControlReply::error("failed", "the data folder is unavailable");
     };
     let off = model == "off";
-    let saved = if off { std::fs::remove_file(&path).or_else(ignore_missing) } else { std::fs::write(&path, model) };
+    let saved = if off {
+        std::fs::remove_file(&path).or_else(ignore_missing)
+    } else {
+        std::fs::write(&path, model)
+    };
     if let Err(error) = saved {
         return ControlReply::error("failed", format!("couldn't save the setting: {error}"));
     }
     service().set_planner((!off).then(|| planner_for(model.to_string())));
-    ControlReply::done(if off { "Planner off".to_string() } else { format!("Planner is {model}") })
+    if off {
+        return ControlReply::done("Planner off");
+    }
+    let note = if model.starts_with("gemini") {
+        let has_key = std::env::var_os("GEMINI_API_KEY").is_some()
+            || gemini_key_file().is_some_and(|f| f.is_file());
+        format!(
+            ". What you say is sent to Google for planning.{}",
+            if has_key {
+                ""
+            } else {
+                " No key yet: put it in the gemini-key file in X's data folder, or set GEMINI_API_KEY"
+            }
+        )
+    } else {
+        String::new()
+    };
+    ControlReply::done(format!("Planner is {model}{note}"))
 }
 
 fn ignore_missing(error: std::io::Error) -> std::io::Result<()> {
-    if error.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(error) }
+    if error.kind() == std::io::ErrorKind::NotFound {
+        Ok(())
+    } else {
+        Err(error)
+    }
 }
 
 fn set_trust(on: bool) -> ControlReply {
@@ -98,7 +159,11 @@ fn set_trust(on: bool) -> ControlReply {
     match saved {
         Ok(()) => {
             service().set_trust_actions(on);
-            ControlReply::done(if on { "Trusted Actions on" } else { "Trusted Actions off" })
+            ControlReply::done(if on {
+                "Trusted Actions on"
+            } else {
+                "Trusted Actions off"
+            })
         }
         Err(error) => ControlReply::error("failed", format!("couldn't save the setting: {error}")),
     }
@@ -111,6 +176,7 @@ pub enum VoiceMode {
     Actions = 1,
     Work = 2,
     Auto = 3,
+    Smart = 4,
 }
 
 impl VoiceMode {
@@ -120,6 +186,7 @@ impl VoiceMode {
             "actions" => Some(Self::Actions),
             "work" => Some(Self::Work),
             "auto" => Some(Self::Auto),
+            "smart" => Some(Self::Smart),
             _ => None,
         }
     }
@@ -130,6 +197,7 @@ impl VoiceMode {
             Self::Actions => "actions",
             Self::Work => "work",
             Self::Auto => "auto",
+            Self::Smart => "smart",
         }
     }
 
@@ -138,6 +206,7 @@ impl VoiceMode {
             1 => Self::Actions,
             2 => Self::Work,
             3 => Self::Auto,
+            4 => Self::Smart,
             _ => Self::Dictate,
         }
     }
@@ -146,7 +215,9 @@ impl VoiceMode {
 static VOICE: AtomicU8 = AtomicU8::new(0);
 
 fn voice_file() -> Option<PathBuf> {
-    crate::app_paths::support_dir().ok().map(|dir| dir.join("x-voice-mode"))
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("x-voice-mode"))
 }
 
 fn load_voice_mode() -> VoiceMode {
@@ -177,7 +248,10 @@ pub fn set_voice_mode(mode: VoiceMode) -> ControlReply {
 /// types as dictation. "work" right after the prefix hands the goal to OpenCode.
 fn spoken_command(text: &str) -> Option<(Mode, String)> {
     let mut words = text.split_whitespace();
-    let clean = |word: &str| word.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+    let clean = |word: &str| {
+        word.trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase()
+    };
     let mut first = clean(words.next()?);
     if first == "hey" {
         first = clean(words.next()?);
@@ -205,6 +279,16 @@ pub fn intercept(text: &str) -> bool {
     }
     let (mode, command) = match voice_mode() {
         VoiceMode::Dictate => return false,
+        VoiceMode::Smart => {
+            return match service().plan_smart(text.trim()) {
+                Ok(_) => true,
+                Err(error) if error == x_agent::tools::NOT_A_COMMAND => false,
+                Err(error) => {
+                    service().emit("error", &error);
+                    true
+                }
+            };
+        }
         VoiceMode::Actions => (Mode::Actions, text.trim().to_string()),
         VoiceMode::Work => (Mode::Work, text.trim().to_string()),
         VoiceMode::Auto => match spoken_command(text) {
@@ -212,10 +296,20 @@ pub fn intercept(text: &str) -> bool {
             None => return false,
         },
     };
-    if let Err(error) = service().plan(&command, mode) {
-        service().emit("error", &error);
+    match service().plan(&command, mode) {
+        Ok(_) => true,
+        Err(error) if error.starts_with("Not understood") && mode == Mode::Actions => {
+            service().emit(
+                "info",
+                "Not a command X knows, so it was typed as dictation",
+            );
+            false
+        }
+        Err(error) => {
+            service().emit("error", &error);
+            true
+        }
     }
-    true
 }
 
 fn toast(title: &str, body: &str) {
@@ -238,18 +332,35 @@ const HUMAN_FASTEST: Duration = Duration::from_millis(900);
 /// denies, when the wait runs out or the task is no longer the one awaiting approval.
 fn ask_approval(svc: &Service, id: u64, summary: String) {
     let Ok(mut child) = Command::new("notify-send")
-        .args(["-a", "X", "-u", "critical", "-A", "allow=Allow", "-A", "deny=Deny", "--wait", "--"])
+        .args([
+            "-a",
+            "X",
+            "-u",
+            "critical",
+            "-A",
+            "allow=Allow",
+            "-A",
+            "deny=Deny",
+            "--wait",
+            "--",
+        ])
         .arg("X needs your approval")
         .arg(&summary)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()
     else {
-        svc.emit("info", "No notification service; approve in the Agent pane or with `hex agent approve`");
+        svc.emit(
+            "info",
+            "No notification service; approve in the Agent pane or with `hex agent approve`",
+        );
         return;
     };
     if let Ok(exe) = std::env::current_exe() {
-        let _ = Command::new(exe).args(["window", "show", "agent"]).stdin(Stdio::null()).spawn();
+        let _ = Command::new(exe)
+            .args(["window", "show", "agent"])
+            .stdin(Stdio::null())
+            .spawn();
     }
     let shown = Instant::now();
     let deadline = shown + APPROVAL_WAIT;
@@ -320,7 +431,9 @@ fn watch(svc: &Service) {
                 _ => {}
             }
         }
-        let Some(task) = snapshot.task.as_ref() else { continue };
+        let Some(task) = snapshot.task.as_ref() else {
+            continue;
+        };
         if snapshot.phase == x_agent::phase::Phase::AwaitingApproval && task.id != asked {
             asked = task.id;
             let steps: Vec<_> = task.steps.iter().map(|step| step.title.as_str()).collect();
@@ -357,12 +470,20 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Ok(mode) => {
                 let listening = svc.snapshot(0).phase == x_agent::phase::Phase::Listening;
                 background(move |svc| {
-                    let result = if listening { svc.voice_stop() } else { svc.voice_start(mode) };
+                    let result = if listening {
+                        svc.voice_stop()
+                    } else {
+                        svc.voice_start(mode)
+                    };
                     if let Err(error) = result {
                         svc.emit("error", &error);
                     }
                 });
-                ControlReply::done(if listening { "Transcribing" } else { "Listening" })
+                ControlReply::done(if listening {
+                    "Transcribing"
+                } else {
+                    "Listening"
+                })
             }
         },
         AgentAction::Say { text, mode } => match Mode::parse(&mode) {
@@ -396,7 +517,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
         },
         AgentAction::Voice { mode } => match VoiceMode::parse(&mode) {
             Some(mode) => set_voice_mode(mode),
-            None => ControlReply::error("usage", "mode is dictate, actions, work or auto"),
+            None => ControlReply::error("usage", "mode is dictate, actions, work, auto or smart"),
         },
         AgentAction::Workspace { path } => match svc.set_workspace(&path) {
             Ok(shown) => ControlReply::done(format!("Workspace is {shown}")),
@@ -433,7 +554,14 @@ mod tests {
             spoken_command("x work fix the failing tests"),
             Some((Mode::Work, "fix the failing tests".into()))
         );
-        for plain in ["open firefox", "xylophone open it", "next steps", "hey there x", "x", "hey x,"] {
+        for plain in [
+            "open firefox",
+            "xylophone open it",
+            "next steps",
+            "hey there x",
+            "x",
+            "hey x,",
+        ] {
             assert_eq!(spoken_command(plain), None, "{plain}");
         }
     }

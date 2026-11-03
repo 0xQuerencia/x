@@ -36,7 +36,11 @@ const SESSION: &str = "org.freedesktop.portal.Session";
 /// app_id and X11 WM_CLASS. GNOME's shortcuts provider before 51 rejects ids
 /// that are not reverse-DNS (#579), so this matches the macOS bundle
 /// identifier.
-pub(crate) const APP_ID: &str = if crate::app_paths::is_x_build() { "anomaly.x" } else { "anomaly.hex" };
+pub(crate) const APP_ID: &str = if crate::app_paths::is_x_build() {
+    "anomaly.x"
+} else {
+    "anomaly.hex"
+};
 /// The app id and entry name before #579.
 const LEGACY_APP_ID: &str = "hex";
 const LEGACY_ENTRY: &str = "hex.desktop";
@@ -726,7 +730,11 @@ fn moved_entry(old: &str) -> String {
 
 /// `NoDisplay`, not `Hidden`: the portal refuses an app whose entry is Hidden.
 fn desktop_entry(executable: &str, hidden: bool) -> String {
-    let name = if crate::app_paths::is_x_build() { "X" } else { "Hex" };
+    let name = if crate::app_paths::is_x_build() {
+        "X"
+    } else {
+        "Hex"
+    };
     format!(
         "[Desktop Entry]\nType=Application\nName={name}\nComment=Local voice dictation\nExec={}\nIcon={APP_ID}\nTerminal=false\nCategories=Utility;Accessibility;\nStartupWMClass={APP_ID}\n{}{MANAGED_MARK}\n",
         exec_argument(executable),

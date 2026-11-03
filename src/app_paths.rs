@@ -140,7 +140,10 @@ mod tests {
     fn each_build_has_its_own_config_folder() {
         let home = std::path::Path::new("/Users/kit");
         if is_x_build() {
-            assert_eq!(user_config_dir_in(home, false), home.join(".config").join("x"));
+            assert_eq!(
+                user_config_dir_in(home, false),
+                home.join(".config").join("x")
+            );
             return;
         }
         assert_eq!(

@@ -4,6 +4,7 @@ const VERSION: &str = env!("HEX_BUILD_VERSION");
 
 #[cfg(target_os = "macos")]
 mod accessibility;
+mod agent_host;
 mod app_paths;
 #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
 mod app_settings;
@@ -61,7 +62,6 @@ mod rune_ui;
 mod suppression;
 mod transcription;
 mod updater;
-mod agent_host;
 #[cfg(target_os = "windows")]
 mod windows;
 
