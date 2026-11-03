@@ -1,44 +1,49 @@
-# Hex
+# X
 
-Hex is local voice dictation for Mac, Windows and Linux. Hold a key, speak, and
-it pastes.
+X is a local-first voice and agent fork of [Hex](https://github.com/anomalyco/hex) for Linux (built and tested on Arch/Hyprland). Hex's local speech-to-text and dictation are kept as they were. X adds three things on top, all off until you turn on the Labs switch `x-agent`.
 
-## How it works
+- **Actions**: say "Friday, open Firefox and search YouTube for Mars rover". X plans it with fixed rules first and a model for anything else, then launches apps, opens sites, switches workspaces and windows, types into a window it just opened, or starts an OpenCode session in a temporary folder.
+- **Work**: hand a goal and a project folder to [OpenCode](https://opencode.ai). X streams its events, blocks commands outside a policy (you can allow one for a single rerun), and reports the files that changed. Stop works at any time.
+- **Computer use**: operate a browser window through its accessibility tree. X observes, picks one step, acts, re-observes and only reports done when it can quote text that is on screen now. It is limited to browsers you grant, and never reads password fields.
 
-- hold the shortcut, speak, then let go
-- Hex transcribes on your device and pastes into whatever app you're in
-- the first run downloads a speech model; after that nothing leaves your machine
-- experimental features live in Labs, at the bottom of the sidebar
+Normal speech is typed as dictation as usual. Only speech that starts with "Friday" (or "hey Friday") is treated as a command.
 
-## Downloads
+## Install (Arch Linux)
 
-Stable is the current release. Dev is the newest build of `dev` and updates
-itself from the dev channel.
+```sh
+sudo pacman -S --needed base-devel git rust openblas wtype nodejs npm
+git clone https://github.com/0xQuerencia/x && cd x
+./scripts/install-arch.sh
+systemctl --user enable --now x.service
+x labs on x-agent
+```
 
-| Platform | Stable | Dev |
-| --- | --- | --- |
-| macOS (Apple silicon) | [DMG](https://anoma.ly/hex/download/macos-arm64-dmg) | [DMG](https://anoma.ly/hex/download/dev/macos-arm64-dmg) |
-| Windows x64 | [Installer](https://anoma.ly/hex/download/windows-x64-setup) | [Installer](https://anoma.ly/hex/download/dev/windows-x64-setup) |
-| Windows ARM64 | [Installer](https://anoma.ly/hex/download/windows-arm64-setup) | [Installer](https://anoma.ly/hex/download/dev/windows-arm64-setup) |
-| Linux x86_64 | [Executable](https://anoma.ly/hex/download/linux-x64) | [Executable](https://anoma.ly/hex/download/dev/linux-x64) |
-| Linux x86_64 (Debian, Ubuntu) | [.deb](https://anoma.ly/hex/download/linux-x64-deb) | [.deb](https://anoma.ly/hex/download/dev/linux-x64-deb) |
-| Linux x86_64 (Fedora, openSUSE) | [.rpm](https://anoma.ly/hex/download/linux-x64-rpm) | [.rpm](https://anoma.ly/hex/download/dev/linux-x64-rpm) |
-| Linux ARM64 | [Executable](https://anoma.ly/hex/download/linux-arm64) | [Executable](https://anoma.ly/hex/download/dev/linux-arm64) |
-| Linux ARM64 (Debian, Ubuntu) | [.deb](https://anoma.ly/hex/download/linux-arm64-deb) | [.deb](https://anoma.ly/hex/download/dev/linux-arm64-deb) |
-| Linux ARM64 (Fedora, openSUSE) | [.rpm](https://anoma.ly/hex/download/linux-arm64-rpm) | [.rpm](https://anoma.ly/hex/download/dev/linux-arm64-rpm) |
+The installer builds with `X_BUILD=1`, which gives X its own identity (data in `~/.local/share/x`, config in `~/.config/x`, `x.service`, app id `anomaly.x`), so it can sit next to an official Hex install. It also installs a pinned [agent-desktop](https://github.com/vercel-labs/agent-desktop) for reading accessibility trees. OpenCode must be on `PATH` for Work.
 
-Or install with:
+## Use
 
-- Homebrew: `brew install --cask anomalyco/tap/hex`
-- AUR: `yay -S hex-bin`
-- install script (Linux): `curl -fsSL https://anoma.ly/hex/install-linux.sh | sh`
-- Nix: `nix profile install github:anomalyco/hex`
+```sh
+x agent voice auto                  # only "Friday ..." speech becomes a command
+x agent trust on                    # run simple launches without a prompt
+x agent planner gemma4:e2b-it-qat   # local Ollama model; also gemini or openai:<model>
+x agent say "open firefox"          # same as speaking it
+x agent computer grant chromium     # let X read and operate that browser
+x agent stop
+```
 
-More docs are in [`docs/`](docs/README.md).
+Bind your dictation key to `x dictation toggle`. Chromium and Chrome need `--force-renderer-accessibility` for computer use.
 
-## Contributing
+## Safety
 
-We don't take pull requests. [Open an issue](https://github.com/anomalyco/hex/issues)
-describing the bug or idea, and our agents usually turn it around fast.
+- Every step a model proposes must fit a closed set and pass validation. Nothing is run through a shell.
+- Screen content is treated as untrusted data, never as instructions. On-screen text goes only to a model on your machine unless you run `x agent computer remote on`.
+- Sending, buying, deleting and signing in are refused. Secret fields are never typed into.
+- Work never runs with `--auto`, and is pinned to the chosen folder.
 
-MIT licensed.
+## Status
+
+Verified on one machine (Arch, Hyprland, Wayland): Actions, Work with a real OpenCode run, and computer use against a disposable Chromium profile (click and verify, navigate and verify). Not verified: spoken wake-word commands end to end, Firefox, screenshots and vision (not built). Browser control relies on keyboard input that another window can interrupt if it steals focus.
+
+## Credits
+
+X is built on Hex by Christopher Langton and contributors, under the MIT licence in `LICENSE`.
