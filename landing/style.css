@@ -116,3 +116,8 @@ footer a:hover{color:var(--text)}
 .theme{position:fixed;right:16px;bottom:16px;width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer;display:grid;place-items:center}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important}.log li{opacity:1}}
 @media (max-width:560px){td:first-child{width:auto}.stage{padding:28px 10px}}
+
+.stage{padding:0;background:none;min-height:0;display:block}
+.stage img,.slide img{display:block;width:100%;height:auto;border-radius:20px}
+.slides{min-height:0}
+.slide{display:none}.slide.on{display:block}

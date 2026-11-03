@@ -1,27 +1,5 @@
 (function(){
-var runs={
- dictate:{task:"hello. press the key, talk, release.",phase:"ready",run:0,rows:[["state","listening"],["state","dictating"],["state","transcribing"],["typed","Hello."]],note:"no wake word, so it is just typed where your cursor is."},
- actions:{task:"Hey Friday, open firefox",phase:"completed",run:0,rows:[["info","Trusted Actions: running without a prompt"],["info","Approved"],["action","Open firefox"],["result","Launched (outcome not verified)"],["info","Task completed"]],note:"simple launches skip the prompt once you turn trust on. it says plainly that a launch is not a check."},
- work:{task:"fix the failing tests (work)",phase:"completed",run:0,rows:[["info","Approved"],["action","Run OpenCode in your project folder"],["permission","Blocked bash: a command outside the policy"],["info","Allowing it for this rerun only"],["result","changed files: hello.txt"]],note:"opencode stays inside the folder you chose. blocked commands wait for you."},
- computer:{task:"go to example dot org in chromium",phase:"completed",run:0,rows:[["action","Operate chromium: go to example.org"],["observe","\"X test page - Chromium\": 17 controls"],["act","go to https://example.org"],["verify","The screen changed after the last step"],["observe","\"Example Domain - Chromium\": 16 controls"],["verify","Found on screen: \"Example Domain\""],["info","Task completed"]],note:"it only says done after it can quote text that is on screen."}
-};
 var $=function(s,r){return (r||document).querySelector(s)},$$=function(s,r){return [].slice.call((r||document).querySelectorAll(s))};
-var timer;
-function show(k){
-  var r=runs[k],log=$("#demo-log");clearTimeout(timer);
-  $("#demo-task").textContent=r.task;$("#demo-note").textContent="";log.innerHTML="";
-  $("#demo-phase").textContent="running";$("#demo-dot").className="dot run";
-  var i=0;(function next(){
-    if(i>=r.rows.length){$("#demo-phase").textContent=r.phase;$("#demo-dot").className="dot";$("#demo-note").textContent=r.note;return}
-    var li=document.createElement("li");li.className=r.rows[i][0];
-    li.innerHTML='<span class="k"></span><span class="t"></span>';
-    li.firstChild.textContent=r.rows[i][0];li.lastChild.textContent=r.rows[i][1];log.appendChild(li);i++;
-    timer=setTimeout(next,matchMedia("(prefers-reduced-motion:reduce)").matches?0:520);
-  })();
-}
-$$("#demo-tabs button").forEach(function(b){b.onclick=function(){$$("#demo-tabs button").forEach(function(x){x.classList.remove("on")});b.classList.add("on");show(b.dataset.k)}});
-show("dictate");
-
 $$(".codetabs .tabs button").forEach(function(b){b.onclick=function(){
   $$(".codetabs .tabs button").forEach(function(x){x.classList.toggle("on",x===b)});
   $$(".codetabs .code").forEach(function(c){c.hidden=c.dataset.c!==b.dataset.c})}});
@@ -31,19 +9,16 @@ $$(".copy").forEach(function(b){b.onclick=function(){
   setTimeout(function(){b.textContent="copy"},1400)}});
 
 var slides=[
- ["see what it is doing","every step lands in the activity list, with what it observed and what it did.","computer"],
- ["it checks its own work","a step that changed nothing stops the task instead of looping.","computer"],
- ["simple things stay simple","opening an app is one line and no prompt, once you trust it.","actions"],
- ["coding work goes to opencode","a headless run in a throwaway folder, with the files it changed listed after.","work"],
- ["plain speech stays plain","say anything without the wake word and it is just typed.","dictate"]
+ ["controls","choose how it listens","pick what a spoken sentence does, switch trusted actions on, and see which browsers x may read. every grant has a revoke button."],
+ ["task","it says what it did","a finished browser task, with the step it took and what it saw on screen to call it done. this run used a scripted stand-in model on a test page."],
+ ["result","and the page it landed on","the link was clicked by x through the accessibility tree, on a plain local test page."],
+ ["hero","the whole agent pane","controls on top, the plan below, then the activity list. all of it is live, nothing is mocked."]
 ];
 var host=$(".slides");
 slides.forEach(function(s,i){
   var d=document.createElement("div");d.className="slide"+(i?"":" on");
-  var r=runs[s[2]],rows=r.rows.slice(0,5).map(function(x){return '<li style="opacity:1;animation:none" class="'+x[0]+'"><span class="k">'+x[0]+'</span><span class="t"></span></li>'}).join("");
-  d.innerHTML='<div class="shot"><div class="win"><div class="bar"><span class="dot"></span><b>'+r.phase+'</b><span class="spacer"></span><span class="mini">agent</span></div><p class="task"></p><ul class="log" style="min-height:0">'+rows+'</ul></div></div><h3></h3><p class="d"></p>';
-  $(".task",d).textContent=r.task;$$(".t",d).forEach(function(t,j){t.textContent=r.rows[j][1]});
-  $("h3",d).textContent=s[0];$(".d",d).textContent=s[1];host.appendChild(d)});
+  d.innerHTML='<picture><source srcset="img/'+s[0]+'.webp" type="image/webp"><img src="img/'+s[0]+'.png" width="1200" height="780" loading="lazy" alt=""></picture><h3></h3><p class="d"></p>';
+  $("img",d).alt=s[1];$("h3",d).textContent=s[1];$(".d",d).textContent=s[2];host.appendChild(d)});
 var cur=0;function go(n){cur=(n+slides.length)%slides.length;$$(".slide").forEach(function(s,i){s.classList.toggle("on",i===cur)});$("#count").textContent=(cur+1)+" / "+slides.length}
 $("#prev").onclick=function(){go(cur-1)};$("#next").onclick=function(){go(cur+1)};
 
