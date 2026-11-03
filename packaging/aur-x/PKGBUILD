@@ -1,0 +1,27 @@
+# Maintainer: Ricky Parmar
+pkgname=x-bin
+pkgver=0.1.0_alpha.1
+_tag=v0.1.0-alpha.1
+pkgrel=1
+pkgdesc='X: local-first voice and agent fork of Hex (Linux, pre-release)'
+arch=('x86_64')
+url='https://github.com/0xQuerencia/x'
+license=('MIT')
+depends=('alsa-lib' 'curl' 'gcc-libs' 'glibc' 'libxkbcommon' 'openblas' 'vulkan-icd-loader' 'wayland' 'wtype')
+optdepends=(
+  'vulkan-driver: GPU transcription'
+  'wl-clipboard: paste on Wayland'
+  'nodejs: install agent-desktop for computer use'
+  'opencode: Work mode'
+)
+options=('!strip' '!debug')
+install=x-bin.install
+source=('x.service' 'LICENSE'
+        "x-${pkgver}-linux-x64::${url}/releases/download/${_tag}/x-0.1.0-alpha.1-linux-x64")
+sha256sums=('f84511937ed8bc6b35c57256fe057c1c20ba5fb0f464436fa725ef7da0d1c3f5' '0c267f186f600c6f4d9d229d1792861361f2c433cfb23054fece61f227006344' '3e4efaef52ab8ad698bd2eb4bf7cba689249c7a1cfde34e644a0718e10051b4b')
+
+package() {
+  install -Dm755 "x-${pkgver}-linux-x64" "$pkgdir/usr/bin/x"
+  install -Dm644 x.service "$pkgdir/usr/lib/systemd/user/x.service"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

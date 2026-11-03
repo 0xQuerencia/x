@@ -1,0 +1,5 @@
+post_install() {
+  echo 'Start X at login: systemctl --user enable --now x.service'
+  echo 'Then turn the agent on: x labs on x-agent'
+  echo 'Computer use needs agent-desktop: npm install --prefix ~/.local/opt/x/agent-desktop agent-desktop@1.1.0'
+}
