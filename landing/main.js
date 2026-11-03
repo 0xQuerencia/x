@@ -16,22 +16,27 @@ var slides=[
  ["task","it says what it did","a finished browser task, with the step it took and what it saw on screen to call it done. this run used a scripted stand-in model on a test page."],
  ["result","and the page it landed on","the link was clicked by x through the accessibility tree, on a plain local test page."]
 ];
-var heroImg=$("#hero-img"),heroSrc=$("#hero-src"),heroBusy=0;
-["dictation","models","agent","result"].forEach(function(n){var i=new Image();i.src="img/"+n+".webp"});
-function swapHero(name,alt){
-  var reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
-  var next=new Image();next.src="img/"+name+".webp";
-  var token=++heroBusy;
-  if(!reduce)heroImg.classList.add("out");
-  var ready=next.decode?next.decode().catch(function(){}):Promise.resolve();
-  Promise.all([ready,new Promise(function(r){setTimeout(r,reduce?0:230)})]).then(function(){
-    if(token!==heroBusy)return;
-    heroSrc.srcset="img/"+name+".webp";heroImg.src="img/"+name+".png";heroImg.alt=alt;
-    requestAnimationFrame(function(){heroImg.classList.remove("out")})})}
+var shots={
+  dictation:{l:38.33,t:5.13,w:63.33,h:75.56,alt:"the x settings window: shortcut, speech model, vocabulary and microphone"},
+  models:{l:16.67,t:1.28,w:66.67,h:79.54,alt:"the speech model picker comparing wait, wrong words and languages"},
+  agent:{l:39.17,t:7.69,w:68.33,h:81.5,alt:"the x agent pane after a finished browser task"},
+  result:{l:18.33,t:26,w:61.67,h:29.4,alt:"a browser page x opened by clicking a link"}
+};
+Object.keys(shots).forEach(function(n){var i=new Image();i.src="img/win-"+n+".webp"});
+var morph=$("#morph"),layers=[$("#layer-a"),$("#layer-b")],front=0,morphToken=0;
+function morphTo(name){
+  var s=shots[name],token=++morphToken,next=layers[1-front],cur=layers[front];
+  var loaded=new Image();loaded.src="img/win-"+name+".webp";
+  (loaded.decode?loaded.decode():Promise.resolve()).catch(function(){}).then(function(){
+    if(token!==morphToken)return;
+    next.src=loaded.src;
+    morph.style.left=s.l+"%";morph.style.top=s.t+"%";morph.style.width=s.w+"%";morph.style.height=s.h+"%";
+    next.classList.add("on");cur.classList.remove("on");front=1-front;
+    $("#field").setAttribute("aria-label",s.alt)})}
 $$("#hero-tabs button").forEach(function(b){b.onclick=function(){
   if(b.classList.contains("on"))return;
   $$("#hero-tabs button").forEach(function(x){x.classList.toggle("on",x===b)});
-  swapHero(b.dataset.i,b.dataset.a)}});
+  morphTo(b.dataset.i)}});
 var host=$(".slides");
 slides.forEach(function(s,i){
   var d=document.createElement("div");d.className="slide"+(i?"":" on");
