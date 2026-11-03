@@ -187,7 +187,13 @@ impl RunConfig {
         if supports_standalone(&self.exe) {
             a.push("--standalone".into()); // private server: isolates this run
         }
-        a.extend(["--format".into(), "json".into(), self.prompt.clone()]);
+        a.extend([
+            "--dir".into(),
+            self.workspace.to_string_lossy().into_owned(),
+            "--format".into(),
+            "json".into(),
+            self.prompt.clone(),
+        ]);
         a
     }
 }
@@ -220,6 +226,7 @@ impl Run {
             Command::new(&cfg.exe)
                 .args(&args)
                 .current_dir(&cfg.workspace)
+                .env("PWD", &cfg.workspace)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -568,6 +575,17 @@ mod tests {
                 .unwrap()
                 .contains(&("raw".into(), "hello".into()))
         );
+    }
+
+    #[test]
+    fn the_child_is_pinned_to_the_workspace() {
+        let f = fixture();
+        let args = RunConfig::new(f.fake(""), "go", f.repo.clone()).args();
+        let at = args.iter().position(|a| a == "--dir").unwrap();
+        assert_eq!(args[at + 1], f.repo.to_string_lossy());
+        f.run("echo \"pwd=$PWD\"");
+        let want = ("raw".to_string(), format!("pwd={}", f.repo.display()));
+        assert!(f.events.lock().unwrap().contains(&want));
     }
 
     #[test]
