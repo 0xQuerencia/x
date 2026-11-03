@@ -9,6 +9,7 @@
 pub mod hexcli;
 pub mod opencode;
 pub mod phase;
+pub mod planner;
 pub mod service;
 pub mod tools;
 

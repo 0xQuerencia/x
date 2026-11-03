@@ -153,9 +153,11 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         .child(input)
         .child(button(p, "agent-plan", tr("Plan"), ButtonKind::Primary, |ui: &mut Ui, _| {
             let (text, mode) = (ui.agent.input.text.clone(), ui.agent.mode);
-            if let Err(error) = agent_host::service().plan(&text, mode) {
-                agent_host::service().emit("error", &error);
-            }
+            std::thread::spawn(move || {
+                if let Err(error) = agent_host::service().plan(&text, mode) {
+                    agent_host::service().emit("error", &error);
+                }
+            });
         }))
         .child(button(
             p,

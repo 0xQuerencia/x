@@ -37,6 +37,11 @@ pub fn service() -> &'static Service {
         let service = Service::new(Arc::new(HexCli { exe }), Arc::new(RealLauncher), opencode_exe());
         service.set_trust_actions(trust_file().is_some_and(|path| path.is_file()));
         VOICE.store(load_voice_mode() as u8, Ordering::Relaxed);
+        let saved = planner_file()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .map(|model| model.trim().to_string())
+            .filter(|model| !model.is_empty());
+        service.set_planner(saved.map(planner_for));
         let watched = service.clone();
         thread::spawn(move || watch(&watched));
         service
@@ -47,6 +52,35 @@ pub fn service() -> &'static Service {
 /// files in the data folder, so nothing in a config can switch it on.
 fn trust_file() -> Option<PathBuf> {
     crate::app_paths::support_dir().ok().map(|dir| dir.join("x-trusted-actions"))
+}
+
+fn planner_file() -> Option<PathBuf> {
+    crate::app_paths::support_dir().ok().map(|dir| dir.join("x-planner"))
+}
+
+fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
+    Arc::new(x_agent::planner::Ollama { model })
+}
+
+fn set_planner(model: &str) -> ControlReply {
+    let model = model.trim();
+    if model.is_empty() || model.len() > 100 || model.contains(char::is_whitespace) {
+        return ControlReply::error("usage", "give an Ollama model name, or off");
+    }
+    let Some(path) = planner_file() else {
+        return ControlReply::error("failed", "the data folder is unavailable");
+    };
+    let off = model == "off";
+    let saved = if off { std::fs::remove_file(&path).or_else(ignore_missing) } else { std::fs::write(&path, model) };
+    if let Err(error) = saved {
+        return ControlReply::error("failed", format!("couldn't save the setting: {error}"));
+    }
+    service().set_planner((!off).then(|| planner_for(model.to_string())));
+    ControlReply::done(if off { "Planner off".to_string() } else { format!("Planner is {model}") })
+}
+
+fn ignore_missing(error: std::io::Error) -> std::io::Result<()> {
+    if error.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(error) }
 }
 
 fn set_trust(on: bool) -> ControlReply {
@@ -333,6 +367,14 @@ pub fn handle(action: AgentAction) -> ControlReply {
         },
         AgentAction::Say { text, mode } => match Mode::parse(&mode) {
             Err(error) => ControlReply::error("usage", error),
+            Ok(mode) if mode == Mode::Actions && svc.needs_model(&text) => {
+                background(move |svc| {
+                    if let Err(error) = svc.plan(&text, mode) {
+                        svc.emit("error", &error);
+                    }
+                });
+                ControlReply::done("Planning with the model; watch `x agent status`")
+            }
             Ok(mode) => match svc.plan(&text, mode) {
                 Ok(_) => snapshot(0),
                 Err(error) => ControlReply::error("refused", error),
@@ -347,6 +389,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
             ControlReply::done("Stop requested")
         }
         AgentAction::Trust { on } => set_trust(on),
+        AgentAction::Planner { model } => set_planner(&model),
         AgentAction::Allow { index } => match svc.allow_once(index) {
             Ok(_) => snapshot(0),
             Err(error) => ControlReply::error("refused", error),

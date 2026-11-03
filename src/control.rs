@@ -236,6 +236,8 @@ pub enum AgentAction {
     Voice { mode: String },
     /// Rerun the last Work goal with one refused command allowed for that run only.
     Allow { index: usize },
+    /// The local Ollama model that plans speech the rules do not understand, or off.
+    Planner { model: String },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

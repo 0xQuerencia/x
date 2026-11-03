@@ -379,6 +379,13 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// A local Ollama model (for example `gemma4:e2b-it-qat`) plans requests the built-in rules
+    /// do not understand, from the same closed set of steps. `off` turns it off.
+    Planner {
+        model: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// The project folder Work runs in (never `/` or your home directory).
     Workspace {
         path: String,
@@ -548,6 +555,7 @@ pub fn run(command: ControlCli) -> u8 {
                 }
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Planner { model, output } => (AgentAction::Planner { model }, output),
                 AgentCommand::Allow { index, output } => (AgentAction::Allow { index }, output),
                 AgentCommand::Voice { mode, output } => (AgentAction::Voice { mode }, output),
                 AgentCommand::Trust { state, output } => {

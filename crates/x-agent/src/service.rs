@@ -80,6 +80,19 @@ pub struct Snapshot {
 /// Launches validated actions (faked in tests).
 pub trait Launcher: Send + Sync {
     fn launch(&self, action: &Action) -> Result<String, String>;
+
+    /// Waits for a window other than `before` to take focus, so typing lands in the app
+    /// that was just launched. Errors when none appears.
+    fn await_launched_focus(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Turns speech the rules do not understand into registry actions. Its output is only
+/// ever a proposal: every step is validated like any other.
+pub trait Planner: Send + Sync {
+    fn plan(&self, text: &str) -> Result<Vec<Action>, String>;
+    fn name(&self) -> String;
 }
 
 pub struct RealLauncher;
@@ -87,6 +100,10 @@ pub struct RealLauncher;
 impl Launcher for RealLauncher {
     fn launch(&self, action: &Action) -> Result<String, String> {
         action.execute()
+    }
+
+    fn await_launched_focus(&self) -> Result<(), String> {
+        tools::wait_for_launched_focus()
     }
 }
 
@@ -111,6 +128,7 @@ pub struct Service {
     stt: Arc<dyn Stt>,
     launcher: Arc<dyn Launcher>,
     opencode_exe: Arc<Mutex<Option<PathBuf>>>,
+    planner: Arc<Mutex<Option<Arc<dyn Planner>>>>,
 }
 
 fn now() -> u64 {
@@ -144,6 +162,7 @@ impl Service {
             stt,
             launcher,
             opencode_exe: Arc::new(Mutex::new(opencode_exe)),
+            planner: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -201,16 +220,54 @@ impl Service {
         );
     }
 
+    pub fn set_planner(&self, planner: Option<Arc<dyn Planner>>) {
+        if let Ok(mut slot) = self.planner.lock() {
+            *slot = planner;
+        }
+    }
+
+    /// Rules first: they are instant and never wrong about what they accept. Only speech
+    /// they do not understand goes to the model, outside the state lock.
+    fn model_plan(&self, text: &str) -> Option<Vec<Action>> {
+        let planner = self.planner.lock().ok()?.clone()?;
+        if self.lock().phase.is_busy() {
+            return None;
+        }
+        self.emit("info", &format!("Asking {} to plan", planner.name()));
+        match planner.plan(text) {
+            Ok(actions) if !actions.is_empty() => Some(actions),
+            Ok(_) => None,
+            Err(error) => {
+                self.emit("error", &format!("Planner: {error}"));
+                None
+            }
+        }
+    }
+
+    /// True when this request would go to the model (the rules do not know it).
+    pub fn needs_model(&self, text: &str) -> bool {
+        tools::plan_rules(text).is_none() && self.planner.lock().is_ok_and(|p| p.is_some())
+    }
+
     pub fn plan(&self, text: &str, mode: Mode) -> Result<Task, String> {
-        let task = self.plan_task(text, mode)?;
-        if mode == Mode::Actions && self.lock().trust_actions {
+        let preset = (mode == Mode::Actions && tools::plan_rules(text).is_none())
+            .then(|| self.model_plan(text.trim()))
+            .flatten();
+        let task = self.plan_task(text, mode, preset)?;
+        let low_risk = tools::is_low_risk(&self.lock().actions);
+        if mode == Mode::Actions && low_risk && self.lock().trust_actions {
             self.emit("info", "Trusted Actions: running without a prompt");
             self.approve(task.id)?;
         }
         Ok(task)
     }
 
-    fn plan_task(&self, text: &str, mode: Mode) -> Result<Task, String> {
+    fn plan_task(
+        &self,
+        text: &str,
+        mode: Mode,
+        preset: Option<Vec<Action>>,
+    ) -> Result<Task, String> {
         let text = text.trim();
         if text.is_empty() || text.chars().count() > MAX_INPUT {
             return Err("Enter a task of 1-1,500 characters".into());
@@ -222,7 +279,7 @@ impl Service {
         s.grants.clear();
         let (steps, actions, workspace) = match mode {
             Mode::Actions => {
-                let actions = tools::plan_rules(text).ok_or(
+                let actions = preset.or_else(|| tools::plan_rules(text)).ok_or(
                     "Not understood. Try 'open Firefox' or 'search YouTube for ...'. Nothing was run.")?;
                 let steps = actions
                     .iter()
@@ -339,7 +396,7 @@ impl Service {
         if command.contains(['*', '?', '\n']) {
             return Err("That command contains wildcards and cannot be allowed".into());
         }
-        let task = self.plan_task(&text, Mode::Work)?;
+        let task = self.plan_task(&text, Mode::Work, None)?;
         self.lock().grants = vec![command.clone()];
         self.emit("info", &format!("Allowing `{command}` for this rerun only"));
         Ok(task)
@@ -353,7 +410,19 @@ impl Service {
             }
             self.set_step(i, "running");
             self.emit("action", &action.describe());
-            match self.launcher.launch(action) {
+            let result = match action {
+                Action::Type { .. } => {
+                    let waited = match actions.get(i.wrapping_sub(1)) {
+                        Some(launched) if launched.launches_window() => {
+                            self.launcher.await_launched_focus()
+                        }
+                        _ => Ok(()),
+                    };
+                    waited.and_then(|()| self.launcher.launch(action))
+                }
+                _ => self.launcher.launch(action),
+            };
+            match result {
                 Ok(msg) => {
                     self.emit("result", &format!("{msg} (launched; outcome not verified)"));
                     self.set_step(i, "launched");
@@ -762,6 +831,69 @@ mod tests {
         s.set_trust_actions(false);
         s.plan("open firefox", Mode::Actions).unwrap();
         assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    }
+
+    struct FakePlanner(Result<Vec<Action>, String>);
+
+    impl Planner for FakePlanner {
+        fn plan(&self, _: &str) -> Result<Vec<Action>, String> {
+            self.0.clone()
+        }
+        fn name(&self) -> String {
+            "fake".into()
+        }
+    }
+
+    #[test]
+    fn the_model_only_plans_what_the_rules_do_not_understand() {
+        let (s, _, l) = rig();
+        let terminal = Action::App {
+            target: "terminal".into(),
+        };
+        let typed = Action::Type {
+            text: "welcome back wiki".into(),
+        };
+        s.set_planner(Some(Arc::new(FakePlanner(Ok(vec![terminal, typed])))));
+        let t = s
+            .plan("pop open a shell and greet the wiki", Mode::Actions)
+            .unwrap();
+        assert_eq!(t.steps.len(), 2);
+        assert_eq!(
+            s.snapshot(0).phase,
+            Phase::AwaitingApproval,
+            "approval unless trusted"
+        );
+        s.cancel();
+        let rules = s.plan("open firefox", Mode::Actions).unwrap();
+        assert_eq!(
+            rules.steps.len(),
+            1,
+            "rules win; the model was not consulted"
+        );
+        s.cancel();
+        s.set_planner(Some(Arc::new(FakePlanner(Err("down".into())))));
+        assert!(s.plan("do a barrel roll", Mode::Actions).is_err());
+        assert!(
+            s.snapshot(0)
+                .events
+                .iter()
+                .any(|e| e.text.contains("Planner: down"))
+        );
+        assert!(l.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn trusted_typing_alone_still_asks_but_after_a_launch_it_runs() {
+        let (s, _, l) = rig();
+        s.set_trust_actions(true);
+        s.plan("type hello there", Mode::Actions).unwrap();
+        assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+        assert!(l.launched.lock().unwrap().is_empty());
+        s.cancel();
+        s.plan("open a terminal and type hello there", Mode::Actions)
+            .unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        assert_eq!(l.launched.lock().unwrap().len(), 2);
     }
 
     #[test]

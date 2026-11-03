@@ -61,6 +61,8 @@ const ALIASES: &[(&str, &str)] = &[
     ("code", "vscode"),
     ("terminal", "terminal"),
     ("a terminal", "terminal"),
+    ("the terminal", "terminal"),
+    ("a new terminal", "terminal"),
     ("file manager", "files"),
     ("files", "files"),
 ];
@@ -88,12 +90,22 @@ pub enum Action {
         #[serde(default)]
         browser: String,
     },
+    /// Types plain text into the focused window. Never Enter or any control key, so
+    /// nothing typed here can run on its own.
+    Type {
+        text: String,
+    },
 }
+
+const MAX_TYPED: usize = 300;
+
+static LAST_LAUNCHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 impl Action {
     pub fn describe(&self) -> String {
         match self {
             Self::App { target } => format!("Open {target}"),
+            Self::Type { text } => format!("Type \"{text}\" into the focused window"),
             Self::Url { target, browser } => with_browser(format!("Open {target}"), browser),
             Self::Search {
                 target,
@@ -108,6 +120,14 @@ impl Action {
         match &self {
             Self::App { target } => {
                 lookup(APPS, target).ok_or("Unapproved app")?;
+            }
+            Self::Type { text } => {
+                if text.trim().is_empty() || text.chars().count() > MAX_TYPED {
+                    return Err("Typed text must be 1-300 characters".into());
+                }
+                if text.chars().any(char::is_control) {
+                    return Err("Typed text cannot contain control characters or new lines".into());
+                }
             }
             Self::Url { target, browser } => {
                 check_browser(browser)?;
@@ -143,6 +163,10 @@ impl Action {
         };
         match self {
             Self::App { target } => Ok(vec![exe_for(target, resolve)?]),
+            Self::Type { text } => {
+                let typer = resolve("wtype").ok_or("wtype not found (install wtype)")?;
+                Ok(vec![typer, "--".into(), text.clone()])
+            }
             Self::Url { target, browser } => {
                 browser_or_opener(browser, safe_url(target)?.to_string())
             }
@@ -158,11 +182,27 @@ impl Action {
         }
     }
 
+    pub fn launches_window(&self) -> bool {
+        !matches!(self, Self::Type { .. })
+    }
+
     /// Validate, then launch detached. Success means *launched*, not *page loaded*.
     pub fn execute(&self) -> Result<String, String> {
         let valid = self.clone().validate()?;
         let argv = valid.argv(&|name| which(name))?;
         let (exe, args) = argv.split_first().ok_or("empty command")?;
+        if let Self::Type { text } = &valid {
+            let status = Command::new(exe)
+                .args(args)
+                .stdin(Stdio::null())
+                .status()
+                .map_err(|e| format!("could not run {exe}: {e}"))?;
+            return if status.success() {
+                Ok(format!("Typed {} characters", text.chars().count()))
+            } else {
+                Err("wtype could not type into the focused window".into())
+            };
+        }
         let mut cmd = Command::new(exe);
         cmd.args(args)
             .stdin(Stdio::null())
@@ -181,6 +221,7 @@ impl Action {
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("could not launch {exe}: {e}"))?;
+        LAST_LAUNCHED.store(child.id(), std::sync::atomic::Ordering::SeqCst);
         std::thread::spawn(move || {
             let _ = child.wait();
         });
@@ -334,7 +375,7 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
     let text = text.trim().trim_end_matches(['?', '.', '!', ' ']);
     let mut browser = String::new();
     let mut search_text = text.to_string();
-    if let Some(rest) = strip_prefix_ci(text, &["open", "launch", "start"]) {
+    if let Some(rest) = strip_prefix_ci(text, &["open up", "open", "launch", "start"]) {
         // "open Firefox and search YouTube for ..." is ONE browser launch with the destination.
         let lower = rest.to_ascii_lowercase();
         for joiner in [" and ", " then "] {
@@ -372,7 +413,16 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
         };
         return action.validate().ok().map(|a| vec![a]);
     }
-    let rest = strip_prefix_ci(text, &["open", "launch", "start"])?;
+    if let Some(rest) = strip_prefix_ci(text, &["type", "write"]) {
+        let typed = rest.trim().trim_matches(['"', '\'', '“', '”']).trim();
+        return Action::Type {
+            text: typed.to_string(),
+        }
+        .validate()
+        .ok()
+        .map(|a| vec![a]);
+    }
+    let rest = strip_prefix_ci(text, &["open up", "open", "launch", "start"])?;
     if let Some(app) = normalize_app(rest) {
         return Some(vec![Action::App { target: app.into() }]);
     }
@@ -410,9 +460,11 @@ fn split_steps(text: &str) -> Vec<String> {
         for joiner in [" and then ", " then ", " and "] {
             if lower[i..].starts_with(joiner) {
                 let after = &lower[i + joiner.len()..];
-                if ["open ", "launch ", "start ", "search ", "look up "]
-                    .iter()
-                    .any(|v| after.starts_with(v))
+                if [
+                    "open ", "launch ", "start ", "search ", "look up ", "type ", "write ",
+                ]
+                .iter()
+                .any(|v| after.starts_with(v))
                 {
                     parts.push(text[start..i].trim().to_string());
                     start = i + joiner.len();
@@ -426,6 +478,50 @@ fn split_steps(text: &str) -> Vec<String> {
     parts.push(text[start..].trim().to_string());
     parts.retain(|p| !p.is_empty());
     parts
+}
+
+fn focused() -> Option<(String, u32)> {
+    let out = Command::new("hyprctl")
+        .args(["activewindow", "-j"])
+        .output()
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let address = json.get("address")?.as_str()?.to_string();
+    Some((address, u32::try_from(json.get("pid")?.as_u64()?).ok()?))
+}
+
+/// Waits up to six seconds for the window of the process X just started to take focus.
+/// Typing never goes anywhere else: if that window cannot be told apart from the rest
+/// (the app hands off to another process, or the desktop cannot say), nothing is typed.
+pub fn wait_for_launched_focus() -> Result<(), String> {
+    let pid = LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst);
+    if pid == 0 || which("hyprctl").is_none() {
+        return Err(
+            "X cannot tell which window would receive the text, so nothing was typed".into(),
+        );
+    }
+    for _ in 0..30 {
+        if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            return Err(
+                "The app exited or handed off right after launch, so nothing was typed".into(),
+            );
+        }
+        if focused().is_some_and(|(_, focused_pid)| focused_pid == pid) {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    Err("The launched app's window never took focus, so nothing was typed".into())
+}
+
+/// Whether a plan may run without asking once the person trusts Actions: launches and
+/// searches, and typing only straight after a launch (so the text lands in the new window).
+pub fn is_low_risk(actions: &[Action]) -> bool {
+    actions.iter().enumerate().all(|(i, action)| match action {
+        Action::Type { .. } => i > 0 && actions[i - 1].launches_window(),
+        _ => true,
+    })
 }
 
 /// Deterministic rule planner. `None` means "not understood": nothing runs.
@@ -479,6 +575,42 @@ mod tests {
             .iter()
             .map(Action::describe)
             .collect()
+    }
+
+    #[test]
+    fn typing_is_plain_text_only_and_follows_a_launch_to_be_low_risk() {
+        let plan = plan_rules("open a terminal and type welcome back wiki").unwrap();
+        assert_eq!(
+            plan.iter().map(Action::describe).collect::<Vec<_>>(),
+            [
+                "Open terminal",
+                "Type \"welcome back wiki\" into the focused window"
+            ]
+        );
+        assert!(is_low_risk(&plan));
+        assert!(!is_low_risk(&plan_rules("type hello").unwrap()));
+        let argv = plan[1].argv(&fake_path).unwrap();
+        assert_eq!(argv, ["/usr/bin/wtype", "--", "welcome back wiki"]);
+        assert!(
+            Action::Type {
+                text: "a\nb".into()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Action::Type {
+                text: "x\u{1b}[A".into()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(Action::Type { text: "  ".into() }.validate().is_err());
+        assert_eq!(plan_rules("open up a terminal").unwrap().len(), 1);
+        let dash = Action::Type {
+            text: "--help".into(),
+        };
+        assert_eq!(dash.argv(&fake_path).unwrap()[1], "--");
     }
 
     #[test]
