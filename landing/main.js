@@ -24,15 +24,20 @@ var shots={
 };
 Object.keys(shots).forEach(function(n){var i=new Image();i.src="img/win-"+n+".webp"});
 var morph=$("#morph"),layers=[$("#layer-a"),$("#layer-b")],front=0,morphToken=0;
+var canVT=!!document.startViewTransition;
+if(canVT)document.documentElement.classList.add("vt");
 function morphTo(name){
-  var s=shots[name],token=++morphToken,next=layers[1-front],cur=layers[front];
+  var s=shots[name],token=++morphToken,reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
   var loaded=new Image();loaded.src="img/win-"+name+".webp";
   (loaded.decode?loaded.decode():Promise.resolve()).catch(function(){}).then(function(){
     if(token!==morphToken)return;
-    next.src=loaded.src;
-    morph.style.left=s.l+"%";morph.style.top=s.t+"%";morph.style.width=s.w+"%";morph.style.height=s.h+"%";
-    next.classList.add("on");cur.classList.remove("on");front=1-front;
-    $("#field").setAttribute("aria-label",s.alt)})}
+    var apply=function(){
+      var next=layers[1-front],cur=layers[front];
+      next.src=loaded.src;
+      morph.style.left=s.l+"%";morph.style.top=s.t+"%";morph.style.width=s.w+"%";morph.style.height=s.h+"%";
+      next.classList.add("on");cur.classList.remove("on");front=1-front;
+      $("#field").setAttribute("aria-label",s.alt)};
+    if(canVT&&!reduce)document.startViewTransition(apply);else apply()})}
 $$("#hero-tabs button").forEach(function(b){b.onclick=function(){
   if(b.classList.contains("on"))return;
   $$("#hero-tabs button").forEach(function(x){x.classList.toggle("on",x===b)});

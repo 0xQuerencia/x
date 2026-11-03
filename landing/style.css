@@ -133,3 +133,9 @@ footer a::after{left:0;right:0}
 .stage#field .layer{position:absolute;inset:0;width:100%;height:100%;max-width:none;border-radius:0;object-fit:cover;object-position:top left;opacity:0;transition:opacity .45s ease .12s}
 .stage#field .layer.on{opacity:1;transition:opacity .45s ease .12s}
 @media (prefers-reduced-motion:reduce){.stage#field .win,.stage#field .layer{transition:none}}
+
+.vt .stage#field .win{view-transition-name:xwin;transition:none}
+.vt .stage#field .layer,.vt .stage#field .layer.on{transition:none}
+::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
+::view-transition-group(xwin){animation-duration:.7s;animation-timing-function:cubic-bezier(.65,0,.25,1);border-radius:14px;overflow:hidden}
+::view-transition-old(xwin),::view-transition-new(xwin){height:100%;width:100%;object-fit:cover;object-position:top left}
