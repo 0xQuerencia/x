@@ -209,6 +209,32 @@ fn wake_words_command(command: &str, value: &str) -> ControlReply {
     ControlReply::done(wake_summary())
 }
 
+fn private_file(path: &std::path::Path, append: bool) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .create(true)
+        .write(true)
+        .append(append)
+        .truncate(!append);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file)
+}
+
+fn write_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    std::io::Write::write_all(&mut private_file(path, false)?, contents)
+}
+
+fn append_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    std::io::Write::write_all(&mut private_file(path, true)?, contents)
+}
+
 fn computer_apps_file() -> Option<PathBuf> {
     crate::app_paths::support_dir()
         .ok()
@@ -227,23 +253,6 @@ fn approval_audit_file() -> Option<PathBuf> {
         .map(|dir| dir.join("x-approval-audit.ndjson"))
 }
 
-fn append_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.create(true).append(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    file.write_all(contents)
-}
 
 fn load_computer_apps() -> Vec<String> {
     computer_apps_file()
@@ -307,23 +316,6 @@ fn computer_access(command: &str, value: &str) -> ControlReply {
     }
 }
 
-fn write_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.create(true).truncate(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    file.write_all(contents)
-}
 
 fn ignore_missing(error: std::io::Error) -> std::io::Result<()> {
     if error.kind() == std::io::ErrorKind::NotFound {

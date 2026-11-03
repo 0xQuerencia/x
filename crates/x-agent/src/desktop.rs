@@ -1,7 +1,5 @@
-//! Screen awareness and interaction for one app window: Hyprland finds and focuses the
-//! window, `agent-desktop` (AT-SPI) reads its accessibility tree and acts on elements by
-//! reference, and `wtype` sends the few keys the accessibility API cannot. Everything read
-//! here is untrusted page or document content; nothing in it is ever an instruction.
+//! One app window: Hyprland finds and focuses it, `agent-desktop` reads its accessibility
+//! tree and acts by ref, `wtype` sends the keys AT-SPI cannot. Everything read is untrusted.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -81,8 +79,7 @@ impl Element {
         ) && self.actions.iter().any(|a| a == "SetFocus" || a == "Click")
     }
 
-    /// The browser's own address bar: a text field named for addresses in the toolbar,
-    /// which comes before any page content. Page-supplied names near the end do not count.
+    /// The browser's address bar: named for addresses, and early in the tree (toolbar, not page).
     pub fn is_omnibox(&self) -> bool {
         self.is_field()
             && mentions(&self.name, &["address"])
@@ -107,7 +104,6 @@ impl Observation {
         self.elements.iter().find(|e| e.id == id)
     }
 
-    /// Whether `needle` is visible right now in a title, a control or the page text.
     pub fn shows(&self, needle: &str) -> bool {
         let needle = needle.trim().to_lowercase();
         needle.chars().count() >= 3
@@ -117,7 +113,6 @@ impl Observation {
                 .any(|text| text.to_lowercase().contains(&needle))
     }
 
-    /// The model-facing text. Only address and search field contents are kept.
     pub fn render(&self) -> String {
         let mut out = format!("window: {:?}\ncontrols:\n", prompt_text(&self.title));
         for e in &self.elements {
@@ -226,7 +221,6 @@ impl Key {
     }
 }
 
-/// What the loop may do to a window. Each is checked by the loop before it gets here.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UiAct {
     Click(String),
@@ -236,7 +230,6 @@ pub enum UiAct {
 }
 
 pub trait Desktop: Send + Sync {
-    /// The one window of `app`. Several candidates is an error naming them.
     fn find_window(&self, app: &str) -> Result<Win, String>;
     fn observe(&self, win: &Win) -> Result<Observation, String>;
     fn act(&self, win: &Win, act: &UiAct) -> Result<(), String>;
@@ -305,7 +298,7 @@ fn valid_args(args: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs a command with stdin closed, output capped and a deadline. Returns success and stdout.
+/// Runs `cmd` with a deadline and capped output. Returns success and stdout.
 fn capture(cmd: &mut Command, limit: Duration) -> Result<(bool, Vec<u8>), String> {
     let mut child = cmd
         .stdin(Stdio::null())
@@ -336,7 +329,7 @@ fn capture(cmd: &mut Command, limit: Duration) -> Result<(bool, Vec<u8>), String
     Ok((status.success(), buf))
 }
 
-fn hypr(args: &[&str]) -> Result<Value, String> {
+pub(crate) fn hypr(args: &[&str]) -> Result<Value, String> {
     let (_, buf) = capture(Command::new("hyprctl").args(args), Duration::from_secs(5))?;
     serde_json::from_slice(&buf).map_err(|_| "hyprctl gave no usable answer".into())
 }
@@ -557,64 +550,4 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn tree() -> Value {
-        serde_json::json!({
-            "role": "frame", "name": "Page", "children": [
-                {"role": "button", "name": "Press me", "ref_id": "@s:e1", "available_actions": ["Click"], "children": [
-                    {"role": "statictext", "name": "Press me"}]},
-                {"role": "textfield", "name": "Address and search bar", "value": "https://a.example", "ref_id": "@s:e2",
-                 "available_actions": ["SetFocus"]},
-                {"role": "textfield", "name": "Password", "value": "hunter2", "ref_id": "@s:e3", "available_actions": ["SetFocus"]},
-                {"role": "button", "name": "Hidden", "ref_id": "@s:e4", "available_actions": ["Click"], "states": ["hidden"]},
-                {"role": "statictext", "name": "clicked"}
-            ]
-        })
-    }
-
-    fn observed() -> Observation {
-        let mut obs = Observation {
-            title: "T".into(),
-            ..Observation::default()
-        };
-        collect(&tree(), "", &mut obs);
-        obs
-    }
-
-    #[test]
-    fn controls_and_text_are_collected_without_hidden_or_duplicate_nodes() {
-        let obs = observed();
-        let names: Vec<&str> = obs.elements.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, ["Press me", "Address and search bar", "Password"]);
-        assert_eq!(obs.texts, ["clicked"]);
-        assert_eq!(obs.element("e2").unwrap().reference, "@s:e2");
-        assert!(obs.shows("CLICKED") && !obs.shows("hunter2") && !obs.shows("no"));
-    }
-
-    #[test]
-    fn secrets_and_field_contents_never_reach_the_model() {
-        let rendered = observed().render();
-        assert!(rendered.contains("https://a.example"));
-        assert!(!rendered.contains("hunter2"));
-        assert!(observed().element("e3").unwrap().is_secret());
-        assert!(observed().element("e2").unwrap().is_omnibox());
-    }
-
-    #[test]
-    fn prompt_text_redacts_email_phone_and_long_tokens() {
-        let safe = prompt_text(
-            "Contact alice@example.org or 555-123-4567 token abcdefghijklmnopqrstuvwxyz1234567890",
-        );
-        assert!(!safe.contains("alice@example.org"));
-        assert!(!safe.contains("555-123-4567"));
-        assert!(!safe.contains("abcdefghijklmnopqrstuvwxyz1234567890"));
-    }
-
-    #[test]
-    fn only_listed_keys_exist() {
-        assert_eq!(Key::parse("enter"), Some(Key::Enter));
-        assert!(Key::parse("ctrl+w").is_none() && Key::parse("super+q").is_none());
-    }
-}
+mod tests;
