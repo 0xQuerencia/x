@@ -11,7 +11,7 @@ mod human;
 use clap::{Args, Subcommand};
 
 use super::{
-    CONTROL_VERSION, CaptureAction, ControlCommand, ControlReply, ControlRequest, ControlResponse,
+    AgentAction, CONTROL_VERSION, CaptureAction, ControlCommand, ControlReply, ControlRequest, ControlResponse,
     Pane,
 };
 
@@ -99,6 +99,12 @@ pub enum ControlCli {
     Window {
         #[command(subcommand)]
         command: WindowCommand,
+    },
+    /// X (Labs): speak or type Actions and Work tasks, approve them, and stop them.
+    /// Bind `hex agent toggle` to a key in your desktop for the Agent shortcut.
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
     },
     /// Replay the first-run onboarding.
     Onboarding {
@@ -311,6 +317,53 @@ pub enum OnboardingCommand {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum AgentCommand {
+    /// Show X's phase, the current task, and recent events.
+    Status {
+        /// Only events after this number.
+        #[arg(long, default_value_t = 0)]
+        since: u64,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Start listening, or stop listening and plan what was said. Nothing runs until
+    /// you `approve` the plan. The transcript never pastes into the focused app.
+    Toggle {
+        /// `actions` (open apps and sites) or `work` (hand a goal to OpenCode).
+        #[arg(long, default_value = "actions")]
+        mode: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Plan typed text exactly as spoken text would be.
+    Say {
+        #[arg(long, default_value = "actions")]
+        mode: String,
+        #[arg(required = true)]
+        text: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Run the planned task with this id.
+    Approve {
+        id: u64,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Discard the plan, drop the recording, or stop the running task.
+    Stop {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// The project folder Work runs in (never `/` or your home directory).
+    Workspace {
+        path: String,
+        #[command(flatten)]
+        output: Output,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum WindowCommand {
     /// Open the window, at a pane if given.
     Show {
@@ -462,6 +515,23 @@ pub fn run(command: ControlCli) -> u8 {
             })),
             command => offline_model(command),
         },
+        ControlCli::Agent { command } => {
+            let (action, output) = match command {
+                AgentCommand::Status { since, output } => (AgentAction::Status { since }, output),
+                AgentCommand::Toggle { mode, output } => (AgentAction::Toggle { mode }, output),
+                AgentCommand::Say { mode, text, output } => {
+                    (AgentAction::Say { text: text.join(" "), mode }, output)
+                }
+                AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
+                AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Workspace { path, output } => {
+                    let absolute = std::path::absolute(&path)
+                        .map_or(path, |p| p.display().to_string());
+                    (AgentAction::Workspace { path: absolute }, output)
+                }
+            };
+            send(ControlCommand::Agent { action }, output)
+        }
         ControlCli::Window { command } => match command {
             WindowCommand::Show { pane, output } => {
                 send(ControlCommand::WindowShow { pane }, output)

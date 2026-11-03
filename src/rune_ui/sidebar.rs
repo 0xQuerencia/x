@@ -77,6 +77,8 @@ pub(super) enum Pane {
     HudLab,
     /// Legacy event-log inspector scene (Playground only).
     Activity,
+    /// X (Labs): speak or type a goal, approve the plan, watch it run, Stop it.
+    Agent,
 }
 
 impl Pane {
@@ -92,12 +94,14 @@ impl Pane {
         Pane::VoiceFilter,
         Pane::HudLab,
         Pane::Activity,
+        Pane::Agent,
     ];
 
     pub(super) fn shown(self, ui: &Ui) -> bool {
         let caps = ui.platform.caps;
         match self {
             Pane::Modes | Pane::HudLab | Pane::Activity => false,
+            Pane::Agent => crate::labs::x_agent(),
             Pane::Meetings => caps.meetings && meetings::available(ui),
             // On from Labs, or kept by a driver apps already use.
             Pane::VoiceFilter => caps.fun && fun::running(ui),
@@ -119,6 +123,7 @@ impl Pane {
             Pane::VoiceFilter => tr("Voice Filter"),
             Pane::HudLab => "HUD Lab",
             Pane::Activity => tr("Activity"),
+            Pane::Agent => tr("Agent"),
         }
     }
 
@@ -134,6 +139,7 @@ impl Pane {
             Pane::VoiceFilter => "nav-voice-filter",
             Pane::HudLab => "nav-hud-lab",
             Pane::Activity => "nav-activity",
+            Pane::Agent => "nav-agent",
         }
     }
 
@@ -149,6 +155,7 @@ impl Pane {
             Pane::VoiceFilter => &VOICE_FILTER_ICON,
             Pane::HudLab => &HUD_LAB_ICON,
             Pane::Activity => &ACTIVITY_ICON,
+            Pane::Agent => &super::icons::TERMINAL,
         }
     }
 }

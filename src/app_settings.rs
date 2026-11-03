@@ -412,6 +412,8 @@ pub struct LabsSettings {
     pub keep_recordings: bool,
     pub hide_menu_bar_icon: bool,
     pub movable_meeting_capsules: bool,
+    /// X: voice Actions and OpenCode Work with approvals (off by default).
+    pub x_agent: bool,
 }
 
 /// The idle times Labs › Unload model when idle offers, in minutes.
@@ -454,6 +456,7 @@ impl Default for LabsSettings {
             keep_recordings: false,
             hide_menu_bar_icon: false,
             movable_meeting_capsules: false,
+            x_agent: false,
         }
     }
 }

@@ -409,6 +409,11 @@ const KEYS: &[Key] = &[
         "Labs: a meeting recording Hex started on its own stops 30 s after its call app leaves the microphone and goes quiet, unless you keep recording (macOS)",
     ),
     key(
+        "labs.x_agent",
+        Kind::Bool,
+        "Labs: X, speak safe desktop Actions or delegate Work to OpenCode with a visible plan, approval and Stop; ordinary dictation is unchanged",
+    ),
+    key(
         "labs.movable_meeting_capsules",
         Kind::Bool,
         "Labs: drag meeting capsules such as Meeting transcript ready out of the way; they show in the corner you left them, shared with the recording capsule (macOS)",

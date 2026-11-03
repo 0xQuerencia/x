@@ -118,7 +118,10 @@ fn command(host: &dyn Host, command: ControlCommand) -> ControlReply {
             let restart = matches!(command, ControlCommand::Restart { .. });
             reply(
                 super::check_quit(&meeting_report(), capture(host), force)
-                    .and_then(|()| host.quit(restart))
+                    .and_then(|()| {
+                        crate::agent_host::shutdown();
+                        host.quit(restart)
+                    })
                     .map(|()| {
                         ControlReply::done(if restart {
                             "Restarting Hex"
@@ -198,6 +201,7 @@ fn command(host: &dyn Host, command: ControlCommand) -> ControlReply {
                 ControlReply::unchanged("The window isn't open")
             }
         }
+        ControlCommand::Agent { action } => crate::agent_host::handle(action),
         ControlCommand::WindowStory { .. } => {
             unsupported("playground story links are macOS-only; open the playground in the window")
         }

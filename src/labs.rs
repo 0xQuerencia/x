@@ -98,10 +98,11 @@ pub enum Feature {
     KeepRecordings,
     HideMenuBarIcon,
     MovableMeetingCapsules,
+    XAgent,
 }
 
 impl Feature {
-    pub const ALL: [Self; 39] = [
+    pub const ALL: [Self; 40] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::Playground,
@@ -141,6 +142,7 @@ impl Feature {
         Self::KeepRecordings,
         Self::HideMenuBarIcon,
         Self::MovableMeetingCapsules,
+        Self::XAgent,
     ];
 
     /// The features this OS and build have.
@@ -202,7 +204,8 @@ impl Feature {
             | Self::SectionKeyAlone
             | Self::KeepRecordings
             | Self::HideMenuBarIcon
-            | Self::MovableMeetingCapsules => Audience::Everyone,
+            | Self::MovableMeetingCapsules
+            | Self::XAgent => Audience::Everyone,
         }
     }
 
@@ -268,6 +271,7 @@ impl Feature {
             | Self::ModelInPlace
             | Self::PickerDownloaded
             | Self::KeepRecordings
+            | Self::XAgent
             | Self::FillerWords => true,
         }
     }
@@ -314,6 +318,7 @@ impl Feature {
             Self::KeepRecordings => "keep-recordings",
             Self::HideMenuBarIcon => "hide-menu-bar-icon",
             Self::MovableMeetingCapsules => "movable-meeting-capsules",
+            Self::XAgent => "x-agent",
         }
     }
 
@@ -359,6 +364,7 @@ impl Feature {
             Self::KeepRecordings => "labs.keep_recordings",
             Self::HideMenuBarIcon => "labs.hide_menu_bar_icon",
             Self::MovableMeetingCapsules => "labs.movable_meeting_capsules",
+            Self::XAgent => "labs.x_agent",
         }
     }
 
@@ -464,6 +470,9 @@ impl Feature {
             Self::MovableMeetingCapsules => {
                 "Drag meeting capsules such as Meeting transcript ready out of the way; they come back in the corner you left them"
             }
+            Self::XAgent => {
+                "X: speak safe desktop Actions and delegate Work to OpenCode, with a visible plan, approval and Stop; normal dictation is unchanged"
+            }
         }
     }
 
@@ -513,6 +522,7 @@ impl Feature {
             Self::KeepRecordings => settings.labs.keep_recordings,
             Self::HideMenuBarIcon => settings.labs.hide_menu_bar_icon,
             Self::MovableMeetingCapsules => settings.labs.movable_meeting_capsules,
+            Self::XAgent => settings.labs.x_agent,
         }
     }
 
@@ -560,6 +570,7 @@ impl Feature {
             &mut labs.keep_recordings,
             &mut labs.hide_menu_bar_icon,
             &mut labs.movable_meeting_capsules,
+            &mut labs.x_agent,
         ]
     }
 
@@ -607,6 +618,7 @@ impl Feature {
             Self::KeepRecordings => settings.labs.keep_recordings = on,
             Self::HideMenuBarIcon => settings.labs.hide_menu_bar_icon = on,
             Self::MovableMeetingCapsules => settings.labs.movable_meeting_capsules = on,
+            Self::XAgent => settings.labs.x_agent = on,
             // Off, no shortcut keeps a key only the feature allows.
             Self::StandaloneSpecialKeys => {
                 settings.labs.standalone_special_keys = on;
@@ -645,6 +657,7 @@ const STOP_WHEN_CALL_ENDS: u64 = 1 << 20;
 const KEEP_RECORDINGS: u64 = 1 << 21;
 const HIDE_MENU_BAR_ICON: u64 = 1 << 22;
 const MOVABLE_MEETING_CAPSULES: u64 = 1 << 23;
+const X_AGENT: u64 = 1 << 24;
 /// Unload-idle minutes (at most 1,440, 11 bits) sit above the switches.
 const MINUTES_SHIFT: u64 = 32;
 
@@ -807,6 +820,12 @@ pub fn movable_meeting_capsules() -> bool {
     on(MOVABLE_MEETING_CAPSULES) && Feature::MovableMeetingCapsules.on_this_os()
 }
 
+/// X: the Agent pane, its shortcut, and Actions/Work runs. Off by default; gate the work
+/// where it starts, not only where the pane shows.
+pub fn x_agent() -> bool {
+    on(X_AGENT) && Feature::XAgent.on_this_os()
+}
+
 /// How long the speech model may sit unused before the engine unloads it,
 /// while Labs › Unload model when idle is on.
 pub fn unload_idle() -> Option<std::time::Duration> {
@@ -907,6 +926,7 @@ fn encode_where(settings: &LabsSettings, reaches: impl Fn(Feature) -> bool) -> u
             settings.movable_meeting_capsules,
             MOVABLE_MEETING_CAPSULES,
         ),
+        (Feature::XAgent, settings.x_agent, X_AGENT),
     ]
     .into_iter()
     .filter(|(feature, on, _)| *on && reaches(*feature))

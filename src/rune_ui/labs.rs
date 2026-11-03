@@ -244,6 +244,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
         }
     }
     rows.push(row(
+        Feature::XAgent,
+        &TERMINAL,
+        tr("X agent"),
+        tr("Speak safe desktop actions, or hand a goal to OpenCode with a visible plan, approval and Stop. Dictation is unchanged"),
+    ));
+    rows.push(row(
         Feature::VocabularyBiasing,
         &BOOK,
         tr("Vocabulary biasing"),
@@ -506,6 +512,7 @@ fn row_key(feature: Feature) -> &'static str {
         Feature::KeepRecordings => "lab-keep-recordings",
         Feature::HideMenuBarIcon => "lab-hide-menu-bar-icon",
         Feature::MovableMeetingCapsules => "lab-movable-meeting-capsules",
+        Feature::XAgent => "lab-x-agent",
     }
 }
 

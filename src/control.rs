@@ -130,6 +130,10 @@ pub enum ControlCommand {
         pane: Option<Pane>,
     },
     WindowHide,
+    /// X (Labs): speak or type Actions and Work tasks, approve, and Stop.
+    Agent {
+        action: AgentAction,
+    },
     /// Replay the first-run onboarding in the window (dev, test, and local
     /// builds); settings, history, models, and permissions stay.
     OnboardingReset,
@@ -209,6 +213,23 @@ impl ControlRequest {
     }
 }
 
+/// What `hex agent` asks X to do. Nothing runs until `Approve` names the planned task.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "action", rename_all = "kebab-case")]
+pub enum AgentAction {
+    Status {
+        #[serde(default)]
+        since: u64,
+    },
+    /// Start listening, or stop and plan what was said.
+    Toggle { mode: String },
+    /// Plan typed text exactly as spoken text would be.
+    Say { text: String, mode: String },
+    Approve { id: u64 },
+    Stop,
+    Workspace { path: String },
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum ControlReply {
@@ -238,6 +259,10 @@ pub enum ControlReply {
     /// `hex dictation stop --print`: the processed transcript.
     Transcript {
         text: String,
+    },
+    /// `hex agent`: X's phase, task, and events (the `x-agent` crate's snapshot).
+    Agent {
+        snapshot: serde_json::Value,
     },
     Error {
         code: String,
@@ -1089,6 +1114,12 @@ mod tests {
                 pane: Some(Pane::History),
             },
             ControlCommand::WindowHide,
+            ControlCommand::Agent {
+                action: AgentAction::Say {
+                    text: "open Firefox".into(),
+                    mode: "actions".into(),
+                },
+            },
             ControlCommand::OnboardingReset,
             ControlCommand::WindowStory {
                 story: "HUD/Processing".into(),

@@ -45,6 +45,7 @@ transcribe-cpp-sys = { git = "https://github.com/anomalyco/transcribe.cpp", rev 
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
+x-agent = { path = "crates/x-agent" }
 color-eyre = "0.6.5"
 cpal = "0.18.2"
 ctrlc = "3.5.2"

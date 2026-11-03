@@ -1990,6 +1990,7 @@ dependencies = [
  "windows-future 0.3.2",
  "windows-sys 0.61.2",
  "winreg",
+ "x-agent",
  "x11-clipboard",
  "x11rb 0.14.0",
  "zbus",
@@ -7245,6 +7246,18 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "x-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "x11-clipboard"

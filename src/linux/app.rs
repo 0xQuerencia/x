@@ -217,6 +217,7 @@ impl HostHandle {
 
     /// The window's "Quit Hex": drains accepted work, then exits.
     pub(crate) fn quit(&self) {
+        crate::agent_host::shutdown();
         self.0.shutdown.store(true, Ordering::Release);
     }
 

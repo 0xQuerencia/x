@@ -61,6 +61,7 @@ mod rune_ui;
 mod suppression;
 mod transcription;
 mod updater;
+mod agent_host;
 #[cfg(target_os = "windows")]
 mod windows;
 

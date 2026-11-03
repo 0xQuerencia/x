@@ -32,9 +32,44 @@ pub(crate) fn print(reply: ControlReply, output: Output) -> u8 {
         ControlReply::ScrawlCaptureDetail(detail) => print!("{}", human_capture_detail(&detail)),
         ControlReply::ScrawlCaptureRoute { explanation } => print!("{explanation}"),
         ControlReply::Transcript { text } => println!("{text}"),
+        ControlReply::Agent { snapshot } => print!("{}", human_agent(&snapshot)),
         ControlReply::Error { message, .. } => eprintln!("hex: {message}"),
     }
     code
+}
+
+/// `hex agent status` and a fresh plan: the phase, the task with its steps (and the id to
+/// approve), then the newest events.
+pub(super) fn human_agent(snapshot: &Value) -> String {
+    let text = |value: &Value, key: &str| value.get(key).and_then(Value::as_str).unwrap_or("").to_string();
+    let mut out = format!("X: {}\n", text(snapshot, "phase"));
+    if let Some(task) = snapshot.get("task").filter(|t| t.is_object()) {
+        let id = task.get("id").and_then(Value::as_u64).unwrap_or_default();
+        out.push_str(&format!("Task {id} ({}): {}\n", text(task, "mode"), text(task, "text")));
+        for step in task.get("steps").and_then(Value::as_array).into_iter().flatten() {
+            let risk = text(step, "risk");
+            let risk = if risk.is_empty() { String::new() } else { format!("  [{risk}]") };
+            out.push_str(&format!("  [{}] {}{risk}\n", text(step, "status"), text(step, "title")));
+        }
+        if text(task, "phase") == "awaiting_approval" {
+            out.push_str(&format!("Approve with: hex agent approve {id}\n"));
+        }
+        for key in ["error", "summary"] {
+            let value = text(task, key);
+            if !value.is_empty() {
+                out.push_str(&format!("{key}: {value}\n"));
+            }
+        }
+        if let Some(files) = task.get("changed_files").and_then(Value::as_array) {
+            let files: Vec<&str> = files.iter().filter_map(Value::as_str).collect();
+            out.push_str(&format!("changed files: {}\n", if files.is_empty() { "none".into() } else { files.join(", ") }));
+        }
+    }
+    let events: Vec<&Value> = snapshot.get("events").and_then(Value::as_array).into_iter().flatten().collect();
+    for event in events.iter().skip(events.len().saturating_sub(8)) {
+        out.push_str(&format!("  {:<7} {}\n", text(event, "kind"), text(event, "text")));
+    }
+    out
 }
 
 pub(super) fn human_scrawl_capture(report: &crate::control::ScrawlCaptureReport) -> String {

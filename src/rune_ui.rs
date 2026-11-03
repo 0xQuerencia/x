@@ -10,6 +10,7 @@
 //! design language (`rune-theme-opencode`); see `docs/design-system.md`.
 
 mod activity;
+mod agent;
 #[cfg(hex_capture)]
 pub(crate) mod capture_capsule;
 mod controls;
@@ -690,6 +691,7 @@ pub(crate) struct Ui {
     meetings: meetings::MeetingsPane,
     fun: fun::FunPane,
     activity: activity::ActivityPane,
+    agent: agent::AgentPane,
     /// HUD Lab's preset was copied since it last changed.
     hud_copied: bool,
     /// HUD Lab saved Dot scope's tuning, until the next change.
@@ -793,6 +795,7 @@ impl Ui {
             meetings: meetings::MeetingsPane::default(),
             fun: fun::FunPane::default(),
             activity: activity::ActivityPane::default(),
+            agent: agent::AgentPane::default(),
             hud_copied: false,
             hud_saved: false,
             saved: 0,
@@ -1223,6 +1226,7 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
             && ui.window.as_ref().is_some_and(rune::AppHandle::is_visible),
     );
     changed |= ui.history.poll(ui.pane == Pane::History);
+    changed |= ui.agent.poll(ui.pane == Pane::Agent);
     if ui.pane == Pane::Output && !ui.labs_open {
         changed |= output::poll(ui, clock, tx);
     }
@@ -1346,6 +1350,7 @@ fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         Pane::VoiceFilter => (Vec::new(), fun::pane(ui, p)),
         Pane::HudLab => hud_lab::pane(ui, p),
         Pane::Activity => activity::pane(ui, p),
+        Pane::Agent => agent::pane(ui, p),
     };
     let panel = col()
         .key("panel")
