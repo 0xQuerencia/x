@@ -178,8 +178,12 @@ impl Action {
                 Ok(())
             });
         }
-        cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| format!("could not launch {exe}: {e}"))?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
         Ok(format!("Launched {}", valid.describe()))
     }
 }
@@ -253,7 +257,17 @@ pub fn safe_url(raw: &str) -> Result<&str, String> {
     }
     let host = host.to_ascii_lowercase();
     let host = host.trim_end_matches('.');
-    if host == "localhost" || host.ends_with(".local") || host.ends_with(".localhost") {
+    const PRIVATE: [&str; 8] = [
+        ".local",
+        ".localhost",
+        ".internal",
+        ".lan",
+        ".home.arpa",
+        ".localdomain",
+        ".corp",
+        ".intranet",
+    ];
+    if host == "localhost" || PRIVATE.iter().any(|s| host.ends_with(s)) {
         return Err("Local addresses are not supported".into());
     }
     let valid_chars = host
@@ -268,7 +282,11 @@ pub fn safe_url(raw: &str) -> Result<&str, String> {
     {
         return Err("Invalid domain".into());
     }
-    if host.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+    let tld = host.rsplit('.').next().unwrap_or("");
+    if host.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        || tld.bytes().all(|b| b.is_ascii_digit())
+        || tld.starts_with("0x")
+    {
         return Err("IP addresses are not supported".into());
     }
     Ok(raw)
@@ -550,6 +568,10 @@ mod tests {
         for bad in [
             "http://example.com",
             "file:///etc/passwd",
+            "https://0x7f.0.0.1/",
+            "https://0xc0.0xa8.1.1/",
+            "https://nas.lan/",
+            "https://app.internal/",
             "javascript:alert(1)",
             "https://localhost/",
             "https://a.local/",

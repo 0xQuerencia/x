@@ -182,10 +182,7 @@ impl Service {
             return Err("Enter a task of 1-1,500 characters".into());
         }
         let mut s = self.lock();
-        if matches!(
-            s.phase,
-            Phase::Running | Phase::AwaitingApproval | Phase::Listening | Phase::Planning
-        ) {
+        if s.phase.is_busy() {
             return Err(busy(s.phase));
         }
         let (steps, actions, workspace) = match mode {
@@ -284,6 +281,7 @@ impl Service {
     }
 
     fn run_actions(&self, actions: &[Action]) {
+        let mut launched = 0;
         for (i, action) in actions.iter().enumerate() {
             if self.lock().stop_requested {
                 break;
@@ -294,6 +292,7 @@ impl Service {
                 Ok(msg) => {
                     self.emit("result", &format!("{msg} (launched; outcome not verified)"));
                     self.set_step(i, "launched");
+                    launched += 1;
                 }
                 Err(e) => {
                     self.set_step(i, "failed");
@@ -303,7 +302,7 @@ impl Service {
         }
         let note = format!(
             "{} action(s) launched. X does not verify that pages loaded.",
-            actions.len()
+            launched
         );
         self.finish(Phase::Completed, None, Some(note), None);
     }
@@ -320,15 +319,32 @@ impl Service {
                 None,
             );
         };
+        let Ok(ws) = opencode::validate_workspace(ws.as_ref()) else {
+            self.set_step(0, "failed");
+            return self.finish(
+                Phase::Failed,
+                Some("Workspace is no longer valid".into()),
+                None,
+                None,
+            );
+        };
+        if self.lock().stop_requested {
+            return self.finish(
+                Phase::Cancelled,
+                None,
+                Some("Stopped before start".into()),
+                None,
+            );
+        }
         self.set_step(0, "running");
         let me = self.clone();
         let on_event: opencode::OnEvent = Arc::new(move |k, t| me.emit(k, t));
-        let run = match Run::start(
-            RunConfig::new(exe, task.text.clone(), PathBuf::from(ws)),
-            on_event,
-        ) {
+        let run = match Run::start(RunConfig::new(exe, task.text.clone(), ws), on_event) {
             Ok(r) => r,
-            Err(e) => return self.finish(Phase::Failed, Some(e), None, None),
+            Err(e) => {
+                self.set_step(0, "failed");
+                return self.finish(Phase::Failed, Some(e), None, None);
+            }
         };
         {
             let mut s = self.lock();
@@ -385,7 +401,7 @@ impl Service {
         changed: Option<Vec<String>>,
     ) {
         let mut s = self.lock();
-        let phase = if s.stop_requested {
+        let phase = if s.stop_requested && phase == Phase::Completed {
             Phase::Cancelled
         } else {
             phase
@@ -397,22 +413,28 @@ impl Service {
         }
         set_phase(&mut s, phase);
         if let Some(e) = error {
-            emit(&mut s, "error", &e);
+            let seen = s
+                .events
+                .iter()
+                .rev()
+                .take(8)
+                .any(|ev| ev.kind == "error" && e.contains(&ev.text));
+            if !seen {
+                emit(&mut s, "error", &e);
+            }
         }
         emit(&mut s, "info", &format!("Task {}", phase_name(phase)));
     }
 
     /// Stop whatever is active: discard a plan, abort a recording, or kill a run.
     pub fn cancel(&self) {
-        let phase = self.lock().phase;
-        match phase {
+        let mut s = self.lock();
+        match s.phase {
             Phase::AwaitingApproval => {
-                let mut s = self.lock();
                 set_phase(&mut s, Phase::Cancelled);
                 emit(&mut s, "info", "Plan discarded");
             }
             Phase::Running => {
-                let mut s = self.lock();
                 s.stop_requested = true;
                 emit(&mut s, "info", "Stop requested");
                 if let Some(c) = s.canceller.clone() {
@@ -420,7 +442,10 @@ impl Service {
                     c.cancel();
                 }
             }
-            Phase::Listening | Phase::Transcribing => self.voice_cancel(),
+            Phase::Listening | Phase::Transcribing => {
+                drop(s);
+                self.voice_cancel();
+            }
             _ => {}
         }
     }
@@ -437,8 +462,15 @@ impl Service {
             set_phase(&mut s, Phase::Listening);
         }
         if let Err(e) = self.stt.start() {
-            set_phase(&mut self.lock(), Phase::Idle);
+            let mut s = self.lock();
+            if s.phase == Phase::Listening {
+                set_phase(&mut s, Phase::Idle);
+            }
             return Err(e.to_string());
+        }
+        if self.lock().phase == Phase::Idle {
+            let _ = self.stt.cancel(); // cancelled while the recording was starting
+            return Ok(());
         }
         self.emit("info", "Listening (Hex microphone)");
         Ok(())

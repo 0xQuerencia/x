@@ -52,8 +52,20 @@ pub fn validate_workspace(path: &Path) -> Result<PathBuf, String> {
         return Err("Workspace is not a directory".into());
     }
     let home = dirs::home_dir().and_then(|h| h.canonicalize().ok());
-    if resolved.parent().is_none() || home.as_deref() == Some(resolved.as_path()) {
-        return Err("Choose a project directory, not / or your home directory".into());
+    let too_broad = resolved.components().count() <= 2
+        || home.as_deref().is_some_and(|h| h.starts_with(&resolved))
+        || home.as_deref().is_some_and(|h| {
+            resolved.strip_prefix(h).ok().is_some_and(|rel| {
+                rel.components()
+                    .next()
+                    .is_some_and(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+            })
+        });
+    if too_broad {
+        return Err(
+            "Choose a project directory, not a system folder, your home directory or a hidden config folder"
+                .into(),
+        );
     }
     Ok(resolved)
 }
@@ -192,6 +204,7 @@ impl RunConfig {
             self.workspace.to_string_lossy().into_owned(),
             "--format".into(),
             "json".into(),
+            "--".into(),
             self.prompt.clone(),
         ]);
         a
@@ -586,6 +599,24 @@ mod tests {
         f.run("echo \"pwd=$PWD\"");
         let want = ("raw".to_string(), format!("pwd={}", f.repo.display()));
         assert!(f.events.lock().unwrap().contains(&want));
+    }
+
+    #[test]
+    fn option_looking_prompts_stay_after_the_separator() {
+        let f = fixture();
+        let args = RunConfig::new(f.fake(""), "--auto", f.repo.clone()).args();
+        let n = args.len();
+        assert_eq!(&args[n - 2..], ["--", "--auto"]);
+    }
+
+    #[test]
+    fn broad_or_secret_workspaces_are_refused() {
+        for p in ["/", "/etc", "/usr", "/home"] {
+            assert!(validate_workspace(Path::new(p)).is_err(), "{p}");
+        }
+        let home = dirs::home_dir().unwrap();
+        assert!(validate_workspace(&home).is_err());
+        assert!(validate_workspace(&home.join(".config")).is_err());
     }
 
     #[test]

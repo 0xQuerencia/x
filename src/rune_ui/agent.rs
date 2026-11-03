@@ -168,6 +168,13 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             },
         ));
 
+    let capture = if matches!(snapshot.phase, Phase::Listening | Phase::Transcribing) {
+        capture.child(button(p, "agent-cancel", tr("Cancel"), ButtonKind::Secondary, |_: &mut Ui, _| {
+            agent_host::handle(AgentAction::Stop);
+        }))
+    } else {
+        capture
+    };
     let mut body = col().key("agent-body").gap(16.0).child(capture);
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));

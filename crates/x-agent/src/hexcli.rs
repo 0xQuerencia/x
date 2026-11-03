@@ -113,11 +113,11 @@ impl HexCli {
 }
 
 fn read_all(r: Option<&mut impl Read>) -> String {
-    let mut s = String::new();
+    let mut bytes = Vec::new();
     if let Some(r) = r {
-        let _ = r.read_to_string(&mut s);
+        let _ = r.read_to_end(&mut bytes);
     }
-    s
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 impl Stt for HexCli {
