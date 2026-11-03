@@ -75,6 +75,8 @@ pub struct Snapshot {
     pub opencode_found: bool,
     #[serde(default)]
     pub trusted_actions: bool,
+    pub computer_apps: Vec<String>,
+    pub computer_remote: bool,
 }
 
 /// Launches validated actions (faked in tests).
@@ -91,7 +93,23 @@ pub trait Launcher: Send + Sync {
 /// Turns speech the rules do not understand into registry actions. Its output is only
 /// ever a proposal: every step is validated like any other.
 pub trait Planner: Send + Sync {
-    fn plan(&self, text: &str, smart: bool) -> Result<tools::Reply, String>;
+    /// One raw model answer for `prompt`.
+    fn complete(&self, _prompt: &str) -> Result<String, String> {
+        Err("This planner cannot hold a conversation".into())
+    }
+
+    /// True when the prompt never leaves this machine.
+    fn is_local(&self) -> bool {
+        false
+    }
+
+    fn plan(&self, text: &str, smart: bool) -> Result<tools::Reply, String> {
+        crate::planner::reply_from_text(
+            &self.complete(&crate::planner::prompt(text, smart))?,
+            smart,
+        )
+    }
+
     fn name(&self) -> String;
 }
 
@@ -120,6 +138,8 @@ struct State {
     workspace: Option<PathBuf>,
     trust_actions: bool,
     grants: Vec<String>,
+    computer_apps: Vec<String>,
+    computer_remote: bool,
 }
 
 #[derive(Clone)]
@@ -130,6 +150,7 @@ pub struct Service {
     opencode_exe: Arc<Mutex<Option<PathBuf>>>,
     planner: Arc<Mutex<Option<Arc<dyn Planner>>>>,
     session_root: Arc<Mutex<Option<PathBuf>>>,
+    desktop: Arc<Mutex<Arc<dyn crate::desktop::Desktop>>>,
 }
 
 fn now() -> u64 {
@@ -155,6 +176,8 @@ impl Service {
             stop_requested: false,
             trust_actions: false,
             grants: vec![],
+            computer_apps: vec![],
+            computer_remote: false,
             voice_mode: Mode::Actions,
             workspace: None,
         };
@@ -165,6 +188,7 @@ impl Service {
             opencode_exe: Arc::new(Mutex::new(opencode_exe)),
             planner: Arc::new(Mutex::new(None)),
             session_root: Arc::new(Mutex::new(None)),
+            desktop: Arc::new(Mutex::new(Arc::new(crate::desktop::AgentDesktop::detect()))),
         }
     }
 
@@ -184,6 +208,8 @@ impl Service {
             events: s.events.iter().filter(|e| e.n > since).cloned().collect(),
             workspace: s.workspace.as_ref().map(|p| p.display().to_string()),
             trusted_actions: s.trust_actions,
+            computer_apps: s.computer_apps.clone(),
+            computer_remote: s.computer_remote,
             opencode_found: self
                 .opencode_exe
                 .lock()
@@ -226,6 +252,22 @@ impl Service {
         if let Ok(mut slot) = self.session_root.lock() {
             *slot = Some(root);
         }
+    }
+
+    pub fn set_desktop(&self, desktop: Arc<dyn crate::desktop::Desktop>) {
+        if let Ok(mut slot) = self.desktop.lock() {
+            *slot = desktop;
+        }
+    }
+
+    /// Apps the person lets X read and operate. Anything else asks first, every time.
+    pub fn set_computer_apps(&self, apps: Vec<String>) {
+        self.lock().computer_apps = apps;
+    }
+
+    /// Whether on-screen text may be sent to a model that is not on this machine.
+    pub fn set_computer_remote(&self, on: bool) {
+        self.lock().computer_remote = on;
     }
 
     pub fn set_planner(&self, planner: Option<Arc<dyn Planner>>) {
@@ -284,13 +326,43 @@ impl Service {
         if let Some([Action::Session { goal }]) = preset.as_deref() {
             return self.plan_session(&goal.clone());
         }
+        let computer_app = match preset.as_deref() {
+            Some([Action::Computer { app, .. }]) => Some(app.clone()),
+            _ => None,
+        };
+        if computer_app.is_some() {
+            self.check_screen_may_leave()?;
+        }
         let task = self.plan_task(text, mode, preset)?;
+        if let Some(app) = computer_app {
+            let granted = self.lock().computer_apps.contains(&app);
+            if granted && self.lock().trust_actions {
+                self.emit(
+                    "info",
+                    &format!("Screen access to {app} is granted: starting"),
+                );
+                self.approve(task.id)?;
+            }
+            return Ok(task);
+        }
         let low_risk = tools::is_low_risk(&self.lock().actions);
         if mode == Mode::Actions && low_risk && self.lock().trust_actions {
             self.emit("info", "Trusted Actions: running without a prompt");
             self.approve(task.id)?;
         }
         Ok(task)
+    }
+
+    fn check_screen_may_leave(&self) -> Result<(), String> {
+        let planner = self.planner.lock().ok().and_then(|p| p.clone());
+        match planner {
+            None => Err("Operating apps needs a model: set one with `agent planner`".into()),
+            Some(p) if !p.is_local() && !self.lock().computer_remote => Err(format!(
+                "Operating an app sends on-screen text to {}. Use a local model, or allow it with `agent computer remote on`. Nothing was done.",
+                p.name()
+            )),
+            Some(_) => Ok(()),
+        }
     }
 
     /// A throwaway project folder under `~/x-sessions`, then an ordinary Work task in it.
@@ -342,7 +414,11 @@ impl Service {
                     .map(|a| Step {
                         title: a.describe(),
                         status: "pending".into(),
-                        risk: "launches an app".into(),
+                        risk: if matches!(a, Action::Computer { .. }) {
+                            "reads this app's screen, then clicks and types in it".into()
+                        } else {
+                            "launches an app".into()
+                        },
                     })
                     .collect();
                 (steps, actions, None)
@@ -466,6 +542,9 @@ impl Service {
             }
             self.set_step(i, "running");
             self.emit("action", &action.describe());
+            if let Action::Computer { app, goal } = action {
+                return self.run_computer(app, goal);
+            }
             let result = match action {
                 Action::Type { .. } => {
                     let waited = match actions.get(i.wrapping_sub(1)) {
@@ -495,6 +574,59 @@ impl Service {
             launched
         );
         self.finish(Phase::Completed, None, Some(note), None);
+    }
+
+    fn run_computer(&self, app: &str, goal: &str) {
+        struct Link<'a>(&'a Service);
+        impl crate::computer::Host for Link<'_> {
+            fn emit(&self, kind: &str, text: &str) {
+                self.0.emit(kind, text);
+            }
+            fn stopped(&self) -> bool {
+                self.0.lock().stop_requested
+            }
+            fn open_app(&self, app: &str) -> Result<(), String> {
+                self.0
+                    .launcher
+                    .launch(&Action::App { target: app.into() })
+                    .map(drop)
+            }
+        }
+        if let Err(why) = self.check_screen_may_leave() {
+            self.set_step(0, "failed");
+            return self.finish(Phase::Failed, Some(why), None, None);
+        }
+        let Some(planner) = self.planner.lock().ok().and_then(|p| p.clone()) else {
+            self.set_step(0, "failed");
+            return self.finish(Phase::Failed, Some("No model is set".into()), None, None);
+        };
+        let desktop = self
+            .desktop
+            .lock()
+            .map(|d| d.clone())
+            .unwrap_or_else(|p| p.into_inner().clone());
+        let outcome = crate::computer::run(
+            app,
+            goal,
+            desktop.as_ref(),
+            &|prompt| planner.complete(prompt),
+            &Link(self),
+            &crate::computer::Limits::default(),
+        );
+        use crate::computer::Outcome;
+        match outcome {
+            Outcome::Done(note) => {
+                self.set_step(0, "done");
+                self.finish(Phase::Completed, None, Some(note), None);
+            }
+            Outcome::Cancelled => {
+                self.finish(Phase::Cancelled, None, Some("Stopped".into()), None);
+            }
+            Outcome::Failed(why) => {
+                self.set_step(0, "failed");
+                self.finish(Phase::Failed, Some(why), None, None);
+            }
+        }
     }
 
     fn run_work(&self, task: &Task) {
@@ -898,6 +1030,111 @@ mod tests {
         fn name(&self) -> String {
             "fake".into()
         }
+    }
+
+    struct ScreenPlanner {
+        local: bool,
+        replies: Mutex<Vec<String>>,
+    }
+
+    impl Planner for ScreenPlanner {
+        fn plan(&self, _: &str, _: bool) -> Result<tools::Reply, String> {
+            Ok(tools::Reply::Steps(vec![Action::Computer {
+                app: "chrome".into(),
+                goal: "press the button".into(),
+            }]))
+        }
+        fn complete(&self, _: &str) -> Result<String, String> {
+            Ok(self.replies.lock().unwrap().remove(0))
+        }
+        fn is_local(&self) -> bool {
+            self.local
+        }
+        fn name(&self) -> String {
+            "screen-fake".into()
+        }
+    }
+
+    struct TwoScreens(Mutex<usize>);
+
+    impl crate::desktop::Desktop for TwoScreens {
+        fn find_window(&self, _: &str) -> Result<crate::desktop::Win, String> {
+            Ok(crate::desktop::Win {
+                address: "0x1".into(),
+                pid: 1,
+                class: "chrome".into(),
+                title: "Test".into(),
+                id: "w".into(),
+            })
+        }
+        fn observe(&self, _: &crate::desktop::Win) -> Result<crate::desktop::Observation, String> {
+            let clicked = *self.0.lock().unwrap() > 0;
+            Ok(crate::desktop::Observation {
+                snapshot: "s".into(),
+                title: "Test".into(),
+                elements: vec![crate::desktop::Element {
+                    id: "e1".into(),
+                    reference: "@s:e1".into(),
+                    role: "button".into(),
+                    name: "Press me".into(),
+                    value: String::new(),
+                    actions: vec!["Click".into()],
+                }],
+                texts: vec![if clicked { "clicked" } else { "idle" }.into()],
+            })
+        }
+        fn act(&self, _: &crate::desktop::Win, _: &crate::desktop::UiAct) -> Result<(), String> {
+            *self.0.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    fn screen_rig(local: bool) -> Service {
+        let (s, _, _) = rig();
+        s.set_desktop(Arc::new(TwoScreens(Mutex::new(0))));
+        s.set_planner(Some(Arc::new(ScreenPlanner {
+            local,
+            replies: Mutex::new(vec![
+                r#"{"do":"click","id":"e1"}"#.into(),
+                r#"{"done":true,"evidence":"clicked"}"#.into(),
+            ]),
+        })));
+        s
+    }
+
+    #[test]
+    fn screen_access_needs_a_grant_a_trusted_mode_and_a_local_or_allowed_model() {
+        let s = screen_rig(false);
+        let refused = s
+            .plan("press the button in chrome", Mode::Actions)
+            .unwrap_err();
+        assert!(refused.contains("sends on-screen text"), "{refused}");
+        assert_eq!(s.snapshot(0).phase, Phase::Idle);
+
+        let s = screen_rig(true);
+        s.set_trust_actions(true);
+        let t = s.plan("press the button in chrome", Mode::Actions).unwrap();
+        assert_eq!(
+            s.snapshot(0).phase,
+            Phase::AwaitingApproval,
+            "ungranted app asks"
+        );
+        assert!(t.steps[0].risk.contains("screen"));
+        s.cancel();
+
+        s.set_computer_apps(vec!["chrome".into()]);
+        s.plan("press the button in chrome", Mode::Actions).unwrap();
+        let done = wait_for(&s, |x| x.phase == Phase::Completed);
+        assert!(done.task.unwrap().summary.unwrap().contains("clicked"));
+        assert!(done.events.iter().any(|e| e.kind == "verify"));
+    }
+
+    #[test]
+    fn a_remote_model_may_see_the_screen_only_after_the_person_allows_it() {
+        let s = screen_rig(false);
+        s.set_computer_remote(true);
+        s.plan("press the button in chrome", Mode::Actions).unwrap();
+        assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
     }
 
     #[test]

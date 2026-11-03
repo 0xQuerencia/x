@@ -380,6 +380,18 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// What X may read and operate on screen. `grant chrome` lets X read that app's windows
+    /// and click and type in them; `revoke` takes it back; `list` shows both; `remote on`
+    /// allows on-screen text to be sent to a model that is not on this machine (default off).
+    Computer {
+        #[arg(value_parser = ["grant", "revoke", "list", "remote"])]
+        command: String,
+        /// An app name for grant and revoke, `on` or `off` for remote.
+        #[arg(default_value = "")]
+        value: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// A local Ollama model (for example `gemma4:e2b-it-qat`) plans requests the built-in rules
     /// do not understand, from the same closed set of steps. `off` turns it off.
     Planner {
@@ -560,6 +572,11 @@ pub fn run(command: ControlCli) -> u8 {
                 ),
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Computer {
+                    command,
+                    value,
+                    output,
+                } => (AgentAction::Computer { command, value }, output),
                 AgentCommand::Planner { model, output } => (AgentAction::Planner { model }, output),
                 AgentCommand::Allow { index, output } => (AgentAction::Allow { index }, output),
                 AgentCommand::Voice { mode, output } => (AgentAction::Voice { mode }, output),

@@ -49,6 +49,8 @@ pub fn service() -> &'static Service {
             opencode_exe(),
         );
         service.set_trust_actions(trust_file().is_some_and(|path| path.is_file()));
+        service.set_computer_apps(load_computer_apps());
+        service.set_computer_remote(computer_remote_file().is_some_and(|path| path.is_file()));
         VOICE.store(load_voice_mode() as u8, Ordering::Relaxed);
         let saved = planner_file()
             .and_then(|path| std::fs::read_to_string(path).ok())
@@ -144,6 +146,80 @@ fn set_planner(model: &str) -> ControlReply {
         String::new()
     };
     ControlReply::done(format!("Planner is {model}{note}"))
+}
+
+fn computer_apps_file() -> Option<PathBuf> {
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("x-computer-apps"))
+}
+
+fn computer_remote_file() -> Option<PathBuf> {
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("x-computer-remote"))
+}
+
+fn load_computer_apps() -> Vec<String> {
+    computer_apps_file()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|app| x_agent::tools::APPS.iter().any(|(name, _)| name == app))
+        .map(String::from)
+        .collect()
+}
+
+fn computer_summary(apps: &[String]) -> String {
+    let remote = computer_remote_file().is_some_and(|path| path.is_file());
+    format!(
+        "Screen access: {}. On-screen text may go to remote models: {}",
+        if apps.is_empty() {
+            "none granted".to_string()
+        } else {
+            apps.join(", ")
+        },
+        if remote { "yes" } else { "no" }
+    )
+}
+
+/// Grants are files in X's data folder: only the person's own command changes them, never
+/// a model, a plan or anything read from the screen.
+fn computer_access(command: &str, value: &str) -> ControlReply {
+    let (Some(apps_path), Some(remote_path)) = (computer_apps_file(), computer_remote_file())
+    else {
+        return ControlReply::error("failed", "the data folder is unavailable");
+    };
+    let mut apps = load_computer_apps();
+    let result = match command {
+        "list" => return ControlReply::done(computer_summary(&apps)),
+        "remote" if matches!(value, "on" | "off") => {
+            let saved = if value == "on" {
+                std::fs::write(&remote_path, b"1")
+            } else {
+                std::fs::remove_file(&remote_path).or_else(ignore_missing)
+            };
+            service().set_computer_remote(value == "on");
+            saved
+        }
+        "grant" | "revoke" => {
+            if !x_agent::tools::APPS.iter().any(|(name, _)| *name == value) {
+                return ControlReply::error("usage", "give an app such as chrome or firefox");
+            }
+            apps.retain(|app| app != value);
+            if command == "grant" {
+                apps.push(value.to_string());
+            }
+            service().set_computer_apps(apps.clone());
+            std::fs::write(&apps_path, apps.join("\n"))
+        }
+        _ => return ControlReply::error("usage", "grant|revoke <app>, list, or remote on|off"),
+    };
+    match result {
+        Ok(()) => ControlReply::done(computer_summary(&load_computer_apps())),
+        Err(error) => ControlReply::error("failed", format!("couldn't save the setting: {error}")),
+    }
 }
 
 fn ignore_missing(error: std::io::Error) -> std::io::Result<()> {
@@ -521,6 +597,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
         }
         AgentAction::Trust { on } => set_trust(on),
         AgentAction::Planner { model } => set_planner(&model),
+        AgentAction::Computer { command, value } => computer_access(&command, &value),
         AgentAction::Allow { index } => match svc.allow_once(index) {
             Ok(_) => snapshot(0),
             Err(error) => ControlReply::error("refused", error),

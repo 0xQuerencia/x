@@ -213,6 +213,9 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         capture
     };
     let mut body = col().key("agent-body").gap(16.0).child(capture);
+    if !snapshot.computer_apps.is_empty() {
+        body = body.child(access_row(p, snapshot));
+    }
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
     }
@@ -239,6 +242,35 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             .py(16.0)
             .child(body),
     )
+}
+
+fn access_row(p: Paint, snapshot: &Snapshot) -> El {
+    let mut access = row().key("agent-access").gap(8.0).center_y().child(
+        text(format!(
+            "{}{}",
+            tr("Screen access"),
+            if snapshot.computer_remote { " (remote)" } else { "" }
+        ))
+        .key("access-label")
+        .font(DESCRIPTION)
+        .color(p.muted()),
+    );
+    for app in &snapshot.computer_apps {
+        let name = app.clone();
+        access = access.child(button(
+            p,
+            &format!("agent-revoke-{app}"),
+            &format!("{app} · {}", tr("Revoke")),
+            ButtonKind::Secondary,
+            move |_: &mut Ui, _| {
+                agent_host::handle(AgentAction::Computer {
+                    command: "revoke".into(),
+                    value: name.clone(),
+                });
+            },
+        ));
+    }
+    access
 }
 
 fn workspace_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
@@ -398,6 +430,7 @@ fn event_stream(p: Paint, snapshot: &Snapshot) -> El {
         let color = match event.kind.as_str() {
             "error" => p.danger(),
             "stall" | "permission" => p.warning(),
+            "verify" => p.success(),
             _ => p.muted(),
         };
         list = list.child(

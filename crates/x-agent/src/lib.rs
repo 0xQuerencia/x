@@ -3,9 +3,13 @@
 //! * [`tools`]: the typed, allowlisted Actions registry and rule planner. Nothing here
 //!   spawns a shell; model output is untrusted data validated against these types.
 //! * [`opencode`]: a supervised `opencode run` with a real event stream and a real Stop.
+//! * [`desktop`] and [`computer`]: reading an app's accessibility tree and the bounded
+//!   observe, act, verify loop that operates it.
 //! * [`hexcli`]: Hex's own speech-to-text over its control CLI (never pastes).
 //! * [`service`]: the one-task-at-a-time state machine the UI drives.
 
+pub mod computer;
+pub mod desktop;
 pub mod hexcli;
 pub mod opencode;
 pub mod phase;

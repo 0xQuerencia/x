@@ -35,6 +35,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Set folder", "Definir pasta"),
     ("Approve and run", "Aprovar e executar"),
     ("Discard", "Descartar"),
+    ("Screen access", "Acesso ao ecrã"),
+    ("Revoke", "Revogar"),
     ("Allow once and rerun", "Permitir uma vez e repetir"),
     ("No files changed", "Nenhum arquivo alterado"),
     ("Changed files", "Arquivos alterados"),

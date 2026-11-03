@@ -349,6 +349,8 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Set folder", ["Ustaw folder", "设置文件夹", "フォルダーを設定", "Ordner festlegen", "Fijar carpeta", "Задати теку"]),
     ("Approve and run", ["Zatwierdź i uruchom", "批准并运行", "承認して実行", "Freigeben und ausführen", "Aprobar y ejecutar", "Схвалити й запустити"]),
     ("Discard", ["Odrzuć", "丢弃", "破棄", "Verwerfen", "Descartar", "Відхилити"]),
+    ("Screen access", ["Dostęp do ekranu", "屏幕访问", "画面へのアクセス", "Bildschirmzugriff", "Acceso a la pantalla", "Доступ до екрана"]),
+    ("Revoke", ["Cofnij", "撤销", "取り消す", "Widerrufen", "Revocar", "Скасувати"]),
     ("Allow once and rerun", ["Zezwól raz i uruchom ponownie", "仅允许一次并重新运行", "一度だけ許可して再実行", "Einmal erlauben und neu starten", "Permitir una vez y repetir", "Дозволити раз і повторити"]),
     ("No files changed", ["Nie zmieniono plików", "没有文件被更改", "変更されたファイルはありません", "Keine Dateien geändert", "No se cambió ningún archivo", "Файли не змінено"]),
     ("Changed files", ["Zmienione pliki", "已更改的文件", "変更されたファイル", "Geänderte Dateien", "Archivos cambiados", "Змінені файли"]),

@@ -251,6 +251,12 @@ pub enum AgentAction {
     Allow {
         index: usize,
     },
+    /// Screen access: `grant <app>`, `revoke <app>`, `list`, or `remote on|off` (whether
+    /// on-screen text may go to a model that is not on this machine).
+    Computer {
+        command: String,
+        value: String,
+    },
     /// The local Ollama model that plans speech the rules do not understand, or off.
     Planner {
         model: String,

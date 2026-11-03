@@ -110,6 +110,12 @@ pub enum Action {
     Session {
         goal: String,
     },
+    /// Operates one app's window by reading its accessibility tree: click, type, navigate,
+    /// verify. It must be the only step and always needs the person's scoped permission.
+    Computer {
+        app: String,
+        goal: String,
+    },
 }
 
 /// What a planner may answer: steps, or that the speech was meant to be typed as dictation.
@@ -135,6 +141,7 @@ impl Action {
             Self::Focus { target } => format!("Switch to {target}"),
             Self::Workspace { number } => format!("Go to workspace {number}"),
             Self::Session { goal } => format!("Start a temporary OpenCode session: {goal}"),
+            Self::Computer { app, goal } => format!("Operate {app}: {goal}"),
             Self::Url { target, browser } => with_browser(format!("Open {target}"), browser),
             Self::Search {
                 target,
@@ -157,6 +164,15 @@ impl Action {
             Self::Workspace { number } => {
                 if !(1..=10).contains(number) {
                     return Err("Workspace must be 1-10".into());
+                }
+            }
+            Self::Computer { app, goal } => {
+                lookup(APPS, app).ok_or("Unapproved app")?;
+                if !BROWSERS.contains(&app.as_str()) {
+                    return Err("Screen access is only available for browsers".into());
+                }
+                if goal.trim().is_empty() || goal.chars().count() > MAX_TRANSCRIPT {
+                    return Err("A computer goal must be 1-1000 characters".into());
                 }
             }
             Self::Session { goal } => {
@@ -223,6 +239,7 @@ impl Action {
                 number.to_string(),
             ]),
             Self::Session { .. } => Err("A session runs as Work, not as an Action".into()),
+            Self::Computer { .. } => Err("Computer steps run through the observe loop".into()),
             Self::Opencode => opencode_argv(&session_dir("opencode"), resolve),
             Self::Type { text } => {
                 let typer = resolve("wtype").ok_or("wtype not found (install wtype)")?;
@@ -364,7 +381,7 @@ fn wants_opencode_terminal(text: &str) -> bool {
         && lower.split_whitespace().count() <= 12
 }
 
-fn desktop_step(exe: &str, legacy: &[String], lua: &str) -> Result<(), String> {
+pub(crate) fn desktop_step(exe: &str, legacy: &[String], lua: &str) -> Result<(), String> {
     let mut last = String::new();
     for args in [
         vec!["dispatch".to_string(), lua.to_string()],
@@ -745,6 +762,7 @@ pub fn is_low_risk(actions: &[Action]) -> bool {
     actions.iter().enumerate().all(|(i, action)| match action {
         Action::Type { .. } => i > 0 && actions[i - 1].launches_window(),
         Action::Session { .. } => actions.len() == 1,
+        Action::Computer { .. } => false,
         _ => true,
     })
 }
@@ -781,8 +799,12 @@ pub fn parse_reply(raw: &str) -> Result<Reply, String> {
         return Ok(Reply::Dictation);
     }
     let actions = parse_plan_json(raw)?;
-    if actions.len() > 1 && actions.iter().any(|a| matches!(a, Action::Session { .. })) {
-        return Err("A session must be the only step".into());
+    if actions.len() > 1
+        && actions
+            .iter()
+            .any(|a| matches!(a, Action::Session { .. } | Action::Computer { .. }))
+    {
+        return Err("A session or computer step must be the only step".into());
     }
     Ok(Reply::Steps(actions))
 }
@@ -1010,5 +1032,28 @@ mod tests {
             target: "firefox".into(),
         };
         assert!(a.argv(&|_| None).unwrap_err().contains("not installed"));
+    }
+
+    #[test]
+    fn screen_access_is_for_browsers_only() {
+        for app in ["terminal", "vscode", "files"] {
+            assert!(
+                Action::Computer {
+                    app: app.into(),
+                    goal: "x".into()
+                }
+                .validate()
+                .is_err(),
+                "{app}"
+            );
+        }
+        assert!(
+            Action::Computer {
+                app: "chrome".into(),
+                goal: "x".into()
+            }
+            .validate()
+            .is_ok()
+        );
     }
 }

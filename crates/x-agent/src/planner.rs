@@ -14,7 +14,7 @@ const OLLAMA_URL: &str = "http://127.0.0.1:11434/api/generate";
 const GEMINI_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 pub const GEMINI_DEFAULT: &str = "gemini-2.5-flash";
 
-fn prompt(utterance: &str, smart: bool) -> String {
+pub(crate) fn prompt(utterance: &str, smart: bool) -> String {
     let apps: Vec<&str> = tools::APPS.iter().map(|(name, _)| *name).collect();
     let dictation = if smart {
         "If the speech is plain dictation (something to be typed as written, not an instruction \
@@ -36,11 +36,14 @@ Allowed steps:\n\
 when they just want an OpenCode session)\n\
 {{\"kind\":\"session\",\"goal\":\"...\"}} (a headless coding-agent run in a fresh folder, only when they name a \
 concrete task to do; it must be the only step)\n\
+{{\"kind\":\"computer\",\"app\":<one of {apps:?}>,\"goal\":\"...\"}} (operates an app that is already open or opens it: reads its \
+screen, clicks, types, navigates and checks the result; use it for anything that needs reading or clicking inside an app, \
+like choosing a profile, finding something on a page or filling a search box; it must be the only step)\n\
 Examples:\n\
 Request open a terminal and type hello gives {{\"steps\":[{{\"kind\":\"app\",\"target\":\"terminal\"}},{{\"kind\":\"type\",\"text\":\"hello\"}}]}}\n\
 Request look up rust lifetimes on youtube gives {{\"steps\":[{{\"kind\":\"search\",\"target\":\"youtube\",\"query\":\"rust lifetimes\"}}]}}\n\
 Request go back to the browser gives {{\"steps\":[{{\"kind\":\"focus\",\"target\":\"firefox\"}}]}}\n\
-Every step has a kind of exactly app, focus, workspace, url, search, type, opencode or session.\n\
+Every step has a kind of exactly app, focus, workspace, url, search, type, opencode, session or computer.\n\
 {dictation}At most {max} steps. You cannot run commands, press Enter, delete, install, send or buy \
 anything. If the request needs anything else, reply {{\"steps\":[]}}.\n\
 Request: {utterance:?}",
@@ -49,7 +52,7 @@ Request: {utterance:?}",
 }
 
 /// The JSON object inside a model reply, which may carry stray text around it.
-fn extract_object(reply: &str) -> Option<&str> {
+pub(crate) fn extract_object(reply: &str) -> Option<&str> {
     let start = reply.find('{')?;
     let end = reply.rfind('}')?;
     (end > start).then(|| &reply[start..=end])
@@ -101,9 +104,13 @@ impl Planner for Ollama {
         self.model.clone()
     }
 
-    fn plan(&self, text: &str, smart: bool) -> Result<Reply, String> {
+    fn is_local(&self) -> bool {
+        true
+    }
+
+    fn complete(&self, prompt: &str) -> Result<String, String> {
         let body = serde_json::json!({
-            "model": self.model, "prompt": prompt(text, smart),
+            "model": self.model, "prompt": prompt,
             "stream": false, "format": "json", "options": { "temperature": 0 },
         })
         .to_string();
@@ -112,10 +119,11 @@ impl Planner for Ollama {
         if let Some(error) = reply.get("error").and_then(|e| e.as_str()) {
             return Err(error.to_string());
         }
-        reply_from_text(
-            reply.get("response").and_then(|r| r.as_str()).unwrap_or(""),
-            smart,
-        )
+        Ok(reply
+            .get("response")
+            .and_then(|r| r.as_str())
+            .unwrap_or("")
+            .to_string())
     }
 }
 
@@ -148,9 +156,13 @@ impl Planner for Gemini {
         format!("Gemini {}", self.model)
     }
 
-    fn plan(&self, text: &str, smart: bool) -> Result<Reply, String> {
+    fn is_local(&self) -> bool {
+        false
+    }
+
+    fn complete(&self, prompt: &str) -> Result<String, String> {
         let body = serde_json::json!({
-            "contents": [{ "parts": [{ "text": prompt(text, smart) }] }],
+            "contents": [{ "parts": [{ "text": prompt }] }],
             "generationConfig": { "temperature": 0, "responseMimeType": "application/json" },
         })
         .to_string();
@@ -169,7 +181,7 @@ impl Planner for Gemini {
             .pointer("/candidates/0/content/parts/0/text")
             .and_then(|t| t.as_str())
             .unwrap_or("");
-        reply_from_text(answer, smart)
+        Ok(answer.to_string())
     }
 }
 
@@ -189,10 +201,25 @@ fn secret(path: &PathBuf) -> Result<String, String> {
         .ok_or_else(|| format!("Missing or invalid {}", path.display()))
 }
 
+/// True only for a plain-http base whose host is exactly loopback (no userinfo, no look-alike).
+fn is_loopback(base: &str) -> bool {
+    let Some(rest) = base.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit_once(':').map_or(authority, |(h, port)| {
+        if port.chars().all(|c| c.is_ascii_digit()) {
+            h
+        } else {
+            authority
+        }
+    });
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+}
+
 fn checked_base(base: &str) -> Result<&str, String> {
     let base = base.trim_end_matches('/');
-    let local = base.starts_with("http://127.0.0.1") || base.starts_with("http://localhost");
-    if base.starts_with("https://") || local {
+    if base.starts_with("https://") || is_loopback(base) {
         Ok(base)
     } else {
         Err("The endpoint must use https".into())
@@ -204,12 +231,16 @@ impl Planner for OpenAi {
         self.model.clone()
     }
 
-    fn plan(&self, text: &str, smart: bool) -> Result<Reply, String> {
+    fn is_local(&self) -> bool {
+        secret(&self.base_file).is_ok_and(|b| is_loopback(&b))
+    }
+
+    fn complete(&self, prompt: &str) -> Result<String, String> {
         let base = secret(&self.base_file)?;
         let url = format!("{}/chat/completions", checked_base(&base)?);
         let body = serde_json::json!({
             "model": self.model,
-            "messages": [{ "role": "user", "content": prompt(text, smart) }],
+            "messages": [{ "role": "user", "content": prompt }],
             "temperature": 0,
             "response_format": { "type": "json_object" },
         })
@@ -231,7 +262,7 @@ impl Planner for OpenAi {
             .pointer("/choices/0/message/content")
             .and_then(|t| t.as_str())
             .unwrap_or("");
-        reply_from_text(answer, smart)
+        Ok(answer.to_string())
     }
 }
 
@@ -297,6 +328,15 @@ mod tests {
         assert!(checked_base("http://127.0.0.1:8080/v1").is_ok());
         assert!(checked_base("http://example.com/v1").is_err());
         assert!(checked_base("ftp://example.com").is_err());
+        for fake in [
+            "http://127.0.0.1.evil.com/v1",
+            "http://localhost.evil.com",
+            "http://localhost@evil.com",
+            "http://127.0.0.1@evil.com",
+        ] {
+            assert!(!is_loopback(fake) && checked_base(fake).is_err(), "{fake}");
+        }
+        assert!(is_loopback("http://localhost:11434/v1"));
     }
 
     #[test]
