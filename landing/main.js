@@ -9,10 +9,12 @@ $$(".copy").forEach(function(b){b.onclick=function(){
   setTimeout(function(){b.textContent="copy"},1400)}});
 
 var slides=[
+ ["models","choose a speech model","the picker shows the wait, wrong-word rate and languages for each model before you download it."],
+ ["dictation","the settings that matter","your shortcut, how it triggers, the model, a vocabulary list and the microphone, in one place."],
+ ["agent","the optional agent pane","controls on top, the plan below, then the activity list. this is the part that acts, and it is off until you turn it on."],
  ["controls","choose how it listens","pick what a spoken sentence does, switch trusted actions on, and see which browsers x may read. every grant has a revoke button."],
  ["task","it says what it did","a finished browser task, with the step it took and what it saw on screen to call it done. this run used a scripted stand-in model on a test page."],
- ["result","and the page it landed on","the link was clicked by x through the accessibility tree, on a plain local test page."],
- ["hero","the whole agent pane","controls on top, the plan below, then the activity list. all of it is live, nothing is mocked."]
+ ["result","and the page it landed on","the link was clicked by x through the accessibility tree, on a plain local test page."]
 ];
 var host=$(".slides");
 slides.forEach(function(s,i){
@@ -24,7 +26,7 @@ $("#prev").onclick=function(){go(cur-1)};$("#next").onclick=function(){go(cur+1)
 
 var secs=$$("main section[id],header[id]"),links=$$(".pill a[href^='#']");
 var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){
-  var id=e.target.id==="install"?"what":e.target.id;
+  var id=e.target.id==="install"?"dictation":e.target.id;
   links.forEach(function(a){a.classList.toggle("on",a.getAttribute("href")==="#"+id)})}})},{rootMargin:"-40% 0px -55% 0px"});
 secs.forEach(function(s){io.observe(s)});
 

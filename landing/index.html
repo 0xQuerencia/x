@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>X — talk to your linux desktop</title>
-<meta name="description" content="A local-first voice agent for Linux. It opens apps, drives your browser and hands coding work to OpenCode.">
+<title>X — voice dictation for linux, with an agent on top</title>
+<meta name="description" content="Private voice dictation for Linux. Hold a key, talk, and it types. Say a word and it can also open apps and drive your browser.">
 <meta name="theme-color" content="#1b1b1b">
 <meta name="color-scheme" content="dark light">
 <script>try{var m=localStorage.getItem("x-theme");if(m==="light"||m==="dark")document.documentElement.dataset.theme=m}catch(e){}</script>
@@ -15,36 +15,35 @@
 </head>
 <body>
 <nav class="pill" aria-label="Sections">
-  <a href="#top">x</a><a href="#what" class="on">what &amp; why</a><a href="#look">screens</a><a href="#faq">faqs</a><a href="https://github.com/0xQuerencia/x/releases">changelog</a><a href="https://github.com/0xQuerencia/x">github</a>
+  <a href="#top">x</a><a href="#dictation" class="on">dictation</a><a href="#agent">agent</a><a href="#look">screens</a><a href="#faq">faqs</a><a href="https://github.com/0xQuerencia/x/releases">changelog</a><a href="https://github.com/0xQuerencia/x">github</a>
 </nav>
 
 <header id="top" class="hero">
-  <h1>say it. x does it.</h1>
-  <p class="sub">a voice agent for <code class="c-blue">linux</code>. it opens apps, drives your browser and checks the result.</p>
+  <h1>talk. it types.</h1>
+  <p class="sub">private voice dictation for <code class="c-blue">linux</code>. hold a key, speak, and the words land wherever your cursor is.</p>
   <a class="btn" href="https://github.com/0xQuerencia/x/releases/tag/v0.1.0-alpha.1">
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8m0 0L5 7m3 3 3-3M3 13h10"/></svg>
     download for linux <span class="ver">v0.1.0-alpha.1</span>
   </a>
   <p class="tiny">pre-release · built and tested on arch with hyprland</p>
-
-  <div class="stage"><picture><source srcset="img/hero.webp" type="image/webp"><img src="img/hero.png" width="1200" height="780" alt="the x agent pane after a finished browser task, over a pixel-art landscape"></picture></div>
+  <div class="stage"><picture><source srcset="img/dictation.webp" type="image/webp"><img src="img/dictation.png" width="1200" height="780" alt="the x settings window: shortcut, speech model, vocabulary and microphone"></picture></div>
   <p class="tiny cap">real screenshot of x on arch + hyprland</p>
 </header>
 
 <main>
-<section id="what">
-  <p class="num"><i>1</i>what is it</p>
-  <h2>dictation that can also do things.</h2>
-  <p>x is a fork of <a href="https://github.com/anomalyco/hex">hex</a>. press a key, talk, and your words are typed like always. start with <code class="c-orange">friday</code> and it treats the sentence as a command.</p>
-  <p>commands go through a small set of steps it can actually run: open an app, search a site, switch workspace, <code class="c-purple">type</code> into a window it just opened, or <code class="c-green">operate</code> a browser tab.</p>
-  <p>it only calls a job done when it can see proof on screen. no proof, it says so.</p>
+<section id="dictation">
+  <p class="num"><i>1</i>dictation</p>
+  <h2>hold a key, talk, and it types.</h2>
+  <p>x is a fork of <a href="https://github.com/anomalyco/hex">hex</a>, the local dictation app. the speech model runs on your own machine, on the gpu when vulkan is there and on the cpu when it isn't.</p>
+  <p>it works in any app: browser, editor, chat, terminal. hold the shortcut and let go, or tap it to toggle. the text is pasted where your cursor is.</p>
+  <p>the first run downloads a model. after that your voice never leaves the computer, and a name list in <code class="c-purple">vocabulary</code> helps the models that read it (the picker marks which).</p>
 </section>
 
 <section>
-  <p class="num"><i>2</i>what makes it different</p>
-  <h2>most voice tools type. x acts, then checks.</h2>
-  <p>for browser work it looks at the page through the accessibility tree, picks one step, does it, looks again. <code class="c-blue">observe</code> <code class="c-orange">act</code> <code class="c-green">verify</code>, up to fifteen times, then it stops.</p>
-  <p>whatever is on the page is treated as data, not orders. a page that says "ignore your instructions" gets read like any other text. <span class="chip">it can't leave the list of steps</span>.</p>
+  <p class="num"><i>2</i>speech models</p>
+  <h2>pick the one that fits how you talk.</h2>
+  <p><code class="c-green">parakeet</code> writes while you speak, so there is no wait after you let go. <code class="c-blue">cohere transcribe</code> has the fewest wrong words. <code class="c-orange">whisper large-v3-turbo</code> covers 41 languages and reads your vocabulary list.</p>
+  <p>the model picker shows the wait, the error rate and the languages for each one before you download anything. there are more in the list, and you can <span class="chip">add your own gguf file</span>.</p>
 </section>
 
 <section id="install">
@@ -56,43 +55,50 @@
     <div class="code" data-c="script"><span class="lang">bash</span><button class="copy" aria-label="copy">copy</button><pre>git clone https://github.com/0xQuerencia/x &amp;&amp; cd x
 ./scripts/install-arch.sh
 systemctl --user enable --now x.service
-x labs on x-agent</pre></div>
+x labs on x-agent   # only if you want the agent</pre></div>
     <div class="code" data-c="aur" hidden><span class="lang">bash</span><button class="copy" aria-label="copy">copy</button><pre># package files are in packaging/aur-x
 cd packaging/aur-x &amp;&amp; makepkg -si</pre></div>
     <div class="code" data-c="check" hidden><span class="lang">bash</span><button class="copy" aria-label="copy">copy</button><pre>sha256sum x-0.1.0-alpha.1-linux-x64
 # compare with the .sha256 file on the release</pre></div>
   </div>
-  <p>x keeps its own data in <code class="c-red">~/.local/share/x</code> and runs as <code class="c-teal">x.service</code>, so it can sit beside a normal hex install.</p>
-  <p>for browser control, chromium and chrome need <code class="c-orange">--force-renderer-accessibility</code>. then grant the app once: <code class="c-purple">x agent computer grant chromium</code>.</p>
+  <p>x keeps its own data in <code class="c-red">~/.local/share/x</code> and runs as <code class="c-teal">x.service</code>, so it can sit beside a normal hex install. bind your dictation key to <code class="c-purple">x dictation toggle</code>.</p>
+</section>
+
+<section id="agent">
+  <p class="num"><i>4</i>the agent</p>
+  <h2>and when you want more, say a word.</h2>
+  <p>dictation is the main thing. on top of it there's an optional agent, off until you turn on the labs switch. start a sentence with your wake word (<code class="c-orange">friday</code> by default, or any single word you pick) and x treats it as a command instead of text.</p>
+  <p>it can open apps, search, switch workspaces, start <a href="https://opencode.ai">opencode</a> in a fresh folder, and operate a browser you've allowed. for browser work it reads the page through the accessibility tree, acts, and only says done when it can see the result.</p>
+  <p>page text is data, not orders. <span class="chip">it can't leave its list of steps</span>, and it never types into password fields or presses send, buy or delete.</p>
 </section>
 
 <section>
-  <p class="num"><i>4</i>what you get</p>
+  <p class="num"><i>5</i>what you get</p>
   <h2>what it can do today.</h2>
   <ul class="feat">
-    <li><svg viewBox="0 0 16 16"><path d="M3 8h10M8 3v10"/></svg>open and switch apps, jump workspaces on hyprland</li>
-    <li><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><path d="m10 10 3 3"/></svg>search youtube, github, wikipedia and a few more</li>
-    <li><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 7l2 1.5L5 10"/></svg>start opencode in a fresh folder, interactive or headless</li>
+    <li><svg viewBox="0 0 16 16"><path d="M2 8h2M6 5v6M9 3v10M12 6v4M14 8h0"/></svg>local speech to text, pasted into any app</li>
+    <li><svg viewBox="0 0 16 16"><rect x="3" y="6" width="10" height="5" rx="1.5"/><path d="M5 8.5h6"/></svg>hold-to-talk or tap-to-toggle, on a shortcut you choose</li>
+    <li><svg viewBox="0 0 16 16"><path d="M3 4h10v8H3zM3 7h10"/></svg>a vocabulary list, and a history you can clear</li>
+    <li><svg viewBox="0 0 16 16"><path d="M8 2v7M5 6l3 3 3-3M3 13h10"/></svg>nothing is sent anywhere for transcription</li>
+    <li><svg viewBox="0 0 16 16"><path d="M3 8h10M8 3v10"/></svg>optional: open and switch apps, jump workspaces on hyprland</li>
+    <li><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 7l2 1.5L5 10"/></svg>optional: start opencode in a fresh folder</li>
+    <li><svg viewBox="0 0 16 16"><path d="M2 8c2-3 4-4 6-4s4 1 6 4c-2 3-4 4-6 4S4 11 2 8z"/><circle cx="8" cy="8" r="1.6"/></svg>optional: click, type and navigate in a browser you've granted</li>
+    <li><svg viewBox="0 0 16 16"><path d="M3 8l3 3 7-7"/></svg>optional: done means it saw the result on screen</li>
     <li><svg viewBox="0 0 16 16"><path d="M8 2l5 2v4c0 3-2 5-5 6-3-1-5-3-5-6V4z"/></svg>risky steps ask first, and a stop button always works</li>
-    <li><svg viewBox="0 0 16 16"><path d="M2 8c2-3 4-4 6-4s4 1 6 4c-2 3-4 4-6 4S4 11 2 8z"/><circle cx="8" cy="8" r="1.6"/></svg>click, type and navigate in a browser you have granted</li>
-    <li><svg viewBox="0 0 16 16"><path d="M3 8l3 3 7-7"/></svg>done means it saw the result on screen</li>
-    <li><svg viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="6" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>never types into password fields or presses send, buy or delete</li>
-    <li><svg viewBox="0 0 16 16"><path d="M8 2v7M5 6l3 3 3-3M3 13h10"/></svg>transcription runs on your machine; use a local planner model to keep it all there</li>
-    <li><svg viewBox="0 0 16 16"><path d="M3 4h10v8H3zM3 7h10"/></svg>free and open source, mit licensed, built on hex</li>
   </ul>
 </section>
 
 <section>
-  <p class="num"><i>5</i>voice</p>
-  <h2>a few things to say.</h2>
-  <p>speech without the wake word is just typed, so nothing runs by accident.</p>
+  <p class="num"><i>6</i>voice</p>
+  <h2>talk normally. say a word for more.</h2>
+  <p>speech without the wake word is just typed, so nothing runs by accident. set your own with <code class="c-purple">x agent wake set jarvis</code>.</p>
   <table>
     <thead><tr><th>you say</th><th>x does</th></tr></thead>
     <tbody>
+      <tr><td><kbd>meet me at noon, i'll bring the notes</kbd></td><td>types exactly that</td></tr>
       <tr><td><kbd>friday</kbd> <kbd>open firefox</kbd></td><td>launches firefox</td></tr>
       <tr><td><kbd>friday</kbd> <kbd>search youtube for mars rover</kbd></td><td>opens the search in your browser</td></tr>
       <tr><td><kbd>friday</kbd> <kbd>go to workspace 3</kbd></td><td>switches workspace and confirms it</td></tr>
-      <tr><td><kbd>friday</kbd> <kbd>start an opencode session</kbd></td><td>opens opencode in a new temp folder</td></tr>
       <tr><td><kbd>friday work</kbd> <kbd>fix the failing tests</kbd></td><td>runs opencode on your project, with approval</td></tr>
       <tr><td><kbd>friday</kbd> <kbd>go to example dot org in chromium</kbd></td><td>navigates, then looks for the page to prove it</td></tr>
     </tbody>
@@ -103,26 +109,28 @@ cd packaging/aur-x &amp;&amp; makepkg -si</pre></div>
   <h2 class="mid">a closer look</h2>
   <div class="car" id="car">
     <div class="slides"></div>
-    <div class="ctl"><button id="prev" aria-label="previous">←</button><span id="count">1 / 4</span><button id="next" aria-label="next">→</button></div>
+    <div class="ctl"><button id="prev" aria-label="previous">←</button><span id="count">1 / 6</span><button id="next" aria-label="next">→</button></div>
   </div>
 </section>
 
 <section id="faq">
   <h2 class="mid">frequently asked questions</h2>
   <div class="faq">
-    <details><summary><i>1</i>does it send my voice to the cloud?</summary><p>no. transcription runs on your machine. only the sentence you said goes to a planner model, and you pick that model. an ollama model keeps even that local.</p></details>
-    <details><summary><i>2</i>what can the browser part see?</summary><p>window titles, button and link names, and page text, read through accessibility. never passwords or form values. that text only goes to a model on your own machine unless you switch on <code class="c-orange">x agent computer remote on</code>.</p></details>
-    <details><summary><i>3</i>can it click anything?</summary><p>no. sending, buying, deleting, signing in and similar buttons are refused. it only works in apps you grant, and browsers only. you can revoke a grant at any time.</p></details>
-    <details><summary><i>4</i>is this a finished release?</summary><p>no. it's an alpha. the pieces were tested one by one on a single machine. the full spoken flow is still being checked.</p></details>
-    <details><summary><i>5</i>which systems does it run on?</summary><p>linux, x86_64. i built and tested it on arch with hyprland. there are no mac or windows builds.</p></details>
-    <details><summary><i>6</i>how is it related to hex?</summary><p>x is a fork. hex's local dictation is untouched, and x adds the agent on top. both can be installed together because x keeps its own folders.</p></details>
-    <details><summary><i>7</i>why "friday"?</summary><p>"x" got mis-heard too often. the wake word is a rule in the code, and "x" still works as a backup.</p></details>
-    <details><summary><i>8</i>how do i stop it mid-task?</summary><p>press stop in the agent pane or run <code class="c-purple">x agent stop</code>. browser tasks also end themselves after fifteen steps, three errors or three minutes.</p></details>
+    <details><summary><i>1</i>does my voice go to the cloud?</summary><p>no. transcription runs on your machine. after the first model download it works offline. only if you use the optional agent does a sentence go to a planner model, and you choose that model. an ollama model keeps even that local.</p></details>
+    <details><summary><i>2</i>how good is the transcription?</summary><p>it depends on the model. the picker in the app lists each one's wait, wrong-word rate and languages from hex's own measurements. i haven't run my own benchmark, so check the picker for your language.</p></details>
+    <details><summary><i>3</i>which languages work?</summary><p>the default, parakeet unified, is english. the picker shows cohere transcribe with 14 languages and whisper large-v3-turbo with 41, plus more models in the list.</p></details>
+    <details><summary><i>4</i>do i have to use the agent?</summary><p>no. the agent is off until you turn on the labs switch. without it x is a dictation app, the same as hex.</p></details>
+    <details><summary><i>5</i>how do i pick my own wake word?</summary><p>run <code class="c-purple">x agent wake set jarvis</code> with any single word, or <code class="c-purple">add</code> a second one. <code class="c-purple">x agent wake list</code> shows what's set.</p></details>
+    <details><summary><i>6</i>what can the browser part see?</summary><p>window titles, button and link names, and page text, read through accessibility. never passwords or form values. that text goes only to a model on your own machine unless you switch on <code class="c-orange">x agent computer remote on</code>.</p></details>
+    <details><summary><i>7</i>is this a finished release?</summary><p>no. it's an alpha. the pieces were tested one by one on a single machine.</p></details>
+    <details><summary><i>8</i>which systems does it run on?</summary><p>linux, x86_64. i built and tested it on arch with hyprland. there are no mac or windows builds of x.</p></details>
+    <details><summary><i>9</i>how is it related to hex?</summary><p>x is a fork. hex's local dictation is the base, and x adds the agent on top. both can be installed together because x keeps its own folders.</p></details>
+    <details><summary><i>10</i>how do i stop the agent mid-task?</summary><p>press stop in the agent pane or run <code class="c-purple">x agent stop</code>. browser tasks also end themselves after fifteen steps, three errors or three minutes.</p></details>
   </div>
 </section>
 
 <section class="cta">
-  <h2 class="big">stop reaching for the <em>mouse</em><br>for things you can just say</h2>
+  <h2 class="big">stop typing what you can just <em>say</em></h2>
   <a class="btn" href="https://github.com/0xQuerencia/x/releases/tag/v0.1.0-alpha.1">download for linux</a>
   <p class="tiny">x is free, mit licensed</p>
 </section>
