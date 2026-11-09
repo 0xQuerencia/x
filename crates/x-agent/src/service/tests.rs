@@ -579,3 +579,143 @@ fn shutdown_stops_a_running_task() {
     s.shutdown();
     assert!(!s.snapshot(0).phase.is_busy());
 }
+
+mod contextual {
+    use super::*;
+    use crate::context::Engine;
+    use crate::context::tests::{ERROR, FakeA11y, FakeWindows, win};
+    use crate::wm::View;
+
+    /// Windows whose focus jumps to the browser after `flip_after` reads.
+    struct Flipping {
+        inner: Arc<FakeWindows>,
+        reads: AtomicUsize,
+        flip_after: usize,
+    }
+
+    impl crate::context::Windows for Flipping {
+        fn view(&self) -> Result<View, crate::wm::WmError> {
+            if self.reads.fetch_add(1, Ordering::SeqCst) >= self.flip_after {
+                self.inner.focus(Some("0xb"));
+            }
+            self.inner.view()
+        }
+    }
+
+    fn setup(flip_after: usize) -> (Service, Arc<FakeLauncher>, Arc<FakeWindows>, Arc<FakeA11y>) {
+        let (s, _, l) = rig();
+        let windows = FakeWindows::with(
+            vec![
+                win("0xa", 100, "code", "main.ts", 2),
+                win("0xb", 200, "firefox", "Docs", 1),
+            ],
+            Some(0),
+        );
+        let a11y = FakeA11y::selecting(ERROR);
+        let flipping = Arc::new(Flipping {
+            inner: windows.clone(),
+            reads: AtomicUsize::new(0),
+            flip_after,
+        });
+        s.set_context(Arc::new(Engine::new(flipping, a11y.clone())));
+        (s, l, windows, a11y)
+    }
+
+    #[test]
+    fn search_this_on_github_uses_the_selection_after_approval() {
+        let (s, l, ..) = setup(usize::MAX);
+        let t = s.plan("X, search this on GitHub", Mode::Actions).unwrap();
+        assert!(t.steps[0].title.contains("github"));
+        assert!(
+            t.steps[0].title.contains("Cannot read properties"),
+            "the plan shows the text"
+        );
+        assert!(l.launched.lock().unwrap().is_empty());
+        s.approve(t.id).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        let launched = l.launched.lock().unwrap().clone();
+        assert_eq!(launched.len(), 1);
+        assert!(launched[0].contains(ERROR));
+    }
+
+    #[test]
+    fn no_selection_plans_nothing() {
+        let (s, l, _, a11y) = setup(usize::MAX);
+        a11y.set_text(None);
+        let err = s.plan("search this on github", Mode::Actions).unwrap_err();
+        assert!(err.contains("Nothing is selected in code"), "{err}");
+        assert_eq!(s.snapshot(0).phase, Phase::Idle);
+        assert!(l.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn password_selection_is_refused() {
+        let (s, l, _, a11y) = setup(usize::MAX);
+        a11y.set(Ok(crate::context::a11y::Focus {
+            role: "password text".into(),
+            protected: true,
+            selection: Some("hunter2".into()),
+            ..Default::default()
+        }));
+        let err = s.plan("search this", Mode::Actions).unwrap_err();
+        assert!(err.contains("sensitive"));
+        assert!(l.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn trusted_command_stops_when_focus_moved_during_the_command() {
+        let (s, l, ..) = setup(1); // the capture is read 1, the recheck is read 2 and flips
+        s.set_trust_actions(true);
+        s.plan("search this on github", Mode::Actions).unwrap();
+        let done = wait_for(&s, |x| x.phase == Phase::Failed);
+        let error = done.task.unwrap().error.unwrap();
+        assert!(error.contains("Focus moved"), "{error}");
+        assert!(l.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn approved_command_stops_when_the_source_window_closed() {
+        let (s, l, windows, _) = setup(usize::MAX);
+        let t = s.plan("search this on github", Mode::Actions).unwrap();
+        windows.close("0xa");
+        s.approve(t.id).unwrap();
+        let done = wait_for(&s, |x| x.phase == Phase::Failed);
+        assert!(
+            done.task
+                .unwrap()
+                .error
+                .unwrap()
+                .contains("code was closed")
+        );
+        assert!(l.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn approved_command_survives_the_approval_prompt_taking_focus() {
+        let (s, l, windows, _) = setup(usize::MAX);
+        let t = s.plan("search this on github", Mode::Actions).unwrap();
+        windows.focus(Some("0xb"));
+        s.approve(t.id).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        assert_eq!(l.launched.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn copy_is_a_verified_action() {
+        let (s, l, ..) = setup(usize::MAX);
+        let t = s.plan("copy this", Mode::Actions).unwrap();
+        s.approve(t.id).unwrap();
+        let done = wait_for(&s, |x| x.phase == Phase::Completed);
+        assert_eq!(done.task.unwrap().steps[0].status, "done");
+        assert_eq!(l.launched.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn busy_service_does_not_read_the_screen() {
+        let (s, _, _, a11y) = setup(usize::MAX);
+        s.plan("open firefox", Mode::Actions).unwrap();
+        a11y.set(Err("must not be asked".into()));
+        let err = s.plan("search this", Mode::Actions).unwrap_err();
+        assert!(err.starts_with("Busy"), "{err}");
+    }
+}

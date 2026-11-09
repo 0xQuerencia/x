@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use crate::context::{self, Context, Engine};
 use crate::hexcli::{Stt, SttError};
 use crate::opencode::{self, Canceller, Run, RunConfig, RunStatus};
 use crate::phase::Phase;
@@ -140,6 +141,13 @@ struct State {
     grants: Vec<String>,
     computer_apps: Vec<String>,
     computer_remote: bool,
+    /// The snapshot a contextual plan was resolved from, rechecked just before it runs.
+    guard: Option<Guard>,
+}
+
+struct Guard {
+    ctx: Context,
+    strict_focus: bool,
 }
 
 #[derive(Clone)]
@@ -151,6 +159,7 @@ pub struct Service {
     planner: Arc<Mutex<Option<Arc<dyn Planner>>>>,
     session_root: Arc<Mutex<Option<PathBuf>>>,
     desktop: Arc<Mutex<Arc<dyn crate::desktop::Desktop>>>,
+    context: Arc<Mutex<Arc<Engine>>>,
 }
 
 fn now() -> u64 {
@@ -178,6 +187,7 @@ impl Service {
             grants: vec![],
             computer_apps: vec![],
             computer_remote: false,
+            guard: None,
             voice_mode: Mode::Actions,
             workspace: None,
         };
@@ -189,6 +199,7 @@ impl Service {
             planner: Arc::new(Mutex::new(None)),
             session_root: Arc::new(Mutex::new(None)),
             desktop: Arc::new(Mutex::new(Arc::new(crate::desktop::AgentDesktop::detect()))),
+            context: Arc::new(Mutex::new(Arc::new(Engine::system()))),
         }
     }
 
@@ -260,6 +271,56 @@ impl Service {
         }
     }
 
+    pub fn set_context(&self, engine: Arc<Engine>) {
+        if let Ok(mut slot) = self.context.lock() {
+            *slot = engine;
+        }
+    }
+
+    pub fn context_engine(&self) -> Arc<Engine> {
+        self.context
+            .lock()
+            .map_or_else(|p| p.into_inner().clone(), |e| e.clone())
+    }
+
+    /// "search this on GitHub": resolve the reference against what is on screen right
+    /// now, then plan the resulting action like any other. The plan shows the exact text
+    /// that will be used, so approving it is approving that text.
+    fn plan_contextual(
+        &self,
+        text: &str,
+        cmd: &context::commands::Command,
+    ) -> Result<Task, String> {
+        {
+            let s = self.lock();
+            if s.phase.is_busy() {
+                return Err(busy(s.phase));
+            }
+        }
+        let engine = self.context_engine();
+        let ctx = engine.capture(cmd.needs_selection());
+        for note in &ctx.notes {
+            self.emit("info", note);
+        }
+        let resolved = context::commands::resolve(cmd, &ctx).map_err(|e| e.to_string())?;
+        for note in &resolved.notes {
+            self.emit("info", note);
+        }
+        let task = self.plan_task(text, Mode::Actions, Some(resolved.actions))?;
+        self.lock().guard = Some(Guard {
+            ctx,
+            strict_focus: false,
+        });
+        if self.lock().trust_actions {
+            self.emit("info", "Trusted Actions: running without a prompt");
+            if let Some(g) = self.lock().guard.as_mut() {
+                g.strict_focus = true; // no prompt in between, so focus must not have moved
+            }
+            self.approve(task.id)?;
+        }
+        Ok(task)
+    }
+
     /// Apps the person lets X read and operate. Anything else asks first, every time.
     pub fn set_computer_apps(&self, apps: Vec<String>) {
         self.lock().computer_apps = apps;
@@ -313,6 +374,11 @@ impl Service {
     }
 
     fn plan_with(&self, text: &str, mode: Mode, smart: bool) -> Result<Task, String> {
+        if mode == Mode::Actions
+            && let Some(cmd) = context::commands::parse_utterance(text)
+        {
+            return self.plan_contextual(text.trim(), &cmd);
+        }
         let mut preset = None;
         if mode == Mode::Actions {
             preset = tools::plan_rules(text);
@@ -405,6 +471,7 @@ impl Service {
             return Err(busy(s.phase));
         }
         s.grants.clear();
+        s.guard = None;
         let (steps, actions, workspace) = match mode {
             Mode::Actions => {
                 let actions = preset.or_else(|| tools::plan_rules(text)).ok_or(
@@ -536,7 +603,17 @@ impl Service {
     }
 
     fn run_actions(&self, actions: &[Action]) {
+        let guard = self.lock().guard.take();
+        if let Some(guard) = guard
+            && let Err(why) = self
+                .context_engine()
+                .recheck(&guard.ctx, guard.strict_focus)
+        {
+            self.set_step(0, "failed");
+            return self.finish(Phase::Failed, Some(format!("Stopped: {why}")), None, None);
+        }
         let mut launched = 0;
+        let mut verified = 0;
         for (i, action) in actions.iter().enumerate() {
             if self.lock().stop_requested {
                 break;
@@ -559,6 +636,11 @@ impl Service {
                 _ => self.launcher.launch(action),
             };
             match result {
+                Ok(msg) if matches!(action, Action::Copy { .. }) => {
+                    self.emit("result", &format!("{msg} (confirmed)"));
+                    self.set_step(i, "done");
+                    verified += 1;
+                }
                 Ok(msg) => {
                     self.emit("result", &format!("{msg} (launched; outcome not verified)"));
                     self.set_step(i, "launched");
@@ -570,10 +652,11 @@ impl Service {
                 }
             }
         }
-        let note = format!(
-            "{} action(s) launched. X does not verify that pages loaded.",
-            launched
-        );
+        let note = match (launched, verified) {
+            (0, v) => format!("{v} action(s) done and confirmed."),
+            (l, 0) => format!("{l} action(s) launched. X does not verify that pages loaded."),
+            (l, v) => format!("{v} confirmed, {l} launched (page loads are not verified)."),
+        };
         self.finish(Phase::Completed, None, Some(note), None);
     }
 
