@@ -481,8 +481,8 @@ fn list(p: Paint, mgr: &Manager) -> El {
             p.muted(),
         ));
     }
-    for row in &mgr.rows {
-        list = list.child(entry_card(p, row));
+    for item in &mgr.rows {
+        list = list.child(entry_card(p, item));
     }
     if let Some((ok, message)) = &mgr.note {
         list = list.child(small(
@@ -494,8 +494,8 @@ fn list(p: Paint, mgr: &Manager) -> El {
     list
 }
 
-fn entry_card(p: Paint, row: &Row) -> El {
-    let entry = &row.entry;
+fn entry_card(p: Paint, item: &Row) -> El {
+    let entry = &item.entry;
     let wf = &entry.workflow;
     let id = wf.id.clone();
     let key = |s: &str| format!("wf-{id}-{s}");
@@ -540,7 +540,7 @@ fn entry_card(p: Paint, row: &Row) -> El {
             p.warning(),
         ));
     }
-    if let Some(last) = &row.last {
+    if let Some(last) = &item.last {
         use ::x_agent::workflows::RunState;
         let color = match last.state {
             RunState::Completed => p.success(),
