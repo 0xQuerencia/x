@@ -17,6 +17,7 @@ use x_agent::service::{Mode, RealLauncher, Service};
 
 use crate::control::{AgentAction, ControlReply};
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod wake;
 mod workflows;
 
@@ -431,11 +432,13 @@ pub fn set_voice_mode(mode: VoiceMode) -> ControlReply {
 
 /// In `Auto`, speech runs as a command only after a spoken wake word (see `agent wake`); the rest
 /// types as dictation. "work" right after the prefix hands the goal to OpenCode.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn spoken_command(text: &str) -> Option<(Mode, String)> {
     let rest = wake_split(text)?;
     split_mode(&rest)
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn clean_word(word: &str) -> String {
     word.trim_matches(|c: char| !c.is_alphanumeric())
         .to_lowercase()
@@ -443,6 +446,7 @@ fn clean_word(word: &str) -> String {
 
 /// What follows a leading wake word ("Friday", "hey Friday"), which may be nothing at all.
 /// `None` when the text does not start with one.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn wake_split(text: &str) -> Option<String> {
     let mut words = text.split_whitespace();
     let mut first = clean_word(words.next()?);
@@ -456,6 +460,7 @@ pub(crate) fn wake_split(text: &str) -> Option<String> {
 }
 
 /// "work <goal>" goes to OpenCode; anything else is an Action. `None` for an empty command.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn split_mode(rest: &str) -> Option<(Mode, String)> {
     let mut words: Vec<&str> = rest.split_whitespace().collect();
     let mode = if words.first().is_some_and(|word| clean_word(word) == "work") {
@@ -472,6 +477,7 @@ pub(crate) fn split_mode(rest: &str) -> Option<(Mode, String)> {
 /// Called after dictation was pasted, so "make that shorter" and "scratch that" know what
 /// "that" is. Remembers the text and window in memory only (bounded, expiring); it reads
 /// nothing from the app. Does nothing when X is off.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn record_insertion(text: &str) {
     if crate::labs::x_agent() {
         service().record_insertion(text);
@@ -480,6 +486,7 @@ pub fn record_insertion(text: &str) {
 
 /// Called with a finished dictation before it is pasted: true when X took it, so it is
 /// not typed. Dictate mode, X off, and an Auto transcript without the prefix return false.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn intercept(text: &str) -> bool {
     if !crate::labs::x_agent() {
         return false;
@@ -508,6 +515,7 @@ pub fn intercept(text: &str) -> bool {
 
 /// Plans a spoken command. True when X took it; false when it was not a command X knows
 /// (the caller then types it as dictation, or drops it when it was heard hands-free).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn plan_spoken(mode: Mode, command: &str) -> bool {
     match service().plan(command, mode) {
         Ok(_) => true,
@@ -777,6 +785,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
 
 /// Hex is quitting: stop any run and drop any recording first. Bounded, so a stuck child
 /// can never keep Hex from exiting (the run's process group has already been signalled).
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn shutdown() {
     wake::stop();
     if !crate::labs::x_agent() {
