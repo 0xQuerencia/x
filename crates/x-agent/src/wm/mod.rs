@@ -187,6 +187,17 @@ pub struct Outcome {
     pub undoable: bool,
 }
 
+/// One read of the desktop: what exists, what has focus, where we are.
+#[derive(Clone, Debug)]
+pub struct View {
+    pub windows: Vec<WinInfo>,
+    pub focused: Option<WinInfo>,
+    pub previous: Option<WinInfo>,
+    pub workspace: Option<i64>,
+    pub backend: &'static str,
+    pub caps: Vec<Cap>,
+}
+
 enum Undo {
     Workspace(i64),
     Focus(WinInfo),
@@ -223,6 +234,22 @@ impl Controller {
 
     pub fn backend_name(&self) -> &'static str {
         self.backend.name()
+    }
+
+    /// A fresh read of every window, the focused one and the current workspace, for
+    /// callers that only need to know what is on screen right now.
+    pub fn view(&mut self) -> Result<View, WmError> {
+        let all = self.backend.windows()?;
+        let focused = self.focused_in(&all)?;
+        self.note_focus(focused.as_ref());
+        Ok(View {
+            workspace: self.backend.workspace().ok(),
+            previous: self.previous.clone(),
+            windows: all,
+            focused,
+            backend: self.backend.name(),
+            caps: self.backend.caps(),
+        })
     }
 
     pub fn run(&mut self, req: &Request) -> Result<Outcome, WmError> {
@@ -615,8 +642,8 @@ fn matching(app: &str, all: &[WinInfo]) -> Result<Vec<WinInfo>, WmError> {
 
 static CONTROLLER: Mutex<Option<Controller>> = Mutex::new(None);
 
-/// Runs one request on the session's controller, so context and undo outlive single commands.
-pub fn run(req: &Request) -> Result<Outcome, WmError> {
+/// Runs `f` on the session's controller, so context and undo outlive single commands.
+fn with_controller<T>(f: impl FnOnce(&mut Controller) -> Result<T, WmError>) -> Result<T, WmError> {
     let mut slot = CONTROLLER
         .lock()
         .map_err(|_| WmError::Backend("window state is poisoned".into()))?;
@@ -624,14 +651,20 @@ pub fn run(req: &Request) -> Result<Outcome, WmError> {
         let backend = detect().map_err(WmError::Unsupported)?;
         *slot = Some(Controller::new(backend));
     }
-    let out = slot
-        .as_mut()
-        .map(|c| c.run(req))
-        .unwrap_or(Err(WmError::NothingToUndo));
+    let out = slot.as_mut().map_or(Err(WmError::NothingToUndo), f);
     if matches!(out, Err(WmError::Backend(_))) {
         *slot = None; // a crashed or disconnected backend is rebuilt on the next command
     }
     out
+}
+
+pub fn run(req: &Request) -> Result<Outcome, WmError> {
+    with_controller(|c| c.run(req))
+}
+
+/// The desktop as it is right now (one fresh read, nothing cached).
+pub fn view() -> Result<View, WmError> {
+    with_controller(Controller::view)
 }
 
 #[cfg(test)]

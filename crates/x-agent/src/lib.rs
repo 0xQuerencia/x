@@ -8,7 +8,9 @@
 //! * [`hexcli`]: Hex's own speech-to-text over its control CLI (never pastes).
 //! * [`service`]: the one-task-at-a-time state machine the UI drives.
 
+pub mod clipboard;
 pub mod computer;
+pub mod context;
 pub mod desktop;
 pub mod hexcli;
 pub mod opencode;
