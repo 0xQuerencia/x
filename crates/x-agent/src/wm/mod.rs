@@ -638,7 +638,7 @@ fn list(all: &[WinInfo]) -> Outcome {
 }
 
 /// Windows whose class belongs to an approved app alias.
-fn matching(app: &str, all: &[WinInfo]) -> Result<Vec<WinInfo>, WmError> {
+pub(crate) fn matching(app: &str, all: &[WinInfo]) -> Result<Vec<WinInfo>, WmError> {
     let names = crate::tools::app_classes(app)
         .ok_or_else(|| WmError::NotFound(format!("{app} is not an approved app")))?;
     Ok(all
