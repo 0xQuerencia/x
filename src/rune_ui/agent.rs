@@ -416,6 +416,11 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
                 .font(p.k.ty.small_medium)
                 .color(p.text()),
         );
+    if snapshot.phase == Phase::AwaitingApproval
+        && let Some(preview) = &task.edit
+    {
+        return card.child(super::agent_edit::card(p, task, preview));
+    }
     for (index, step) in task.steps.iter().enumerate() {
         let color = match step.status.as_str() {
             "failed" => p.danger(),

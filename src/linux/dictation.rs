@@ -209,6 +209,7 @@ impl DictationOutput {
         if let Some(paster) = paster {
             if !crate::agent_host::intercept(&processed.text) {
                 paster.paste(&processed.text)?;
+                crate::agent_host::record_insertion(&processed.text);
             }
         }
         if let Some(history) = &self.history {

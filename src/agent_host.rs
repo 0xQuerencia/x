@@ -450,6 +450,15 @@ fn spoken_command(text: &str) -> Option<(Mode, String)> {
     (!command.is_empty()).then(|| (mode, command.to_string()))
 }
 
+/// Called after dictation was pasted, so "make that shorter" and "scratch that" know what
+/// "that" is. Remembers the text and window in memory only (bounded, expiring); it reads
+/// nothing from the app. Does nothing when X is off.
+pub fn record_insertion(text: &str) {
+    if crate::labs::x_agent() {
+        service().record_insertion(text);
+    }
+}
+
 /// Called with a finished dictation before it is pasted: true when X took it, so it is
 /// not typed. Dictate mode, X off, and an Auto transcript without the prefix return false.
 pub fn intercept(text: &str) -> bool {

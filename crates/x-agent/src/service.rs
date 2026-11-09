@@ -990,6 +990,7 @@ impl Service {
 
     /// App exit: stop any run and drop any recording. Blocks until the run is reaped.
     pub fn shutdown(&self) {
+        self.forget_edits();
         self.cancel();
         for _ in 0..200 {
             if !self.lock().phase.is_busy() {
