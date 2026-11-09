@@ -221,11 +221,11 @@ impl Segmenter {
 // ---- the listener ---------------------------------------------------------------------
 
 /// Starts the listener thread once. It does nothing until `hex agent listen on`.
+#[cfg(target_os = "linux")]
 pub(crate) fn start() {
     if STARTED.swap(true, Ordering::AcqRel) {
         return;
     }
-    #[cfg(target_os = "linux")]
     if let Err(error) = std::thread::Builder::new()
         .name("x-wake".into())
         .spawn(listen)
@@ -233,6 +233,10 @@ pub(crate) fn start() {
         tracing::warn!(%error, "could not start the hands-free listener");
     }
 }
+
+/// Hands-free listening is Linux-only for now (see `command`).
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn start() {}
 
 #[cfg(target_os = "linux")]
 fn listen() {
