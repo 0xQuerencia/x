@@ -12,6 +12,7 @@ pub mod clipboard;
 pub mod computer;
 pub mod context;
 pub mod desktop;
+pub mod edit;
 pub mod hexcli;
 pub mod opencode;
 pub mod phase;
