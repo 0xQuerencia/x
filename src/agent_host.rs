@@ -253,7 +253,6 @@ fn approval_audit_file() -> Option<PathBuf> {
         .map(|dir| dir.join("x-approval-audit.ndjson"))
 }
 
-
 fn load_computer_apps() -> Vec<String> {
     computer_apps_file()
         .and_then(|path| std::fs::read_to_string(path).ok())
@@ -315,7 +314,6 @@ fn computer_access(command: &str, value: &str) -> ControlReply {
         Err(error) => ControlReply::error("failed", format!("couldn't save the setting: {error}")),
     }
 }
-
 
 fn ignore_missing(error: std::io::Error) -> std::io::Result<()> {
     if error.kind() == std::io::ErrorKind::NotFound {
@@ -715,6 +713,14 @@ pub fn handle(action: AgentAction) -> ControlReply {
         AgentAction::Desktop => {
             let r = x_agent::wm::report();
             ControlReply::done(serde_json::to_string(&r).unwrap_or_default())
+        }
+        AgentAction::Context => {
+            let engine = svc.context_engine();
+            let report = serde_json::json!({
+                "capabilities": engine.capabilities(),
+                "context": engine.capture(true).summary(),
+            });
+            ControlReply::done(report.to_string())
         }
         AgentAction::Wake { command, value } => wake_words_command(&command, &value),
         AgentAction::Computer { command, value } => computer_access(&command, &value),
