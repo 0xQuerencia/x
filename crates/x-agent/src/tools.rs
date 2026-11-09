@@ -46,6 +46,7 @@ const SEARCH: &[(&str, &str)] = &[
     ("google", "https://www.google.com/search?q="),
     ("wikipedia", "https://en.wikipedia.org/w/index.php?search="),
     ("reddit", "https://www.reddit.com/search/?q="),
+    ("stackoverflow", "https://stackoverflow.com/search?q="),
 ];
 const ALIASES: &[(&str, &str)] = &[
     ("firefox", "firefox"),
@@ -121,6 +122,12 @@ pub enum Action {
     Session {
         goal: String,
     },
+    /// Puts text the person selected on the clipboard. Only X's own context commands make
+    /// this; a model's plan can never contain it.
+    #[serde(skip_deserializing)]
+    Copy {
+        text: String,
+    },
     /// Operates one app's window by reading its accessibility tree: click, type, navigate,
     /// verify. It must be the only step and always needs the person's scoped permission.
     Computer {
@@ -149,6 +156,12 @@ impl Action {
             Self::App { target } => format!("Open {target}"),
             Self::Type { text } => format!("Type \"{text}\" into the focused window"),
             Self::Opencode => "Open OpenCode in a new temporary folder".to_string(),
+            Self::Copy { text } => {
+                format!(
+                    "Copy {} selected characters to the clipboard",
+                    text.chars().count()
+                )
+            }
             Self::Focus { target } => format!("Switch to {target}"),
             Self::Workspace { number } => format!("Go to workspace {number}"),
             Self::Window { op, target, ws } => {
@@ -180,6 +193,7 @@ impl Action {
                 lookup(APPS, target).ok_or("Unapproved app")?;
             }
             Self::Opencode => {}
+            Self::Copy { text } => crate::clipboard::validate(text)?,
             Self::Focus { target } => {
                 lookup(APPS, target).ok_or("Unapproved app")?;
             }
@@ -275,6 +289,7 @@ impl Action {
                 number.to_string(),
             ]),
             Self::Window { .. } => Err("Window commands run through the window controller".into()),
+            Self::Copy { .. } => Err("Copy runs through the clipboard helper".into()),
             Self::Session { .. } => Err("A session runs as Work, not as an Action".into()),
             Self::Computer { .. } => Err("Computer steps run through the observe loop".into()),
             Self::Opencode => opencode_argv(&session_dir("opencode"), resolve),
@@ -322,6 +337,9 @@ impl Action {
                     }
                 })
                 .map_err(|e| e.to_string());
+        }
+        if let Self::Copy { text } = &valid {
+            return crate::clipboard::copy(text);
         }
         let argv = if matches!(valid, Self::Opencode) {
             let dir = session_dir("opencode");
@@ -641,7 +659,7 @@ pub fn valid_wake_word(word: &str) -> Result<String, String> {
     Ok(word)
 }
 
-fn strip_wake_word(utterance: &str) -> String {
+pub(crate) fn strip_wake_word(utterance: &str) -> String {
     strip_with(utterance, &wake_words())
 }
 
@@ -879,6 +897,7 @@ pub fn is_low_risk(actions: &[Action]) -> bool {
         Action::Type { .. } => i > 0 && actions[i - 1].launches_window(),
         Action::Session { .. } => actions.len() == 1,
         Action::Computer { .. } => false,
+        Action::Copy { .. } => true,
         Action::Window { op, .. } => !matches!(op, crate::wm::Op::Close),
         _ => true,
     })
