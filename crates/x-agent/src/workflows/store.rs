@@ -3,6 +3,7 @@
 //! through symlinks. Nothing secret belongs here and nothing here is ever executed as text.
 
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
@@ -79,19 +80,21 @@ impl Store {
     }
 
     fn write_private(&self, path: &Path, bytes: &[u8]) -> Result<(), String> {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&self.dir)
+        // Unix: owner-only (0700 folder, 0600 files). Windows has no mode bits; the folder
+        // lives under the user's profile, whose default ACL already limits it to the user
+        // and administrators, and X does not change those ACLs.
+        let mut dir = std::fs::DirBuilder::new();
+        dir.recursive(true);
+        #[cfg(unix)]
+        dir.mode(0o700);
+        dir.create(&self.dir)
             .map_err(|e| format!("could not create {}: {e}", self.dir.display()))?;
         let tmp = path.with_extension("tmp");
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)
-            .map_err(|e| e.to_string())?;
+        let mut open = std::fs::OpenOptions::new();
+        open.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        open.mode(0o600);
+        let mut f = open.open(&tmp).map_err(|e| e.to_string())?;
         f.write_all(bytes)
             .and_then(|()| f.sync_all())
             .map_err(|e| e.to_string())?;

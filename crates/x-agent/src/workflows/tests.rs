@@ -53,6 +53,9 @@ pub(crate) struct Fake {
     pub(crate) w: Mutex<World>,
     pub(crate) cancel_after_launches: Option<usize>,
     pub(crate) deny_permit: bool,
+    /// Deny every permit request from the nth (0-based) on.
+    pub(crate) deny_from: Option<usize>,
+    pub(crate) permits: AtomicUsize,
     pub(crate) launches: AtomicUsize,
     pub(crate) opencode_result: Result<String, String>,
 }
@@ -82,6 +85,8 @@ impl Fake {
             }),
             cancel_after_launches: None,
             deny_permit: false,
+            deny_from: None,
+            permits: AtomicUsize::new(0),
             launches: AtomicUsize::new(0),
             opencode_result: Ok("OpenCode exited 0".into()),
         }
@@ -199,7 +204,8 @@ impl Host for Fake {
         self.opencode_result.clone()
     }
     fn permit(&self, _: &StepAction) -> bool {
-        !self.deny_permit
+        let n = self.permits.fetch_add(1, Ordering::SeqCst);
+        !self.deny_permit && !self.deny_from.is_some_and(|from| n >= from)
     }
     fn cancelled(&self) -> bool {
         self.cancel_after_launches
@@ -719,10 +725,72 @@ mod running {
     }
 
     #[test]
-    fn denied_permission_stops_an_opencode_step() {
+    fn every_ordinary_step_is_checked_once_before_it_runs() {
+        let h = home();
+        let host = Fake::new();
+        let wf = coding(h.path());
+        let out = run(&wf, &host, &cfg(h.path()));
+        assert_eq!(out.report.state, RunState::Completed);
+        assert_eq!(host.permits.load(Ordering::SeqCst), wf.steps.len());
+    }
+
+    #[test]
+    fn a_denied_ordinary_step_fails_and_the_rest_do_not_run() {
+        let h = home();
+        let mut host = Fake::new();
+        host.deny_from = Some(1);
+        let mut wf = coding(h.path());
+        wf.steps = vec![
+            step("one", open("vscode", None)),
+            step("two", open("firefox", None)),
+            step("three", open("vscode", None)),
+        ];
+        let out = run(&wf, &host, &cfg(h.path()));
+        assert_eq!(out.report.state, RunState::Failed);
+        assert_eq!(out.report.steps[0].status, StepStatus::Done);
+        assert_eq!(out.report.steps[1].status, StepStatus::Failed);
+        assert_eq!(out.report.steps[1].detail, "Permission denied");
+        assert_eq!(out.report.steps[2].status, StepStatus::Skipped);
+        let log = host.log();
+        assert!(!log.iter().any(|l| l.contains("firefox")), "{log:?}");
+        assert_eq!(
+            host.permits.load(Ordering::SeqCst),
+            2,
+            "no check after a denial"
+        );
+    }
+
+    #[test]
+    fn a_denied_first_step_launches_nothing() {
         let h = home();
         let mut host = Fake::new();
         host.deny_permit = true;
+        let wf = coding(h.path());
+        let out = run(&wf, &host, &cfg(h.path()));
+        assert_eq!(out.report.state, RunState::Failed);
+        assert_eq!(out.report.steps[0].status, StepStatus::Failed);
+        assert_eq!(host.launches.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn stop_is_honoured_before_the_permit_check() {
+        let h = home();
+        let mut host = Fake::new();
+        host.cancel_after_launches = Some(1);
+        let wf = coding(h.path());
+        let out = run(&wf, &host, &cfg(h.path()));
+        assert_eq!(out.report.state, RunState::Cancelled);
+        assert!(
+            host.permits.load(Ordering::SeqCst) < wf.steps.len(),
+            "steps after Stop are never even checked"
+        );
+    }
+
+    #[test]
+    fn denied_permission_stops_an_opencode_step() {
+        let h = home();
+        let mut host = Fake::new();
+        host.deny_from = Some(1);
         let mut wf = coding(h.path());
         wf.steps = vec![
             step("open", open("vscode", None)),
@@ -880,6 +948,7 @@ mod running {
     }
 }
 
+#[cfg(unix)]
 mod storage {
     use super::*;
     use std::os::unix::fs::PermissionsExt;

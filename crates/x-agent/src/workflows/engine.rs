@@ -240,14 +240,20 @@ impl Run<'_> {
                 self.set(i, StepStatus::Skipped, &why);
                 continue;
             }
-            if matches!(step.action, StepAction::OpencodeTask { .. }) {
+            // Every step is checked right before it runs. This is not another prompt: the
+            // person approved the workflow once, and the host only confirms the step still
+            // belongs to that approval. OpenCode steps also show the NeedsPermission state.
+            let sensitive = matches!(step.action, StepAction::OpencodeTask { .. });
+            if sensitive {
                 self.go(RunState::NeedsPermission);
-                if !self.host.permit(&step.action) {
-                    self.set(i, StepStatus::Failed, "Permission denied");
-                    self.go(RunState::Failed);
-                    self.mark_rest(i + 1, StepStatus::Skipped, "not run: permission was denied");
-                    return;
-                }
+            }
+            if !self.host.permit(&step.action) {
+                self.set(i, StepStatus::Failed, "Permission denied");
+                self.go(RunState::Failed);
+                self.mark_rest(i + 1, StepStatus::Skipped, "not run: permission was denied");
+                return;
+            }
+            if sensitive {
                 self.go(RunState::Running);
             }
             self.set(i, StepStatus::Running, "");

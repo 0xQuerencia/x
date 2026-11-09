@@ -1081,5 +1081,5 @@ fn emit(s: &mut State, kind: &str, text: &str) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

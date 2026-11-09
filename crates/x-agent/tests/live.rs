@@ -70,10 +70,39 @@ impl TestApp {
         }
     }
 
-    fn focus(&self) {
-        let w = self.window();
-        wm::focus_exact(&w.id, w.pid, &w.class).expect("focus the test window");
-        std::thread::sleep(Duration::from_millis(900)); // let GTK publish its focus
+    /// Focuses the test window and waits, bounded, until the accessibility tree really
+    /// reports that window's focused field. A fixed sleep guessed how long GTK needs; this
+    /// polls the thing the test depends on. Returns whether it became ready in time.
+    fn focus_ready(&self, engine: &Engine) -> bool {
+        let end = Instant::now() + Duration::from_secs(6);
+        let mut refocus = Instant::now() - Duration::from_secs(1);
+        while Instant::now() < end {
+            if refocus.elapsed() >= Duration::from_millis(750) {
+                // The person may be using this desktop too; take focus back if it drifted.
+                let w = self.window();
+                wm::focus_exact(&w.id, w.pid, &w.class).expect("focus the test window");
+                refocus = Instant::now();
+            }
+            let got = engine.capture(true);
+            if got
+                .window
+                .as_ref()
+                .is_some_and(|w| w.value.title == self.title)
+                && got.field.is_some()
+            {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+
+    fn focus(&self, engine: &Engine) {
+        assert!(
+            self.focus_ready(engine),
+            "the test window never reported a focused field within 6s; this live test needs \
+             an otherwise idle Hyprland session with AT-SPI running"
+        );
     }
 
     fn finish(mut self) -> String {
@@ -103,7 +132,9 @@ fn selection_context_search_and_verified_edit_on_a_real_gtk_field() {
     // person is using this desktop too, so focus is retried if it drifts away.
     let mut ctx = None;
     for _ in 0..8 {
-        app.focus();
+        if !app.focus_ready(&engine) {
+            continue;
+        }
         let started = Instant::now();
         let got = engine.capture(true);
         println!("context captured in {:?}", started.elapsed());
@@ -136,7 +167,9 @@ fn selection_context_search_and_verified_edit_on_a_real_gtk_field() {
     let editor = Editor::default();
     let mut target = None;
     for _ in 0..8 {
-        app.focus();
+        if !app.focus_ready(&engine) {
+            continue;
+        }
         if let Ok(t) = editor.resolve(&engine, Scope::Selection) {
             target = Some(t);
             break;
@@ -150,7 +183,7 @@ fn selection_context_search_and_verified_edit_on_a_real_gtk_field() {
     assert!(stale.is_err(), "{stale:?}");
 
     // Undo puts the original back, verified.
-    app.focus();
+    app.focus(&engine);
     editor.undo(&engine).unwrap();
     restore(prev);
     assert_eq!(
@@ -168,7 +201,9 @@ fn a_real_password_field_is_never_read() {
     let engine = Engine::system();
     let mut err = None;
     for _ in 0..8 {
-        app.focus();
+        if !app.focus_ready(&engine) {
+            continue;
+        }
         let ctx = engine.capture(true);
         if ctx
             .window

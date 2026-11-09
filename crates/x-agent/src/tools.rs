@@ -564,16 +564,34 @@ fn exe_for(alias: &str, resolve: &dyn Fn(&str) -> Option<String>) -> Result<Stri
         .ok_or_else(|| format!("{alias} is not installed or not on PATH"))
 }
 
+#[cfg(unix)]
+fn is_executable(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    p.metadata()
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// Windows has no execute bit; a file is runnable if it exists with an executable extension.
+#[cfg(windows)]
+fn is_executable(p: &std::path::Path) -> bool {
+    p.is_file()
+}
+
 pub fn which(name: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
+    #[cfg(windows)]
+    let names = [
+        name.to_string(),
+        format!("{name}.exe"),
+        format!("{name}.cmd"),
+        format!("{name}.bat"),
+    ];
+    #[cfg(not(windows))]
+    let names = [name.to_string()];
     std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
-        .find(|p| {
-            use std::os::unix::fs::PermissionsExt;
-            p.metadata()
-                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-                .unwrap_or(false)
-        })
+        .flat_map(|dir| names.iter().map(move |n| dir.join(n)))
+        .find(|p| is_executable(p))
         .map(|p| p.to_string_lossy().into_owned())
 }
 

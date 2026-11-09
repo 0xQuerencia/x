@@ -66,12 +66,7 @@ impl Host for Bridge {
                 .as_ref()
                 .is_some_and(|w| w.steps.iter().any(|st| &st.action == action));
         drop(s);
-        if allowed {
-            self.svc.emit(
-                "approval",
-                &format!("step permitted: {}", action.describe()),
-            );
-        } else {
+        if !allowed {
             self.svc
                 .emit("error", &format!("step refused: {}", action.describe()));
         }

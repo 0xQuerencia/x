@@ -206,11 +206,11 @@ impl DictationOutput {
             return Err(eyre!("text replacements produced empty output"));
         }
         let printed = paster.is_none();
-        if let Some(paster) = paster {
-            if !crate::agent_host::intercept(&processed.text) {
-                paster.paste(&processed.text)?;
-                crate::agent_host::record_insertion(&processed.text);
-            }
+        if let Some(paster) = paster
+            && !crate::agent_host::intercept(&processed.text)
+        {
+            paster.paste(&processed.text)?;
+            crate::agent_host::record_insertion(&processed.text);
         }
         if let Some(history) = &self.history {
             let mut draft = crate::dictation::modes::history_draft(

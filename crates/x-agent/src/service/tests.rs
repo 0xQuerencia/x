@@ -1223,6 +1223,27 @@ mod saved_workflows {
     }
 
     #[test]
+    fn the_step_gate_follows_the_approval_state() {
+        use crate::workflows::Host;
+        let r = rig();
+        let bridge = super::super::workflow::Bridge {
+            svc: r.s.clone(),
+            inner: r.host.clone(),
+        };
+        let step = coding(r.home.path()).steps[0].action.clone();
+        r.s.plan("start coding", Mode::Actions).unwrap();
+        assert!(!bridge.permit(&step), "planned but not approved");
+        r.s.lock().phase = Phase::Running; // as approve() would, without starting the run
+        assert!(bridge.permit(&step), "approved and running");
+        r.s.lock().stop_requested = true;
+        assert!(!bridge.permit(&step), "Stop was pressed");
+        r.s.lock().stop_requested = false;
+        r.s.lock().workflow = None;
+        assert!(!bridge.permit(&step), "the approved run is gone");
+        r.s.lock().phase = Phase::Idle;
+    }
+
+    #[test]
     fn the_step_gate_refuses_anything_not_in_the_approved_run() {
         use crate::workflows::Host;
         let r = rig();

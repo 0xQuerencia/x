@@ -63,10 +63,10 @@ impl AgentPane {
         if serialized == self.shown {
             return listed;
         }
-        if self.workspace.text.is_empty() {
-            if let Some(path) = &snapshot.workspace {
-                self.workspace.text = path.clone();
-            }
+        if self.workspace.text.is_empty()
+            && let Some(path) = &snapshot.workspace
+        {
+            self.workspace.text = path.clone();
         }
         self.shown = serialized;
         self.snapshot = Some(snapshot);
