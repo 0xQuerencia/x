@@ -11,8 +11,6 @@
 
 mod activity;
 mod agent;
-mod agent_edit;
-mod agent_workflows;
 #[cfg(hex_capture)]
 pub(crate) mod capture_capsule;
 mod controls;

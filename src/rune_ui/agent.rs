@@ -2,6 +2,9 @@
 //! it run, and Stop it. Everything real lives in `crates/x-agent`; this file draws its
 //! snapshot and forwards presses to the same `hex agent` handler the CLI uses.
 
+mod edit;
+mod workflows;
+
 use ::x_agent::phase::Phase;
 use ::x_agent::service::{Mode, Snapshot};
 use rune::{El, TextEdit, col, row, text};
@@ -25,7 +28,7 @@ pub(super) struct AgentPane {
     shown: String,
     /// Whether the workflow manager is showing instead of the command view.
     pub(super) show_workflows: bool,
-    pub(super) workflows: super::agent_workflows::Manager,
+    pub(super) workflows: workflows::Manager,
 }
 
 impl Default for AgentPane {
@@ -235,7 +238,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         if let Some(task) = &snapshot.task {
             body = body.child(task_card(p, snapshot, task));
         }
-        body = body.child(super::agent_workflows::view(p, ui));
+        body = body.child(workflows::view(p, ui));
         return (
             actions,
             col()
@@ -454,7 +457,7 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
     if snapshot.phase == Phase::AwaitingApproval
         && let Some(preview) = &task.edit
     {
-        return card.child(super::agent_edit::card(p, task, preview));
+        return card.child(edit::card(p, task, preview));
     }
     for (index, step) in task.steps.iter().enumerate() {
         let color = match step.status.as_str() {

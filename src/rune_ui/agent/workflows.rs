@@ -8,11 +8,11 @@ use ::x_agent::workflows::store::Entry;
 use rune::{El, TextEdit, col, row, text};
 use rune_kit::TextInput;
 
-use super::Ui;
-use super::controls::{ButtonKind, DESCRIPTION, Paint, button};
-use super::lists::section_label;
 use crate::agent_host;
 use crate::desktop::i18n::tr;
+use crate::rune_ui::Ui;
+use crate::rune_ui::controls::{ButtonKind, DESCRIPTION, Paint, button};
+use crate::rune_ui::lists::section_label;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Kind {
@@ -341,7 +341,7 @@ pub(super) struct Row {
 }
 
 #[derive(Default)]
-pub(super) struct Manager {
+pub(in crate::rune_ui) struct Manager {
     rows: Vec<Row>,
     loaded: Option<std::time::Instant>,
     /// Set by anything that changes the files, so the list reloads at once.

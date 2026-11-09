@@ -6,10 +6,10 @@ use ::x_agent::edit::diff::{Kind, Seg};
 use ::x_agent::service::{Mode, Preview, Task};
 use rune::{El, Span, col, rich, row, text};
 
-use super::Ui;
-use super::controls::{ButtonKind, DESCRIPTION, Paint, button};
 use crate::agent_host;
 use crate::desktop::i18n::tr;
+use crate::rune_ui::Ui;
+use crate::rune_ui::controls::{ButtonKind, DESCRIPTION, Paint, button};
 
 /// The diff as one paragraph: removed words struck through in the danger colour, added
 /// words in the success colour. Ranges are byte offsets into the joined string.
