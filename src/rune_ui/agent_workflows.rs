@@ -886,10 +886,11 @@ fn step_row(p: Paint, step: &StepEd, i: usize, count: usize) -> El {
         "✕",
         ButtonKind::Danger,
         move |ui: &mut Ui, _| {
-            if let Some(e) = ui.agent.workflows.editor.as_mut() {
-                if i < e.steps.len() && e.steps.len() > 1 {
-                    e.steps.remove(i);
-                }
+            if let Some(e) = ui.agent.workflows.editor.as_mut()
+                && i < e.steps.len()
+                && e.steps.len() > 1
+            {
+                e.steps.remove(i);
             }
         },
     ))
