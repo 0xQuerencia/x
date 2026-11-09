@@ -23,6 +23,9 @@ pub(super) struct AgentPane {
     snapshot: Option<Snapshot>,
     /// Serialized form of the last snapshot, so polling redraws only on change.
     shown: String,
+    /// Whether the workflow manager is showing instead of the command view.
+    pub(super) show_workflows: bool,
+    pub(super) workflows: super::agent_workflows::Manager,
 }
 
 impl Default for AgentPane {
@@ -33,6 +36,8 @@ impl Default for AgentPane {
             mode: Mode::Actions,
             snapshot: None,
             shown: String::new(),
+            show_workflows: false,
+            workflows: Default::default(),
         }
     }
 }
@@ -150,7 +155,19 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             }
         })
     };
+    let view_button = |key: &'static str, label: &str, workflows: bool| {
+        let kind = if pane.show_workflows == workflows {
+            ButtonKind::Primary
+        } else {
+            ButtonKind::Secondary
+        };
+        button(p, key, label, kind, move |ui: &mut Ui, _| {
+            ui.agent.show_workflows = workflows;
+        })
+    };
     let actions = vec![
+        view_button("view-commands", tr("Commands"), false),
+        view_button("view-workflows", tr("Workflows"), true),
         status,
         text(tr("Dictate keeps its own shortcut"))
             .key("dictate-note")
@@ -212,6 +229,23 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             },
         ));
 
+    if pane.show_workflows {
+        let mut body = col().key("agent-body").gap(16.0);
+        if let Some(task) = &snapshot.task {
+            body = body.child(task_card(p, snapshot, task));
+        }
+        body = body.child(super::agent_workflows::view(p, ui));
+        return (
+            actions,
+            col()
+                .key("agent-pane")
+                .grow(1.0)
+                .shrink()
+                .px(24.0)
+                .py(16.0)
+                .child(body),
+        );
+    }
     let input = TextInput::new(&pane.input)
         .placeholder(if pane.mode == Mode::Actions {
             tr("Open Firefox and search YouTube for Mars rover")
@@ -428,8 +462,11 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             _ => p.text(),
         };
         let mut line = format!("{}  {}", step_glyph(&step.status), step.title);
-        if !step.risk.is_empty() {
+        if !step.risk.is_empty() && step.status == "pending" {
             line.push_str(&format!("  ·  {}", step.risk));
+        }
+        if !step.detail.is_empty() && matches!(step.status.as_str(), "failed" | "launched") {
+            line.push_str(&format!("  ·  {}", step.detail));
         }
         card = card.child(
             text(line)

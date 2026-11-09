@@ -17,6 +17,8 @@ use x_agent::service::{Mode, RealLauncher, Service};
 
 use crate::control::{AgentAction, ControlReply};
 
+mod workflows;
+
 const DISABLED: &str = "X is off. Turn it on with `hex labs on x-agent`";
 
 /// OpenCode's installer puts the real binary in `~/.opencode/bin`, which shell aliases
@@ -49,6 +51,9 @@ pub fn service() -> &'static Service {
             opencode_exe(),
         );
         service.set_trust_actions(trust_file().is_some_and(|path| path.is_file()));
+        if let (Ok(dir), Some(home)) = (crate::app_paths::support_dir(), dirs::home_dir()) {
+            service.set_workflow_dirs(dir.join("workflows"), home);
+        }
         service.set_computer_apps(load_computer_apps());
         service.set_computer_remote(computer_remote_file().is_some_and(|path| path.is_file()));
         VOICE.store(load_voice_mode() as u8, Ordering::Relaxed);
@@ -723,6 +728,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
             let r = x_agent::wm::report();
             ControlReply::done(serde_json::to_string(&r).unwrap_or_default())
         }
+        AgentAction::Workflow { command, value } => workflows::handle(svc, &command, &value),
         AgentAction::Context => {
             let engine = svc.context_engine();
             let report = serde_json::json!({

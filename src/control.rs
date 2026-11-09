@@ -253,6 +253,12 @@ pub enum AgentAction {
     },
     /// Which window-control backend this desktop has and what it can do.
     Desktop,
+    /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
+    /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
+    Workflow {
+        command: String,
+        value: String,
+    },
     /// What X can see right now: the focused window and what is selected (never the text).
     Context,
     /// The words that make speech a command: `list`, `add <word>`, `remove <word>`, `set <word>`.

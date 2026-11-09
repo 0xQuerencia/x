@@ -41,8 +41,19 @@ fn block(p: Paint, key: &str, label: &str, body: &str) -> El {
     col()
         .key(key.to_string())
         .gap(2.0)
-        .child(text(label.to_string()).key(format!("{key}-label")).font(DESCRIPTION).color(p.muted()))
-        .child(text(body.to_string()).key(format!("{key}-text")).font(DESCRIPTION).color(p.text()).wrap())
+        .child(
+            text(label.to_string())
+                .key(format!("{key}-label"))
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        )
+        .child(
+            text(body.to_string())
+                .key(format!("{key}-text"))
+                .font(DESCRIPTION)
+                .color(p.text())
+                .wrap(),
+        )
 }
 
 fn run_in_background(said: &'static str) {
@@ -89,14 +100,28 @@ pub(super) fn card(p: Paint, task: &Task, preview: &Preview) -> El {
                 col()
                     .key("edit-changes")
                     .gap(2.0)
-                    .child(text(tr("Suggested").to_string()).key("edit-changes-label").font(DESCRIPTION).color(p.muted()))
+                    .child(
+                        text(tr("Suggested").to_string())
+                            .key("edit-changes-label")
+                            .font(DESCRIPTION)
+                            .color(p.muted()),
+                    )
                     .child(diff_paragraph(p, segs)),
             ),
             None => card.child(block(p, "edit-suggested", tr("Suggested"), proposed)),
         };
     }
-    let kind = if preview.kind == "model" { tr("Written by a model") } else { tr("Rule-based edit, no model") };
-    card = card.child(text(kind.to_string()).key("edit-kind").font(DESCRIPTION).color(p.muted()));
+    let kind = if preview.kind == "model" {
+        tr("Written by a model")
+    } else {
+        tr("Rule-based edit, no model")
+    };
+    card = card.child(
+        text(kind.to_string())
+            .key("edit-kind")
+            .font(DESCRIPTION)
+            .color(p.muted()),
+    );
     let mut actions = row().key("edit-actions").gap(8.0).child(button(
         p,
         "edit-accept",
@@ -109,12 +134,24 @@ pub(super) fn card(p: Paint, task: &Task, preview: &Preview) -> El {
         },
     ));
     if !consent && preview.kind == "model" {
-        actions = actions.child(button(p, "edit-retry", tr("Retry"), ButtonKind::Secondary, |_: &mut Ui, _| {
-            run_in_background("try again");
-        }));
+        actions = actions.child(button(
+            p,
+            "edit-retry",
+            tr("Retry"),
+            ButtonKind::Secondary,
+            |_: &mut Ui, _| {
+                run_in_background("try again");
+            },
+        ));
     }
-    actions = actions.child(button(p, "edit-cancel", tr("Cancel"), ButtonKind::Secondary, |_: &mut Ui, _| {
-        agent_host::service().cancel();
-    }));
+    actions = actions.child(button(
+        p,
+        "edit-cancel",
+        tr("Cancel"),
+        ButtonKind::Secondary,
+        |_: &mut Ui, _| {
+            agent_host::service().cancel();
+        },
+    ));
     card.child(actions)
 }

@@ -385,6 +385,18 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Saved desktop workflows, run by trigger phrase or by id. `list` shows them with their
+    /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
+    /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
+    Workflow {
+        #[arg(value_parser = ["list", "show", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
+        command: String,
+        /// A workflow id, or a file path for import.
+        #[arg(default_value = "")]
+        value: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// What X can see right now: the focused window and whether text is selected. The
     /// selected text itself is never printed.
     Context {
@@ -596,6 +608,11 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
                 AgentCommand::Context { output } => (AgentAction::Context, output),
+                AgentCommand::Workflow {
+                    command,
+                    value,
+                    output,
+                } => (AgentAction::Workflow { command, value }, output),
                 AgentCommand::Wake {
                     command,
                     value,
