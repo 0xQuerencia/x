@@ -48,6 +48,18 @@ impl FakeWindows {
 }
 
 impl Windows for FakeWindows {
+    fn focus(&self, w: &WindowRef) -> Result<(), WmError> {
+        let mut v = self.0.lock().unwrap();
+        let v = v.as_mut().map_err(|_| WmError::Backend("down".into()))?;
+        let found = v
+            .windows
+            .iter()
+            .find(|x| WindowRef::from(*x) == *w)
+            .cloned();
+        v.focused = Some(found.ok_or_else(|| WmError::NotFound("gone".into()))?);
+        Ok(())
+    }
+
     fn view(&self) -> Result<crate::wm::View, WmError> {
         match &*self.0.lock().unwrap() {
             Ok(v) => Ok(v.clone()),

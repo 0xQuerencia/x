@@ -167,6 +167,31 @@ impl Context {
         }
     }
 
+    /// What was captured, without the selected text itself, for diagnostics and logs.
+    pub fn summary(&self) -> serde_json::Value {
+        let selection = match &self.selection.value {
+            Selection::Text { text, truncated } => {
+                serde_json::json!({"state": "text", "chars": text.chars().count(), "truncated": truncated})
+            }
+            Selection::Empty => serde_json::json!({"state": "empty"}),
+            Selection::Withheld => serde_json::json!({"state": "withheld"}),
+            Selection::Unavailable(why) => serde_json::json!({"state": "unavailable", "why": why}),
+            Selection::NotRead => serde_json::json!({"state": "not_read"}),
+        };
+        serde_json::json!({
+            "age_ms": u64::try_from(self.captured.elapsed().as_millis()).unwrap_or(u64::MAX),
+            "valid": self.is_fresh(),
+            "window": self.window,
+            "workspace": self.workspace,
+            "previous": self.previous,
+            "field": self.field,
+            "selection": selection,
+            "selection_source": self.selection.source,
+            "selection_confidence": self.selection.confidence,
+            "notes": self.notes,
+        })
+    }
+
     pub fn selection_truncated(&self) -> bool {
         matches!(
             &self.selection.value,
@@ -181,6 +206,11 @@ impl Context {
 /// The desktop, as the window manager reports it. Faked in tests.
 pub trait Windows: Send + Sync {
     fn view(&self) -> Result<wm::View, WmError>;
+    fn focus(&self, _window: &WindowRef) -> Result<(), WmError> {
+        Err(WmError::Unsupported(
+            "focusing is not supported here".into(),
+        ))
+    }
 }
 
 pub struct SystemWindows;
@@ -188,6 +218,10 @@ pub struct SystemWindows;
 impl Windows for SystemWindows {
     fn view(&self) -> Result<wm::View, WmError> {
         wm::view()
+    }
+
+    fn focus(&self, w: &WindowRef) -> Result<(), WmError> {
+        wm::focus_exact(&w.id, w.pid, &w.class)
     }
 }
 
@@ -199,6 +233,14 @@ pub struct Engine {
 impl Engine {
     pub fn new(windows: Arc<dyn Windows>, a11y: Arc<dyn Accessibility>) -> Self {
         Self { windows, a11y }
+    }
+
+    pub fn a11y(&self) -> &Arc<dyn Accessibility> {
+        &self.a11y
+    }
+
+    pub fn windows(&self) -> &Arc<dyn Windows> {
+        &self.windows
     }
 
     pub fn system() -> Self {

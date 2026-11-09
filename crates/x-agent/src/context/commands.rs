@@ -112,13 +112,13 @@ fn site_of(tail: &str) -> Option<Result<&'static str, String>> {
 pub fn parse(text: &str) -> Option<Command> {
     let rest = strip_reference(text)?;
     for verb in ["search for", "search", "look up", "lookup", "find"] {
-        if let Some(tail) = rest.strip_prefix(verb) {
-            if tail.is_empty() || tail.starts_with(' ') {
-                return Some(match site_of(tail)? {
-                    Ok(site) => Command::Search { site },
-                    Err(name) => Command::UnknownSite(name),
-                });
-            }
+        if let Some(tail) = rest.strip_prefix(verb)
+            && (tail.is_empty() || tail.starts_with(' '))
+        {
+            return Some(match site_of(tail)? {
+                Ok(site) => Command::Search { site },
+                Err(name) => Command::UnknownSite(name),
+            });
         }
     }
     if rest == "google" {

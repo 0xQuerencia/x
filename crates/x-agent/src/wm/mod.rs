@@ -252,6 +252,19 @@ impl Controller {
         })
     }
 
+    /// Focuses exactly this window (same id, pid and class), verified. For callers that
+    /// hold a reference from earlier and must put the person back where they were.
+    pub fn focus_exact(&mut self, id: &str, pid: u32, class: &str) -> Result<(), WmError> {
+        let all = self.backend.windows()?;
+        let before = self.focused_in(&all)?;
+        let win = all
+            .iter()
+            .find(|w| w.id == id && w.pid == pid && w.class == class)
+            .cloned()
+            .ok_or_else(|| WmError::NotFound("The window is gone".into()))?;
+        self.focus(&win, before).map(drop)
+    }
+
     pub fn run(&mut self, req: &Request) -> Result<Outcome, WmError> {
         let all = self.backend.windows()?;
         let focused = self.focused_in(&all)?;
@@ -660,6 +673,10 @@ fn with_controller<T>(f: impl FnOnce(&mut Controller) -> Result<T, WmError>) -> 
 
 pub fn run(req: &Request) -> Result<Outcome, WmError> {
     with_controller(|c| c.run(req))
+}
+
+pub fn focus_exact(id: &str, pid: u32, class: &str) -> Result<(), WmError> {
+    with_controller(|c| c.focus_exact(id, pid, class))
 }
 
 /// The desktop as it is right now (one fresh read, nothing cached).
