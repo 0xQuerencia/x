@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use super::engine::{Config, Host, Reversal};
+use super::engine::{Config, Host};
 use super::model::{OnFailure, Step, StepAction, Workflow};
 use super::*;
 use crate::tools::Action;
@@ -185,12 +185,6 @@ impl Host for Fake {
             x.workspace = to;
             x.place = Place::N(to);
         }
-        Ok(())
-    }
-    fn close_window(&self, window: &WinInfo) -> Result<(), String> {
-        let mut w = self.w.lock().unwrap();
-        w.log.push(format!("close {}", window.class));
-        w.wins.retain(|x| x.id != window.id);
         Ok(())
     }
     fn opencode_ready(&self) -> Result<(), String> {
@@ -831,13 +825,17 @@ mod running {
         wf.steps
             .push(step("go", StepAction::SwitchWorkspace { workspace: 3 }));
         let out = run(&wf, &host, &cfg(h.path()));
-        assert!(out.report.undoable >= 4);
-        let (done, problems) = undo(&out.reversals, &host);
-        assert!(problems.is_empty(), "{problems:?}");
-        assert!(done >= 4);
+        assert!(out.report.undoable >= 2);
+        let r = undo(&out.reversals, &host);
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(r.remaining.is_empty());
         let w = host.w.lock().unwrap();
         assert_eq!(w.ws, 1);
-        assert!(w.wins.is_empty(), "windows the run opened are closed again");
+        assert!(
+            !w.wins.is_empty(),
+            "undo never closes a window the run opened"
+        );
+        assert!(!w.log.iter().any(|l| l.starts_with("close")));
     }
 
     #[test]
@@ -847,14 +845,17 @@ mod running {
         let wf = coding(h.path());
         let out = run(&wf, &host, &cfg(h.path()));
         host.w.lock().unwrap().refuse_moves = true;
-        host.w.lock().unwrap().wins.retain(|w| w.class != "firefox");
-        let (_, problems) = undo(&out.reversals, &host);
-        assert!(!problems.is_empty(), "nothing is silently skipped");
+        let r = undo(&out.reversals, &host);
+        assert!(!r.problems.is_empty(), "nothing is silently skipped");
         assert!(
-            out.reversals
-                .iter()
-                .any(|r| matches!(r, Reversal::CloseWindow(_)))
+            !r.remaining.is_empty(),
+            "a failed move is kept so undo can be retried"
         );
+        host.w.lock().unwrap().refuse_moves = false;
+        let again = undo(&r.remaining, &host);
+        assert!(again.remaining.is_empty(), "{:?}", again.problems);
+        assert!(again.problems.is_empty(), "{:?}", again.problems);
+        assert!(again.done > 0);
     }
 
     #[test]

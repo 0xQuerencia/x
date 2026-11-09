@@ -118,7 +118,7 @@ Rewrites show a small review card, original, suggestion and a word-level diff, w
 "X, start coding."
 ```
 
-Workflows are typed, not scripts: unknown keys and actions are rejected, paths must be inside your home folder (no `..`, no `~/.ssh`), URLs must be public HTTPS, and a trigger can't shadow a built-in command or another workflow. Everything is checked before anything launches, so a missing app or folder fails up front instead of leaving half a setup behind. Windows are watched until they actually appear, moves are verified, Stop works at any point, and the result lists exactly which steps worked. Running one twice reuses windows that are already open. **`x agent workflow undo`** (or "X, undo the workflow") closes what the run opened and puts things back, and says what it couldn't.
+Workflows are typed, not scripts: unknown keys and actions are rejected, paths must be inside your home folder (no `..`, no `~/.ssh`), URLs must be public HTTPS, and a trigger can't shadow a built-in command or another workflow. Everything is checked before anything launches, so a missing app or folder fails up front instead of leaving half a setup behind. Windows are watched until they actually appear, moves are verified, Stop works at any point, and the result lists exactly which steps worked. Running one twice reuses windows that are already open. **`x agent workflow undo`** (or "X, undo the workflow") moves windows and workspaces back and says what it couldn't. It never closes a window, since one X opened may hold work you typed since; if a move fails, the remaining changes are kept and saying undo again retries them. Each OpenCode step is checked against the approved workflow right before it runs, so an edited, stale or stopped run is refused.
 
 ```bash
 x agent workflow list              # with each one's last result
@@ -132,7 +132,7 @@ x agent context                    # what X can see right now (never the text)
 | | Result |
 |---|---|
 | Hyprland / Wayland (Arch), GTK 3 text field | Verified live: context capture (~0.2s), exact selection read, search resolution, verified replace, stale-edit refusal, undo, password field refused |
-| Workflow on Hyprland | Verified live: terminal opened in a folder, found by its new window, moved to workspace 10 and confirmed, then closed by undo |
+| Workflow on Hyprland | Verified live: terminal opened in a folder, found by its new window, moved to workspace 10 and confirmed, then undo left the window open on purpose (X never closes windows) |
 | Everything else in the three features | Unit and integration tests against fake desktops and fake accessibility |
 | KDE Plasma, GNOME, Sway/i3, X11-only | **Not tested.** The window backends exist, but context and workflows are unverified there |
 | VS Code and other Electron apps | **Not verified.** They only expose text to accessibility when accessibility is switched on, and some editors don't expose it at all. When X can't read the selection it says so and does nothing |

@@ -107,7 +107,8 @@ fn launch_new(
             );
         }
     };
-    let mut reversals = vec![Reversal::CloseWindow(win.clone())];
+    // The window is left open on undo: it may hold work typed since the run.
+    let mut reversals: Vec<Reversal> = vec![];
     if let Some(ws) = workspace {
         match move_to(host, &win, ws) {
             Ok(Some(r)) => reversals.push(r),

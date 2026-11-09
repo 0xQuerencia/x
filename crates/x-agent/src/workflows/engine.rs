@@ -90,7 +90,6 @@ pub struct Report {
 /// How to put one thing back.
 #[derive(Clone, Debug)]
 pub enum Reversal {
-    CloseWindow(WinInfo),
     MoveBack(WinInfo),
     SwitchBack(i64),
     FocusBack(WinInfo),
@@ -118,14 +117,12 @@ pub trait Host: Send + Sync {
     fn focus(&self, window: &WinInfo) -> Result<(), String>;
     fn switch_workspace(&self, n: i64) -> Result<(), String>;
     fn move_window(&self, window: &WinInfo, to: i64) -> Result<(), String>;
-    fn close_window(&self, window: &WinInfo) -> Result<(), String>;
     fn opencode_ready(&self) -> Result<(), String>;
     fn opencode(&self, goal: &str, dir: &Path) -> Result<String, String>;
     /// Whether this step may run. The person approved the workflow as a whole; this is the
-    /// per-step gate for anything sensitive.
-    fn permit(&self, _action: &StepAction) -> bool {
-        true
-    }
+    /// per-step gate for anything sensitive. There is deliberately no default: every host
+    /// must decide, so a new host cannot silently allow everything.
+    fn permit(&self, action: &StepAction) -> bool;
     fn cancelled(&self) -> bool;
     /// Live progress for a UI; ignored by default.
     fn progress(&self, _index: usize, _status: StepStatus, _detail: &str) {}
@@ -359,37 +356,55 @@ pub fn run(wf: &Workflow, host: &dyn Host, cfg: &Config) -> Outcome {
     }
 }
 
+/// What an undo achieved.
+#[derive(Debug, Default)]
+pub struct Undone {
+    pub done: usize,
+    /// What could not be put back, for the person.
+    pub problems: Vec<String>,
+    /// Reversals worth trying again (the window is still there but the change failed), in
+    /// their original order. Windows that are gone cannot be retried and are not kept.
+    pub remaining: Vec<Reversal>,
+}
+
 /// Puts back what a run changed, newest first, checking each window is still there.
-/// Returns what was undone and what could not be.
-pub fn undo(reversals: &[Reversal], host: &dyn Host) -> (usize, Vec<String>) {
-    let mut done = 0;
-    let mut problems = Vec::new();
+/// It never closes a window: one X opened may hold work typed since.
+pub fn undo(reversals: &[Reversal], host: &dyn Host) -> Undone {
+    let mut out = Undone::default();
     let current = |w: &WinInfo| {
         host.windows().ok().and_then(|all| {
             all.into_iter()
                 .find(|x| x.id == w.id && x.pid == w.pid && x.class == w.class)
         })
     };
+    let mut failed = Vec::new();
     for rev in reversals.iter().rev() {
         let result = match rev {
             Reversal::SwitchBack(n) => host.switch_workspace(*n),
-            Reversal::CloseWindow(w) => match current(w) {
-                Some(now) => host.close_window(&now),
-                None => Ok(()), // already closed: nothing to put back
-            },
             Reversal::MoveBack(w) => match current(w) {
                 Some(now) => host.move_window(&now, w.workspace.max(1)),
-                None => Err(format!("{} is gone", w.class)),
+                None => {
+                    out.problems.push(format!("{} is gone", w.class));
+                    continue;
+                }
             },
             Reversal::FocusBack(w) => match current(w) {
                 Some(now) => host.focus(&now),
-                None => Err(format!("{} is gone", w.class)),
+                None => {
+                    out.problems.push(format!("{} is gone", w.class));
+                    continue;
+                }
             },
         };
         match result {
-            Ok(()) => done += 1,
-            Err(e) => problems.push(e),
+            Ok(()) => out.done += 1,
+            Err(e) => {
+                out.problems.push(e);
+                failed.push(rev.clone());
+            }
         }
     }
-    (done, problems)
+    failed.reverse();
+    out.remaining = failed;
+    out
 }

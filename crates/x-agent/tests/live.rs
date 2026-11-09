@@ -223,8 +223,21 @@ fn a_real_workflow_opens_places_verifies_and_undoes() {
         .iter()
         .filter(|w| !before.windows.iter().any(|b| b.id == w.id))
         .collect();
-    let (done, problems) = undo(&out.reversals, &SystemHost);
-    println!("undo: {done} done, problems: {problems:?}");
+    let undone = undo(&out.reversals, &SystemHost);
+    println!(
+        "undo: {} done, problems: {:?}",
+        undone.done, undone.problems
+    );
+    let problems = undone.problems;
+    let still_open = wm::view()
+        .unwrap()
+        .windows
+        .iter()
+        .any(|w| opened.first().is_some_and(|o| o.id == w.id));
+    if let Some(o) = opened.first() {
+        // Test cleanup only: X itself never closes a window on undo.
+        let _ = wm::close_exact(&o.id, o.pid, &o.class);
+    }
     let _ = std::fs::remove_dir(dir);
     assert_eq!(
         out.report.state,
@@ -239,9 +252,5 @@ fn a_real_workflow_opens_places_verifies_and_undoes() {
         "the window really is on workspace 10"
     );
     assert!(problems.is_empty(), "{problems:?}");
-    let final_view = wm::view().unwrap();
-    assert!(
-        !final_view.windows.iter().any(|w| w.id == opened[0].id),
-        "undo closed it again"
-    );
+    assert!(still_open, "undo must leave the opened window alone");
 }

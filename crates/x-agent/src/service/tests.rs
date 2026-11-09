@@ -1197,13 +1197,52 @@ mod saved_workflows {
         let done = r.s.plan("X, undo the workflow", Mode::Actions).unwrap();
         assert_eq!(done.phase, Phase::Completed);
         assert!(
-            r.host.windows_now().is_empty(),
-            "the windows the run opened were closed"
+            !r.host.windows_now().is_empty(),
+            "undo never closes windows the run opened"
         );
         assert!(
             r.s.plan("undo the workflow", Mode::Actions).is_err(),
             "only once"
         );
+    }
+
+    #[test]
+    fn a_failed_undo_keeps_what_is_left_so_it_can_be_retried() {
+        let r = rig();
+        let t = r.s.plan("start coding", Mode::Actions).unwrap();
+        r.s.approve(t.id).unwrap();
+        wait_for(&r.s, |x| x.phase == Phase::Completed);
+        r.host.w.lock().unwrap().refuse_moves = true;
+        let first = r.s.undo_workflow().unwrap();
+        assert!(first.contains("could not put back"), "{first}");
+        assert!(first.contains("undo again"), "{first}");
+        r.host.w.lock().unwrap().refuse_moves = false;
+        let second = r.s.undo_workflow().unwrap();
+        assert!(!second.contains("could not"), "{second}");
+        assert!(r.s.undo_workflow().is_err(), "nothing left once it worked");
+    }
+
+    #[test]
+    fn the_step_gate_refuses_anything_not_in_the_approved_run() {
+        use crate::workflows::Host;
+        let r = rig();
+        let bridge = super::super::workflow::Bridge {
+            svc: r.s.clone(),
+            inner: r.host.clone(),
+        };
+        let wf = coding(r.home.path());
+        let first = wf.steps[0].action.clone();
+        // Not approved yet: nothing is permitted.
+        assert!(!bridge.permit(&first));
+        let t = r.s.plan("start coding", Mode::Actions).unwrap();
+        assert!(!bridge.permit(&first), "still awaiting approval");
+        r.s.approve(t.id).unwrap();
+        let stranger = StepAction::OpencodeTask {
+            goal: "rm things".into(),
+            directory: "~/projects/my-project".into(),
+        };
+        wait_for(&r.s, |x| x.phase == Phase::Completed);
+        assert!(!bridge.permit(&stranger));
     }
 
     #[test]

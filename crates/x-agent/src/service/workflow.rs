@@ -21,9 +21,9 @@ const POLL: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Wraps a machine with what only the service knows: Stop, live step progress, and the
 /// supervised OpenCode runner.
-struct Bridge {
-    svc: Service,
-    inner: Arc<dyn Host>,
+pub(super) struct Bridge {
+    pub(super) svc: Service,
+    pub(super) inner: Arc<dyn Host>,
 }
 
 impl Host for Bridge {
@@ -54,8 +54,28 @@ impl Host for Bridge {
     fn move_window(&self, w: &WinInfo, to: i64) -> Result<(), String> {
         self.inner.move_window(w, to)
     }
-    fn close_window(&self, w: &WinInfo) -> Result<(), String> {
-        self.inner.close_window(w)
+    /// The per-step gate. The person approved a snapshot of the workflow; a step runs only
+    /// if the task is still approved and running, Stop was not pressed, and the step is one
+    /// of the approved ones. Anything else (a stale or edited workflow, a run that was
+    /// cancelled) is refused.
+    fn permit(&self, action: &workflows::StepAction) -> bool {
+        let s = self.svc.lock();
+        let allowed = !s.stop_requested
+            && s.phase == Phase::Running
+            && s.workflow
+                .as_ref()
+                .is_some_and(|w| w.steps.iter().any(|st| &st.action == action));
+        drop(s);
+        if allowed {
+            self.svc.emit(
+                "approval",
+                &format!("step permitted: {}", action.describe()),
+            );
+        } else {
+            self.svc
+                .emit("error", &format!("step refused: {}", action.describe()));
+        }
+        allowed
     }
 
     fn opencode_ready(&self) -> Result<(), String> {
@@ -291,21 +311,27 @@ impl Service {
     }
 
     pub(super) fn undo_workflow_inner(&self) -> Result<String, String> {
-        let reversals = std::mem::take(&mut self.lock().undo);
+        // Keep the history until the attempt is over, then keep only what failed, so a
+        // temporary failure can be retried with the same command.
+        let reversals = self.lock().undo.clone();
         if reversals.is_empty() {
             return Err("There is no workflow run to undo".into());
         }
-        let (done, problems) = workflows::undo(&reversals, self.machine().as_ref());
-        let msg = if problems.is_empty() {
-            format!("Put back {done} change(s)")
+        let result = workflows::undo(&reversals, self.machine().as_ref());
+        let retry = !result.remaining.is_empty();
+        self.lock().undo = result.remaining;
+        let msg = if result.problems.is_empty() {
+            format!("Put back {} change(s)", result.done)
         } else {
             format!(
-                "Put back {done} change(s); could not put back: {}",
-                problems.join("; ")
+                "Put back {} change(s); could not put back: {}{}",
+                result.done,
+                result.problems.join("; "),
+                if retry { " (undo again to retry)" } else { "" }
             )
         };
         self.emit(
-            if problems.is_empty() {
+            if result.problems.is_empty() {
                 "result"
             } else {
                 "error"
