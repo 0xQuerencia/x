@@ -334,6 +334,17 @@ fn check_action(action: &StepAction, home: &Path) -> Result<(), String> {
             {
                 return Err("Typing into windows is not allowed in workflows".into());
             }
+            if actions.iter().any(|a| {
+                matches!(
+                    a,
+                    tools::Action::Session { .. } | tools::Action::Computer { .. }
+                )
+            }) {
+                return Err(
+                    "Sessions and screen control need their own approval; use an OpenCode task step instead"
+                        .into(),
+                );
+            }
             Ok(())
         }
         StepAction::OpencodeTask { goal, directory } => {

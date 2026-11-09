@@ -396,6 +396,12 @@ mod validation {
                 "Typing",
             ),
             (
+                StepAction::RunAction {
+                    phrase: "start a temporary session to build a todo app".into(),
+                },
+                "own approval",
+            ),
+            (
                 StepAction::OpencodeTask {
                     goal: "a\nb".into(),
                     directory: "~/p".into(),

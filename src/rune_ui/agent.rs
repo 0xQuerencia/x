@@ -56,8 +56,9 @@ impl AgentPane {
         }
         let snapshot = agent_host::service().snapshot(0);
         let serialized = serde_json::to_string(&snapshot).unwrap_or_default();
+        let listed = self.show_workflows && self.workflows.refresh();
         if serialized == self.shown {
-            return false;
+            return listed;
         }
         if self.workspace.text.is_empty() {
             if let Some(path) = &snapshot.workspace {

@@ -333,13 +333,67 @@ impl WfEditor {
     }
 }
 
+/// A workflow as listed, with its last result, read from disk by [`Manager::refresh`] and
+/// not on every redraw.
+pub(super) struct Row {
+    entry: Entry,
+    last: Option<::x_agent::workflows::Report>,
+}
+
 #[derive(Default)]
 pub(super) struct Manager {
+    rows: Vec<Row>,
+    loaded: Option<std::time::Instant>,
+    /// Set by anything that changes the files, so the list reloads at once.
+    dirty: bool,
+    shown: String,
     editor: Option<WfEditor>,
     /// Shown under the list: the outcome of the last Save, Delete or Duplicate.
     note: Option<(bool, String)>,
     /// A TextEdit to hand out when a closure outlives the editor it indexes.
     spare: TextEdit,
+}
+
+impl Manager {
+    /// Reloads the list when something changed it or a few seconds passed (a run may have
+    /// finished). True when what is shown differs.
+    pub(super) fn refresh(&mut self) -> bool {
+        let stale = self
+            .loaded
+            .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3));
+        if !self.dirty && !stale {
+            return false;
+        }
+        let store = store();
+        let rows: Vec<Row> = store
+            .list()
+            .into_iter()
+            .map(|entry| Row {
+                last: store.last(&entry.workflow.id),
+                entry,
+            })
+            .collect();
+        let shown = serde_json::to_string(
+            &rows
+                .iter()
+                .map(|r| {
+                    (
+                        &r.entry.workflow,
+                        r.entry.problems.len(),
+                        &r.entry.conflicts,
+                        r.last.as_ref().map(|l| &l.summary),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_default();
+        self.dirty = false;
+        self.loaded = Some(std::time::Instant::now());
+        self.rows = rows;
+        let changed = shown != self.shown;
+        self.shown = shown;
+        changed
+    }
 }
 
 fn store() -> ::x_agent::workflows::Store {
@@ -348,12 +402,15 @@ fn store() -> ::x_agent::workflows::Store {
 
 fn note(ui: &mut Ui, ok: bool, message: String) {
     ui.agent.workflows.note = Some((ok, message));
+    ui.agent.workflows.dirty = true;
 }
 
 fn save(ui: &mut Ui) -> Option<String> {
+    let wf = ui.agent.workflows.editor.as_ref()?.build();
+    let saved = store().save(&wf);
+    ui.agent.workflows.dirty = true;
     let editor = ui.agent.workflows.editor.as_mut()?;
-    let wf = editor.build();
-    match store().save(&wf) {
+    match saved {
         Ok(()) => {
             editor.problems.clear();
             editor.is_new = false;
@@ -388,16 +445,19 @@ fn small(key: String, label: String, color: rune::Color) -> El {
 pub(super) fn view(p: Paint, ui: &Ui) -> El {
     let mgr = &ui.agent.workflows;
     let mut body = col().key("wf-body").gap(16.0);
-    let entries = store().list();
     match &mgr.editor {
         Some(editor) => body = body.child(editor_card(p, editor)),
-        None => body = body.child(list(p, &entries, mgr)),
+        None => body = body.child(list(p, mgr)),
     }
     body
 }
 
-fn list(p: Paint, entries: &[Entry], mgr: &Manager) -> El {
-    let taken: Vec<String> = entries.iter().map(|e| e.workflow.id.clone()).collect();
+fn list(p: Paint, mgr: &Manager) -> El {
+    let taken: Vec<String> = mgr
+        .rows
+        .iter()
+        .map(|r| r.entry.workflow.id.clone())
+        .collect();
     let mut list = col().key("wf-list").gap(8.0).child(
         row()
             .key("wf-head")
@@ -415,14 +475,14 @@ fn list(p: Paint, entries: &[Entry], mgr: &Manager) -> El {
                 },
             )),
     );
-    if entries.is_empty() {
+    if mgr.rows.is_empty() {
         list = list.child(small("wf-empty".into(),
             tr("No workflows yet. Create one, then say its trigger phrase, such as \"X, start coding\".").into(),
             p.muted(),
         ));
     }
-    for entry in entries {
-        list = list.child(entry_card(p, entry));
+    for row in &mgr.rows {
+        list = list.child(entry_card(p, row));
     }
     if let Some((ok, message)) = &mgr.note {
         list = list.child(small(
@@ -434,7 +494,8 @@ fn list(p: Paint, entries: &[Entry], mgr: &Manager) -> El {
     list
 }
 
-fn entry_card(p: Paint, entry: &Entry) -> El {
+fn entry_card(p: Paint, row: &Row) -> El {
+    let entry = &row.entry;
     let wf = &entry.workflow;
     let id = wf.id.clone();
     let key = |s: &str| format!("wf-{id}-{s}");
@@ -479,7 +540,7 @@ fn entry_card(p: Paint, entry: &Entry) -> El {
             p.warning(),
         ));
     }
-    if let Some(last) = store().last(&wf.id) {
+    if let Some(last) = &row.last {
         use ::x_agent::workflows::RunState;
         let color = match last.state {
             RunState::Completed => p.success(),
