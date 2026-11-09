@@ -331,12 +331,15 @@ impl Service {
         for note in &resolved.notes {
             self.emit("info", note);
         }
+        // Text from the primary selection can be stale or from another window, so it is
+        // always shown for approval, even with Trusted Actions on.
+        let from_primary = ctx.selection.source == context::Source::PrimarySelection;
         let task = self.plan_task(text, Mode::Actions, Some(resolved.actions))?;
         self.lock().guard = Some(Guard {
             ctx,
             strict_focus: false,
         });
-        if self.lock().trust_actions {
+        if self.lock().trust_actions && !from_primary {
             self.emit("info", "Trusted Actions: running without a prompt");
             if let Some(g) = self.lock().guard.as_mut() {
                 g.strict_focus = true; // no prompt in between, so focus must not have moved

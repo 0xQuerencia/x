@@ -464,3 +464,51 @@ mod helper_replies {
         assert_eq!(f.selection, None);
     }
 }
+
+struct FakePrimary(Option<&'static str>);
+
+impl PrimarySelection for FakePrimary {
+    fn read(&self) -> Result<Option<String>, String> {
+        Ok(self.0.map(str::to_string))
+    }
+}
+
+fn browser_without_accessibility(primary: Option<&'static str>) -> Engine {
+    let (engine, _, a11y) = editor();
+    a11y.set(Err("the focused app does not expose accessibility".into()));
+    engine.with_primary(Arc::new(FakePrimary(primary)))
+}
+
+#[test]
+fn an_app_without_accessibility_falls_back_to_the_primary_selection_with_low_confidence() {
+    let ctx = browser_without_accessibility(Some(ERROR)).capture(true);
+    assert_eq!(ctx.selected_text().unwrap(), ERROR);
+    assert_eq!(ctx.selection.source, Source::PrimarySelection);
+    assert_eq!(ctx.selection.confidence, Confidence::Low);
+    assert!(ctx.field.is_none(), "no field: it can never be edited");
+    assert!(
+        ctx.notes
+            .iter()
+            .any(|n| n.contains("last text you highlighted"))
+    );
+}
+
+#[test]
+fn accessibility_wins_and_the_primary_selection_is_never_even_read() {
+    let (engine, ..) = editor();
+    let engine = engine.with_primary(Arc::new(FakePrimary(Some("something else"))));
+    let ctx = engine.capture(true);
+    assert_eq!(ctx.selected_text().unwrap(), ERROR);
+    assert_eq!(ctx.selection.source, Source::Accessibility);
+}
+
+#[test]
+fn an_empty_primary_selection_is_still_reported_as_unavailable() {
+    for primary in [None, Some("   ")] {
+        let ctx = browser_without_accessibility(primary).capture(true);
+        assert!(matches!(
+            ctx.selected_text(),
+            Err(ContextError::Unavailable(_))
+        ));
+    }
+}

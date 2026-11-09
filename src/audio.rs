@@ -443,7 +443,7 @@ impl AudioInput {
 
     /// The OS's default input, or a real one standing in when the default is
     /// Hex Microphone or missing.
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     pub fn open_system_default() -> Result<Self> {
         match open_configured_input(&OpenRequest {
             device_override: None,

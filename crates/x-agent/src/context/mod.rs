@@ -27,6 +27,9 @@ pub const FRESH_FOR: Duration = Duration::from_secs(15);
 pub enum Source {
     WindowManager,
     Accessibility,
+    /// The Wayland primary selection: whatever was last highlighted, in any app. Used only
+    /// for apps that do not expose their text, and never trusted without a prompt.
+    PrimarySelection,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -228,11 +231,27 @@ impl Windows for SystemWindows {
 pub struct Engine {
     windows: Arc<dyn Windows>,
     a11y: Arc<dyn Accessibility>,
+    primary: Option<Arc<dyn PrimarySelection>>,
+}
+
+/// Reads the text most recently highlighted anywhere (Wayland's primary selection), for
+/// apps such as browsers that do not expose their selection to accessibility.
+pub trait PrimarySelection: Send + Sync {
+    fn read(&self) -> Result<Option<String>, String>;
 }
 
 impl Engine {
     pub fn new(windows: Arc<dyn Windows>, a11y: Arc<dyn Accessibility>) -> Self {
-        Self { windows, a11y }
+        Self {
+            windows,
+            a11y,
+            primary: None,
+        }
+    }
+
+    pub fn with_primary(mut self, primary: Arc<dyn PrimarySelection>) -> Self {
+        self.primary = Some(primary);
+        self
     }
 
     pub fn a11y(&self) -> &Arc<dyn Accessibility> {
@@ -245,6 +264,7 @@ impl Engine {
 
     pub fn system() -> Self {
         Self::new(Arc::new(SystemWindows), Arc::new(a11y::Atspi))
+            .with_primary(Arc::new(a11y::WlPrimary))
     }
 
     /// One snapshot, taken now. `read_selection` is false for commands that only need to
@@ -300,7 +320,10 @@ impl Engine {
             Ok(f) => f,
             Err(why) => {
                 notes.push(format!("Accessibility: {why}"));
-                return (None, unavailable(&why));
+                return match self.primary_fallback(&mut *notes) {
+                    Some(selection) => (None, selection),
+                    None => (None, unavailable(&why)),
+                };
             }
         };
         let sensitive = focus.is_sensitive();
@@ -332,6 +355,28 @@ impl Engine {
                 confidence,
             },
         )
+    }
+
+    /// The highlighted text from the primary selection, when the focused app will not say
+    /// what is selected. Low confidence on purpose: it is whatever was highlighted last,
+    /// which is usually this window but can be another one.
+    fn primary_fallback(&self, notes: &mut Vec<String>) -> Option<Sourced<Selection>> {
+        let text = match self.primary.as_ref()?.read() {
+            Ok(Some(text)) if !text.trim().is_empty() => text,
+            _ => return None,
+        };
+        let truncated = text.chars().count() > MAX_SELECTION;
+        let text: String = text.chars().take(MAX_SELECTION).collect();
+        notes.push(
+            "This app does not expose its selection, so X used the last text you highlighted. \
+             Check it before approving."
+                .into(),
+        );
+        Some(Sourced {
+            value: Selection::Text { text, truncated },
+            source: Source::PrimarySelection,
+            confidence: Confidence::Low,
+        })
     }
 
     /// Verifies immediately before an action that the world still matches `ctx`. With

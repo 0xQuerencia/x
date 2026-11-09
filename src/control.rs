@@ -247,6 +247,10 @@ pub enum AgentAction {
     Voice {
         mode: String,
     },
+    /// Hands-free wake word: `on`, `off` or `status`.
+    Listen {
+        mode: String,
+    },
     /// Rerun the last Work goal with one refused command allowed for that run only.
     Allow {
         index: usize,

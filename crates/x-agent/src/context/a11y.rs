@@ -123,6 +123,23 @@ pub trait Accessibility: Send + Sync {
 
 pub struct Atspi;
 
+/// `wl-paste --primary`: what was highlighted last. Read only when asked, never kept.
+pub struct WlPrimary;
+
+impl super::PrimarySelection for WlPrimary {
+    fn read(&self) -> Result<Option<String>, String> {
+        let paste = crate::tools::which("wl-paste").ok_or("wl-paste is not installed")?;
+        let mut cmd = Command::new(paste);
+        cmd.args(["--primary", "--no-newline", "--type", "text/plain"]);
+        match capture(&mut cmd, Duration::from_secs(2)) {
+            Ok((true, bytes)) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
+            // "Nothing is copied" is an exit failure, and means there is no selection.
+            Ok((false, _)) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Raw {

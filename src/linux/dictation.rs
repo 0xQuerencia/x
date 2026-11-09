@@ -268,6 +268,8 @@ pub(crate) fn run(
     let mut engine = Arc::new(TranscriptionEngine::start(transcriber)?);
     // The local API transcribes host audio on this engine's model.
     engine.share();
+    // Starts the opt-in hands-free wake listener (a no-op until `hex agent listen on`).
+    crate::agent_host::wake::start();
     // Drop audio/hotkeys and close the job queue before joining slow output on
     // every exit, including failures during startup or recording.
     let mut output = OutputWorker {

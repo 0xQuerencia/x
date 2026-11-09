@@ -621,6 +621,32 @@ mod contextual {
         (s, l, windows, a11y)
     }
 
+    struct Primary(&'static str);
+
+    impl crate::context::PrimarySelection for Primary {
+        fn read(&self) -> Result<Option<String>, String> {
+            Ok(Some(self.0.to_string()))
+        }
+    }
+
+    #[test]
+    fn a_primary_selection_is_always_shown_for_approval_even_with_trusted_actions() {
+        let (s, l, _, a11y) = setup(usize::MAX);
+        a11y.set(Err("the focused app does not expose accessibility".into()));
+        let (_, windows, _) = crate::context::tests::editor();
+        s.set_context(Arc::new(
+            Engine::new(windows, a11y).with_primary(Arc::new(Primary(ERROR))),
+        ));
+        s.set_trust_actions(true);
+        let t = s.plan("X, search this on GitHub", Mode::Actions).unwrap();
+        assert_eq!(t.phase, Phase::AwaitingApproval, "no silent run");
+        assert!(t.steps[0].title.contains("github"));
+        assert!(l.launched.lock().unwrap().is_empty());
+        s.approve(t.id).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        assert_eq!(l.launched.lock().unwrap().len(), 1);
+    }
+
     #[test]
     fn search_this_on_github_uses_the_selection_after_approval() {
         let (s, l, ..) = setup(usize::MAX);

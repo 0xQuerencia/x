@@ -373,6 +373,15 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Hands-free wake word, off by default: `on` keeps the microphone open and runs any
+    /// speech that starts with a wake word ("Friday, start coding") as an X command. Other
+    /// speech is dropped, never typed, stored or sent. `off` closes the microphone again.
+    Listen {
+        #[arg(value_parser = ["on", "off", "status"])]
+        mode: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// Rerun the last Work goal with command number `index` (from `status`, 0 first) that
     /// OpenCode was refused allowed for that one run. The rerun still asks for approval.
     Allow {
@@ -626,6 +635,7 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Planner { model, output } => (AgentAction::Planner { model }, output),
                 AgentCommand::Allow { index, output } => (AgentAction::Allow { index }, output),
                 AgentCommand::Voice { mode, output } => (AgentAction::Voice { mode }, output),
+                AgentCommand::Listen { mode, output } => (AgentAction::Listen { mode }, output),
                 AgentCommand::Trust { state, output } => {
                     (AgentAction::Trust { on: state == "on" }, output)
                 }

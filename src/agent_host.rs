@@ -17,6 +17,7 @@ use x_agent::service::{Mode, RealLauncher, Service};
 
 use crate::control::{AgentAction, ControlReply};
 
+pub(crate) mod wake;
 mod workflows;
 
 const DISABLED: &str = "X is off. Turn it on with `hex labs on x-agent`";
@@ -431,26 +432,39 @@ pub fn set_voice_mode(mode: VoiceMode) -> ControlReply {
 /// In `Auto`, speech runs as a command only after a spoken wake word (see `agent wake`); the rest
 /// types as dictation. "work" right after the prefix hands the goal to OpenCode.
 fn spoken_command(text: &str) -> Option<(Mode, String)> {
+    let rest = wake_split(text)?;
+    split_mode(&rest)
+}
+
+fn clean_word(word: &str) -> String {
+    word.trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
+}
+
+/// What follows a leading wake word ("Friday", "hey Friday"), which may be nothing at all.
+/// `None` when the text does not start with one.
+pub(crate) fn wake_split(text: &str) -> Option<String> {
     let mut words = text.split_whitespace();
-    let clean = |word: &str| {
-        word.trim_matches(|c: char| !c.is_alphanumeric())
-            .to_lowercase()
-    };
-    let mut first = clean(words.next()?);
+    let mut first = clean_word(words.next()?);
     if matches!(first.as_str(), "hey" | "hi" | "okay" | "ok") {
-        first = clean(words.next()?);
+        first = clean_word(words.next()?);
     }
     if !x_agent::tools::wake_words().contains(&first) {
         return None;
     }
-    let mut rest: Vec<&str> = words.collect();
-    let mode = if rest.first().is_some_and(|word| clean(word) == "work") {
-        rest.remove(0);
+    Some(words.collect::<Vec<_>>().join(" "))
+}
+
+/// "work <goal>" goes to OpenCode; anything else is an Action. `None` for an empty command.
+pub(crate) fn split_mode(rest: &str) -> Option<(Mode, String)> {
+    let mut words: Vec<&str> = rest.split_whitespace().collect();
+    let mode = if words.first().is_some_and(|word| clean_word(word) == "work") {
+        words.remove(0);
         Mode::Work
     } else {
         Mode::Actions
     };
-    let command = rest.join(" ");
+    let command = words.join(" ");
     let command = command.trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace());
     (!command.is_empty()).then(|| (mode, command.to_string()))
 }
@@ -489,7 +503,13 @@ pub fn intercept(text: &str) -> bool {
             None => return false,
         },
     };
-    match service().plan(&command, mode) {
+    plan_spoken(mode, &command)
+}
+
+/// Plans a spoken command. True when X took it; false when it was not a command X knows
+/// (the caller then types it as dictation, or drops it when it was heard hands-free).
+pub(crate) fn plan_spoken(mode: Mode, command: &str) -> bool {
+    match service().plan(command, mode) {
         Ok(_) => true,
         Err(error) if error.starts_with("Not understood") && mode == Mode::Actions => {
             service().emit(
@@ -743,6 +763,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Ok(_) => snapshot(0),
             Err(error) => ControlReply::error("refused", error),
         },
+        AgentAction::Listen { mode } => wake::command(&mode),
         AgentAction::Voice { mode } => match VoiceMode::parse(&mode) {
             Some(mode) => set_voice_mode(mode),
             None => ControlReply::error("usage", "mode is dictate, actions, work, auto or smart"),
@@ -757,6 +778,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
 /// Hex is quitting: stop any run and drop any recording first. Bounded, so a stuck child
 /// can never keep Hex from exiting (the run's process group has already been signalled).
 pub fn shutdown() {
+    wake::stop();
     if !crate::labs::x_agent() {
         return;
     }
