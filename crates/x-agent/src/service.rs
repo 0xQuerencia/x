@@ -16,6 +16,9 @@ use crate::opencode::{self, Canceller, Run, RunConfig, RunStatus};
 use crate::phase::Phase;
 use crate::tools::{self, Action};
 
+mod edit;
+pub use edit::Preview;
+
 pub const MAX_INPUT: usize = 1500;
 const MAX_EVENTS: usize = 400;
 
@@ -57,6 +60,9 @@ pub struct Task {
     pub workspace: Option<String>,
     /// Commands OpenCode asked to run that X refused; each can be allowed for one rerun.
     pub blocked: Vec<String>,
+    /// A text edit waiting for review: the proposal, not yet applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit: Option<Preview>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -143,6 +149,8 @@ struct State {
     computer_remote: bool,
     /// The snapshot a contextual plan was resolved from, rechecked just before it runs.
     guard: Option<Guard>,
+    /// The private working state of a pending text edit; never serialized.
+    edit: Option<edit::Job>,
 }
 
 struct Guard {
@@ -160,6 +168,7 @@ pub struct Service {
     session_root: Arc<Mutex<Option<PathBuf>>>,
     desktop: Arc<Mutex<Arc<dyn crate::desktop::Desktop>>>,
     context: Arc<Mutex<Arc<Engine>>>,
+    editor: Arc<crate::edit::Editor>,
 }
 
 fn now() -> u64 {
@@ -188,6 +197,7 @@ impl Service {
             computer_apps: vec![],
             computer_remote: false,
             guard: None,
+            edit: None,
             voice_mode: Mode::Actions,
             workspace: None,
         };
@@ -200,6 +210,7 @@ impl Service {
             session_root: Arc::new(Mutex::new(None)),
             desktop: Arc::new(Mutex::new(Arc::new(crate::desktop::AgentDesktop::detect()))),
             context: Arc::new(Mutex::new(Arc::new(Engine::system()))),
+            editor: Arc::new(crate::edit::Editor::default()),
         }
     }
 
@@ -360,7 +371,10 @@ impl Service {
 
     /// True when this request would go to the model (the rules do not know it).
     pub fn needs_model(&self, text: &str) -> bool {
-        tools::plan_rules(text).is_none() && self.planner.lock().is_ok_and(|p| p.is_some())
+        let spoken_edit =
+            self.is_edit_command(text) || context::commands::parse_utterance(text).is_some();
+        spoken_edit
+            || tools::plan_rules(text).is_none() && self.planner.lock().is_ok_and(|p| p.is_some())
     }
 
     pub fn plan(&self, text: &str, mode: Mode) -> Result<Task, String> {
@@ -374,10 +388,31 @@ impl Service {
     }
 
     fn plan_with(&self, text: &str, mode: Mode, smart: bool) -> Result<Task, String> {
-        if mode == Mode::Actions
-            && let Some(cmd) = context::commands::parse_utterance(text)
-        {
-            return self.plan_contextual(text.trim(), &cmd);
+        if mode == Mode::Actions {
+            if let Some(cmd) = context::commands::parse_utterance(text) {
+                if cmd == context::commands::Command::Explain {
+                    use crate::edit::commands::{Command, Scope, Transform};
+                    let explain = Command::Transform(Transform::Explain, Scope::Selection);
+                    return self.plan_edit(text.trim(), explain);
+                }
+                return self.plan_contextual(text.trim(), &cmd);
+            }
+            if let Some(cmd) = crate::edit::commands::parse(&tools::strip_wake_word(text)) {
+                use crate::edit::commands::Command;
+                let reply = matches!(
+                    cmd,
+                    Command::Accept | Command::Retry | Command::Cancel | Command::SendToModel
+                );
+                let waiting = {
+                    let s = self.lock();
+                    s.phase == Phase::AwaitingApproval && s.edit.is_some()
+                };
+                // Answers like "retry" only mean something while a preview waits;
+                // otherwise they are ordinary speech.
+                if !reply || waiting {
+                    return self.plan_edit(text.trim(), cmd);
+                }
+            }
         }
         let mut preset = None;
         if mode == Mode::Actions {
@@ -472,6 +507,7 @@ impl Service {
         }
         s.grants.clear();
         s.guard = None;
+        s.edit = None;
         let (steps, actions, workspace) = match mode {
             Mode::Actions => {
                 let actions = preset.or_else(|| tools::plan_rules(text)).ok_or(
@@ -531,6 +567,7 @@ impl Service {
             changed_files: None,
             workspace,
             blocked: vec![],
+            edit: None,
         };
         s.phase = Phase::AwaitingApproval;
         s.actions = actions;
@@ -565,8 +602,10 @@ impl Service {
             emit(&mut s, "approval", &format!("approved task {task_id}"));
             (s.task.clone().ok_or("no task")?, s.actions.clone())
         };
+        let is_edit = self.lock().edit.is_some();
         let me = self.clone();
         thread::spawn(move || match task.mode {
+            Mode::Actions if is_edit => me.run_edit(&task),
             Mode::Actions => me.run_actions(&actions),
             Mode::Work => me.run_work(&task),
         });
@@ -826,7 +865,9 @@ impl Service {
             t.error = error.clone();
             t.summary = summary;
             t.changed_files = changed;
+            t.edit = None;
         }
+        s.edit = None;
         set_phase(&mut s, phase);
         if let Some(e) = error {
             let seen = s
@@ -849,6 +890,10 @@ impl Service {
             Phase::AwaitingApproval => {
                 let id = s.task.as_ref().map(|task| task.id).unwrap_or_default();
                 set_phase(&mut s, Phase::Cancelled);
+                s.edit = None; // a discarded proposal never lingers in memory
+                if let Some(t) = s.task.as_mut() {
+                    t.edit = None;
+                }
                 emit(&mut s, "info", "Plan discarded");
                 emit(&mut s, "approval", &format!("discarded task {id}"));
             }
