@@ -998,3 +998,266 @@ mod voice_edits {
         assert_eq!(field.text(), "TypeError: x is undefined");
     }
 }
+
+mod saved_workflows {
+    use super::*;
+    use crate::workflows::tests::{Fake, coding, home};
+    use crate::workflows::{StepAction, Store};
+
+    struct Rig {
+        s: Service,
+        l: Arc<FakeLauncher>,
+        host: Arc<Fake>,
+        home: tempfile::TempDir,
+    }
+
+    fn rig_with(exe: Option<PathBuf>, tweak: impl FnOnce(&mut Fake)) -> Rig {
+        let (stt, l) = (
+            Arc::new(FakeStt::default()),
+            Arc::new(FakeLauncher::default()),
+        );
+        let s = Service::new(stt, l.clone(), exe);
+        let h = home();
+        let mut fake = Fake::new();
+        tweak(&mut fake);
+        let host = Arc::new(fake);
+        s.set_workflow_dirs(h.path().join("data/workflows"), h.path().to_path_buf());
+        s.set_machine(host.clone());
+        Store::new(h.path().join("data/workflows"), h.path().to_path_buf())
+            .save(&coding(h.path()))
+            .unwrap();
+        Rig {
+            s,
+            l,
+            host,
+            home: h,
+        }
+    }
+
+    fn rig() -> Rig {
+        rig_with(None, |_| {})
+    }
+
+    #[test]
+    fn start_coding_plans_then_runs_after_approval_and_remembers_the_result() {
+        let r = rig();
+        let t = r.s.plan("X, start coding", Mode::Actions).unwrap();
+        assert_eq!(t.phase, Phase::AwaitingApproval);
+        assert_eq!(t.steps.len(), 4);
+        assert!(t.steps[0].title.contains("vscode"));
+        assert!(r.host.log().is_empty(), "nothing starts before approval");
+        r.s.approve(t.id).unwrap();
+        let done = wait_for(&r.s, |x| x.phase == Phase::Completed);
+        let task = done.task.unwrap();
+        assert!(
+            task.steps.iter().all(|s| s.status == "done"),
+            "{:?}",
+            task.steps
+        );
+        assert!(
+            task.summary
+                .unwrap()
+                .contains("all 4 steps done and checked")
+        );
+        let last = r.s.workflow_store().last("coding").unwrap();
+        assert_eq!(last.state, crate::workflows::RunState::Completed);
+    }
+
+    #[test]
+    fn spoken_variants_find_the_workflow_and_unknown_phrases_do_not() {
+        let r = rig();
+        assert!(r.s.plan("coding setup", Mode::Actions).is_ok());
+        r.s.cancel();
+        assert!(
+            r.s.plan("run the start coding workflow", Mode::Actions)
+                .is_ok()
+        );
+        r.s.cancel();
+        let err = r.s.plan("start gaming", Mode::Actions).unwrap_err();
+        assert!(err.starts_with("Not understood"), "{err}");
+    }
+
+    #[test]
+    fn missing_apps_are_reported_before_anything_starts() {
+        let r = rig_with(None, |f| {
+            f.w.lock().unwrap().installed.remove("firefox");
+        });
+        let err = r.s.plan("start coding", Mode::Actions).unwrap_err();
+        assert!(
+            err.contains("nothing was started") && err.contains("firefox"),
+            "{err}"
+        );
+        assert_eq!(r.s.snapshot(0).phase, Phase::Idle);
+        assert!(r.host.log().is_empty());
+    }
+
+    #[test]
+    fn a_failed_run_says_which_steps_worked_and_which_did_not() {
+        let r = rig_with(None, |f| {
+            f.w.lock().unwrap().never_appears.insert("terminal");
+        });
+        let t = r.s.plan("start coding", Mode::Actions).unwrap();
+        r.s.approve(t.id).unwrap();
+        let done = wait_for(&r.s, |x| x.phase == Phase::Failed);
+        let task = done.task.unwrap();
+        let states: Vec<&str> = task.steps.iter().map(|s| s.status.as_str()).collect();
+        assert_eq!(states, vec!["done", "failed", "pending", "pending"]);
+        assert!(
+            task.steps[1].detail.contains("appeared"),
+            "{}",
+            task.steps[1].detail
+        );
+        let error = task.error.unwrap();
+        assert!(
+            error.contains("failed at \"terminal\"") && error.contains("1 done"),
+            "{error}"
+        );
+        assert!(!error.to_lowercase().contains("completed"));
+    }
+
+    #[test]
+    fn stop_cancels_a_run_that_is_waiting() {
+        let r = rig_with(None, |f| {
+            f.w.lock().unwrap().never_appears.insert("vscode");
+        });
+        let mut wf = r.s.workflow_store().get("coding").unwrap();
+        wf.steps[0].timeout_secs = Some(100);
+        r.s.workflow_store().save(&wf).unwrap();
+        let t = r.s.plan("start coding", Mode::Actions).unwrap();
+        r.s.approve(t.id).unwrap();
+        wait_for(&r.s, |x| x.events.iter().any(|e| e.kind == "action"));
+        let started = Instant::now();
+        r.s.cancel();
+        let done = wait_for(&r.s, |x| x.phase == Phase::Cancelled);
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(
+            done.task
+                .unwrap()
+                .summary
+                .unwrap()
+                .contains("stopped after")
+        );
+    }
+
+    #[test]
+    fn trusted_actions_start_plain_workflows_but_never_opencode_ones() {
+        let r = rig_with(Some(PathBuf::from("/bin/true")), |_| {});
+        r.s.set_trust_actions(true);
+        r.s.plan("start coding", Mode::Actions).unwrap();
+        wait_for(&r.s, |x| x.phase == Phase::Completed);
+        let mut agent = r.s.workflow_store().get("coding").unwrap();
+        agent.id = "agent".into();
+        agent.name = "Agent run".into();
+        agent.triggers = vec!["start the agent".into()];
+        agent.steps = vec![crate::workflows::Step {
+            id: "oc".into(),
+            action: StepAction::OpencodeTask {
+                goal: "add tests".into(),
+                directory: "~/projects/my-project".into(),
+            },
+            requires: vec![],
+            timeout_secs: None,
+            on_failure: crate::workflows::model::OnFailure::Stop,
+        }];
+        r.s.workflow_store().save(&agent).unwrap();
+        let t = r.s.plan("start the agent", Mode::Actions).unwrap();
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(r.s.snapshot(0).phase, Phase::AwaitingApproval, "{t:?}");
+        assert!(t.steps[0].risk.contains("modify files"));
+    }
+
+    #[test]
+    fn opencode_steps_need_opencode_installed() {
+        let r = rig();
+        let mut agent = r.s.workflow_store().get("coding").unwrap();
+        agent.id = "agent".into();
+        agent.triggers = vec!["start the agent".into()];
+        agent.steps = vec![crate::workflows::Step {
+            id: "oc".into(),
+            action: StepAction::OpencodeTask {
+                goal: "x".into(),
+                directory: "~/projects/my-project".into(),
+            },
+            requires: vec![],
+            timeout_secs: None,
+            on_failure: crate::workflows::model::OnFailure::Stop,
+        }];
+        r.s.workflow_store().save(&agent).unwrap();
+        let err = r.s.plan("start the agent", Mode::Actions).unwrap_err();
+        assert!(err.contains("OpenCode CLI not found"), "{err}");
+    }
+
+    #[test]
+    fn undo_the_workflow_puts_windows_back_and_is_distinct_from_undo_that() {
+        let r = rig();
+        let t = r.s.plan("start coding", Mode::Actions).unwrap();
+        r.s.approve(t.id).unwrap();
+        wait_for(&r.s, |x| x.phase == Phase::Completed);
+        assert!(!r.host.windows_now().is_empty());
+        let done = r.s.plan("X, undo the workflow", Mode::Actions).unwrap();
+        assert_eq!(done.phase, Phase::Completed);
+        assert!(
+            r.host.windows_now().is_empty(),
+            "the windows the run opened were closed"
+        );
+        assert!(
+            r.s.plan("undo the workflow", Mode::Actions).is_err(),
+            "only once"
+        );
+    }
+
+    #[test]
+    fn a_second_workflow_cannot_start_while_one_waits_or_runs() {
+        let r = rig();
+        r.s.plan("start coding", Mode::Actions).unwrap();
+        let err = r.s.plan("coding setup", Mode::Actions).unwrap_err();
+        assert!(err.starts_with("Busy"), "{err}");
+    }
+
+    #[test]
+    fn built_in_commands_win_over_hand_edited_triggers() {
+        let r = rig();
+        let mut sneaky = r.s.workflow_store().get("coding").unwrap();
+        sneaky.id = "sneaky".into();
+        sneaky.name = "Sneaky".into();
+        sneaky.triggers = vec!["open firefox".into()];
+        std::fs::write(
+            r.home.path().join("data/workflows/sneaky.json"),
+            serde_json::to_vec(&sneaky).unwrap(),
+        )
+        .unwrap();
+        let t = r.s.plan("open firefox", Mode::Actions).unwrap();
+        assert!(t.steps[0].title.contains("Open firefox"), "{:?}", t.steps);
+        assert_eq!(t.steps.len(), 1, "the built-in action, not the workflow");
+        let _ = &r.l;
+    }
+
+    #[test]
+    fn shared_trigger_phrases_run_nothing_and_ask_for_a_fix() {
+        let r = rig();
+        let mut other = r.s.workflow_store().get("coding").unwrap();
+        other.id = "study".into();
+        other.name = "Study".into();
+        std::fs::write(
+            r.home.path().join("data/workflows/study.json"),
+            serde_json::to_vec(&other).unwrap(),
+        )
+        .unwrap();
+        let err = r.s.plan("start coding", Mode::Actions).unwrap_err();
+        assert!(
+            err.contains("belongs to several workflows") && err.contains("Study"),
+            "{err}"
+        );
+        assert_eq!(r.s.snapshot(0).phase, Phase::Idle);
+        assert!(r.host.log().is_empty());
+    }
+
+    #[test]
+    fn edit_and_context_commands_are_not_shadowed_by_workflows() {
+        let r = rig();
+        for said in ["make that shorter", "scratch that"] {
+            let err = r.s.plan(said, Mode::Actions).unwrap_err();
+            assert!(!err.starts_with("Not understood"), "{said}: {err}");
+        }
+    }
+}

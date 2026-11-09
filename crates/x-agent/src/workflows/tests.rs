@@ -33,32 +33,32 @@ fn class_of(app: &str) -> &'static str {
     }
 }
 
-struct World {
-    wins: Vec<WinInfo>,
+pub(crate) struct World {
+    pub(crate) wins: Vec<WinInfo>,
     /// Windows that appear after this many polls of the window list.
-    arriving: Vec<(usize, WinInfo)>,
-    focus: Option<String>,
-    ws: i64,
-    installed: HashSet<&'static str>,
-    caps: Vec<Cap>,
-    never_appears: HashSet<&'static str>,
-    refuse_moves: bool,
-    launch_fails: HashSet<&'static str>,
-    log: Vec<String>,
-    next: u32,
-    startup_polls: usize,
+    pub(crate) arriving: Vec<(usize, WinInfo)>,
+    pub(crate) focus: Option<String>,
+    pub(crate) ws: i64,
+    pub(crate) installed: HashSet<&'static str>,
+    pub(crate) caps: Vec<Cap>,
+    pub(crate) never_appears: HashSet<&'static str>,
+    pub(crate) refuse_moves: bool,
+    pub(crate) launch_fails: HashSet<&'static str>,
+    pub(crate) log: Vec<String>,
+    pub(crate) next: u32,
+    pub(crate) startup_polls: usize,
 }
 
-struct Fake {
-    w: Mutex<World>,
-    cancel_after_launches: Option<usize>,
-    deny_permit: bool,
-    launches: AtomicUsize,
-    opencode_result: Result<String, String>,
+pub(crate) struct Fake {
+    pub(crate) w: Mutex<World>,
+    pub(crate) cancel_after_launches: Option<usize>,
+    pub(crate) deny_permit: bool,
+    pub(crate) launches: AtomicUsize,
+    pub(crate) opencode_result: Result<String, String>,
 }
 
 impl Fake {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             w: Mutex::new(World {
                 wins: vec![],
@@ -87,11 +87,11 @@ impl Fake {
         }
     }
 
-    fn log(&self) -> Vec<String> {
+    pub(crate) fn log(&self) -> Vec<String> {
         self.w.lock().unwrap().log.clone()
     }
 
-    fn windows_now(&self) -> Vec<WinInfo> {
+    pub(crate) fn windows_now(&self) -> Vec<WinInfo> {
         self.w.lock().unwrap().wins.clone()
     }
 
@@ -237,7 +237,7 @@ fn open(app: &str, ws: Option<u8>) -> StepAction {
     }
 }
 
-fn coding(home: &Path) -> Workflow {
+pub(crate) fn coding(home: &Path) -> Workflow {
     std::fs::create_dir_all(home.join("projects/my-project")).unwrap();
     Workflow {
         id: "coding".into(),
@@ -264,7 +264,7 @@ fn coding(home: &Path) -> Workflow {
     }
 }
 
-fn home() -> tempfile::TempDir {
+pub(crate) fn home() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
 

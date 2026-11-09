@@ -265,6 +265,29 @@ impl Controller {
         self.focus(&win, before).map(drop)
     }
 
+    fn exact(&mut self, id: &str, pid: u32, class: &str) -> Result<WinInfo, WmError> {
+        self.backend
+            .windows()?
+            .into_iter()
+            .find(|w| w.id == id && w.pid == pid && w.class == class)
+            .ok_or_else(|| WmError::NotFound("The window is gone".into()))
+    }
+
+    /// Moves exactly this window to workspace `ws`, verified.
+    pub fn move_exact(&mut self, id: &str, pid: u32, class: &str, ws: i64) -> Result<(), WmError> {
+        if !WORKSPACES.contains(&ws) {
+            return Err(WmError::NotFound("Workspace must be 1-10".into()));
+        }
+        let win = self.exact(id, pid, class)?;
+        self.move_to(&win, ws).map(drop)
+    }
+
+    /// Politely closes exactly this window.
+    pub fn close_exact(&mut self, id: &str, pid: u32, class: &str) -> Result<(), WmError> {
+        let win = self.exact(id, pid, class)?;
+        self.close(&win).map(drop)
+    }
+
     pub fn run(&mut self, req: &Request) -> Result<Outcome, WmError> {
         let all = self.backend.windows()?;
         let focused = self.focused_in(&all)?;
@@ -677,6 +700,14 @@ pub fn run(req: &Request) -> Result<Outcome, WmError> {
 
 pub fn focus_exact(id: &str, pid: u32, class: &str) -> Result<(), WmError> {
     with_controller(|c| c.focus_exact(id, pid, class))
+}
+
+pub fn move_exact(id: &str, pid: u32, class: &str, ws: i64) -> Result<(), WmError> {
+    with_controller(|c| c.move_exact(id, pid, class, ws))
+}
+
+pub fn close_exact(id: &str, pid: u32, class: &str) -> Result<(), WmError> {
+    with_controller(|c| c.close_exact(id, pid, class))
 }
 
 /// The desktop as it is right now (one fresh read, nothing cached).

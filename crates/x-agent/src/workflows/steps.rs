@@ -317,7 +317,7 @@ fn run_phrase(phrase: &str, host: &dyn Host) -> StepResult {
 }
 
 /// Everything that can be known before the first launch. Returns the problems found.
-pub(super) fn preflight(wf: &Workflow, host: &dyn Host, cfg: &Config) -> Vec<String> {
+pub fn preflight(wf: &Workflow, host: &dyn Host, cfg: &Config) -> Vec<String> {
     let mut problems = Vec::new();
     let mut opens: Vec<&str> = Vec::new(); // apps an earlier step brings up
     for step in &wf.steps {

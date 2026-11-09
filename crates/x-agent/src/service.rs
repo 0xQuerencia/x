@@ -17,6 +17,7 @@ use crate::phase::Phase;
 use crate::tools::{self, Action};
 
 mod edit;
+mod workflow;
 pub use edit::Preview;
 
 pub const MAX_INPUT: usize = 1500;
@@ -45,6 +46,9 @@ pub struct Step {
     /// pending | running | launched | done | failed
     pub status: String,
     pub risk: String,
+    /// What happened, once it has: shown when a workflow step fails or cannot be verified.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -151,6 +155,10 @@ struct State {
     guard: Option<Guard>,
     /// The private working state of a pending text edit; never serialized.
     edit: Option<edit::Job>,
+    /// The saved workflow waiting to run, or running.
+    workflow: Option<crate::workflows::Workflow>,
+    /// How to put back the last workflow run's changes.
+    undo: Vec<crate::workflows::engine::Reversal>,
 }
 
 struct Guard {
@@ -169,6 +177,8 @@ pub struct Service {
     desktop: Arc<Mutex<Arc<dyn crate::desktop::Desktop>>>,
     context: Arc<Mutex<Arc<Engine>>>,
     editor: Arc<crate::edit::Editor>,
+    workflow_dirs: Arc<Mutex<Option<(PathBuf, PathBuf)>>>,
+    machine: Arc<Mutex<Arc<dyn crate::workflows::Host>>>,
 }
 
 fn now() -> u64 {
@@ -198,6 +208,8 @@ impl Service {
             computer_remote: false,
             guard: None,
             edit: None,
+            workflow: None,
+            undo: vec![],
             voice_mode: Mode::Actions,
             workspace: None,
         };
@@ -211,6 +223,8 @@ impl Service {
             desktop: Arc::new(Mutex::new(Arc::new(crate::desktop::AgentDesktop::detect()))),
             context: Arc::new(Mutex::new(Arc::new(Engine::system()))),
             editor: Arc::new(crate::edit::Editor::default()),
+            workflow_dirs: Arc::new(Mutex::new(None)),
+            machine: Arc::new(Mutex::new(Arc::new(crate::workflows::system::SystemHost))),
         }
     }
 
@@ -414,6 +428,16 @@ impl Service {
                 }
             }
         }
+        if mode == Mode::Actions && workflow::is_undo_phrase(text) {
+            self.begin_instant(text.trim())?;
+            return self.end_instant(self.undo_workflow_inner());
+        }
+        if mode == Mode::Actions
+            && tools::plan_rules(text).is_none()
+            && let Some(found) = self.match_workflow(text)
+        {
+            return self.plan_workflow(text.trim(), found?);
+        }
         let mut preset = None;
         if mode == Mode::Actions {
             preset = tools::plan_rules(text);
@@ -508,6 +532,7 @@ impl Service {
         s.grants.clear();
         s.guard = None;
         s.edit = None;
+        s.workflow = None;
         let (steps, actions, workspace) = match mode {
             Mode::Actions => {
                 let actions = preset.or_else(|| tools::plan_rules(text)).ok_or(
@@ -522,6 +547,7 @@ impl Service {
                         } else {
                             "launches an app".into()
                         },
+                        detail: String::new(),
                     })
                     .collect();
                 (steps, actions, None)
@@ -543,6 +569,7 @@ impl Service {
                     title: t.into(),
                     status: "pending".into(),
                     risk: risk.into(),
+                    detail: String::new(),
                 };
                 let steps = vec![
                     step(
@@ -602,10 +629,14 @@ impl Service {
             emit(&mut s, "approval", &format!("approved task {task_id}"));
             (s.task.clone().ok_or("no task")?, s.actions.clone())
         };
-        let is_edit = self.lock().edit.is_some();
+        let (is_edit, is_workflow) = {
+            let s = self.lock();
+            (s.edit.is_some(), s.workflow.is_some())
+        };
         let me = self.clone();
         thread::spawn(move || match task.mode {
             Mode::Actions if is_edit => me.run_edit(&task),
+            Mode::Actions if is_workflow => me.run_workflow(),
             Mode::Actions => me.run_actions(&actions),
             Mode::Work => me.run_work(&task),
         });
@@ -868,6 +899,7 @@ impl Service {
             t.edit = None;
         }
         s.edit = None;
+        s.workflow = None;
         set_phase(&mut s, phase);
         if let Some(e) = error {
             let seen = s
@@ -891,6 +923,7 @@ impl Service {
                 let id = s.task.as_ref().map(|task| task.id).unwrap_or_default();
                 set_phase(&mut s, Phase::Cancelled);
                 s.edit = None; // a discarded proposal never lingers in memory
+                s.workflow = None;
                 if let Some(t) = s.task.as_mut() {
                     t.edit = None;
                 }

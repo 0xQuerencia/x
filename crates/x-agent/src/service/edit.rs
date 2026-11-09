@@ -135,7 +135,7 @@ impl Service {
     }
 
     /// Idle -> planning -> completed/failed, so a quick edit is a real task the UI can show.
-    fn begin_instant(&self, text: &str) -> Result<(), String> {
+    pub(super) fn begin_instant(&self, text: &str) -> Result<(), String> {
         let mut s = self.lock();
         if s.phase.is_busy() {
             return Err(busy(s.phase));
@@ -151,7 +151,7 @@ impl Service {
         Ok(())
     }
 
-    fn end_instant(&self, result: Result<String, String>) -> Result<Task, String> {
+    pub(super) fn end_instant(&self, result: Result<String, String>) -> Result<Task, String> {
         let mut s = self.lock();
         let (phase, error, summary) = match result {
             Ok(m) => (Phase::Completed, None, Some(m)),
@@ -495,15 +495,16 @@ impl Service {
     }
 }
 
-fn step(title: &str, risk: &str) -> Step {
+pub(super) fn step(title: &str, risk: &str) -> Step {
     Step {
         title: title.into(),
         status: "pending".into(),
         risk: risk.into(),
+        detail: String::new(),
     }
 }
 
-fn task(id: u64, text: &str, steps: Vec<Step>, edit: Option<Preview>) -> Task {
+pub(super) fn task(id: u64, text: &str, steps: Vec<Step>, edit: Option<Preview>) -> Task {
     Task {
         id,
         mode: Mode::Actions,

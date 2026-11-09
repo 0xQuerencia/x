@@ -7,11 +7,13 @@ pub mod model;
 pub mod paths;
 mod steps;
 pub mod store;
+pub mod system;
 
 pub use engine::{Config, Host, Outcome, Report, RunState, StepStatus, run, undo};
 pub use model::{Problem, Step, StepAction, Workflow};
+pub use steps::preflight;
 pub(crate) use steps::status_word;
 pub use store::{Match, Store};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
