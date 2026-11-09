@@ -128,6 +128,17 @@ pub enum Action {
     Copy {
         text: String,
     },
+    /// A terminal that starts in a folder. Only saved workflows make this; a model's plan
+    /// can never contain it.
+    #[serde(skip_deserializing)]
+    Terminal {
+        directory: String,
+    },
+    /// A folder shown in the file manager. Workflows only.
+    #[serde(skip_deserializing)]
+    Folder {
+        directory: String,
+    },
     /// Operates one app's window by reading its accessibility tree: click, type, navigate,
     /// verify. It must be the only step and always needs the person's scoped permission.
     Computer {
@@ -156,6 +167,8 @@ impl Action {
             Self::App { target } => format!("Open {target}"),
             Self::Type { text } => format!("Type \"{text}\" into the focused window"),
             Self::Opencode => "Open OpenCode in a new temporary folder".to_string(),
+            Self::Terminal { directory } => format!("Open a terminal in {directory}"),
+            Self::Folder { directory } => format!("Open folder {directory}"),
             Self::Copy { text } => {
                 format!(
                     "Copy {} selected characters to the clipboard",
@@ -194,6 +207,9 @@ impl Action {
             }
             Self::Opencode => {}
             Self::Copy { text } => crate::clipboard::validate(text)?,
+            Self::Terminal { directory } | Self::Folder { directory } => {
+                crate::workflows::paths::check(directory, &crate::workflows::paths::home()?)?;
+            }
             Self::Focus { target } => {
                 lookup(APPS, target).ok_or("Unapproved app")?;
             }
@@ -290,6 +306,10 @@ impl Action {
             ]),
             Self::Window { .. } => Err("Window commands run through the window controller".into()),
             Self::Copy { .. } => Err("Copy runs through the clipboard helper".into()),
+            Self::Terminal { directory } => {
+                terminal_argv(std::path::Path::new(directory), None, resolve)
+            }
+            Self::Folder { directory } => Ok(vec![exe_for("files", resolve)?, directory.clone()]),
             Self::Session { .. } => Err("A session runs as Work, not as an Action".into()),
             Self::Computer { .. } => Err("Computer steps run through the observe loop".into()),
             Self::Opencode => opencode_argv(&session_dir("opencode"), resolve),
@@ -315,7 +335,12 @@ impl Action {
     pub fn launches_window(&self) -> bool {
         matches!(
             self,
-            Self::App { .. } | Self::Url { .. } | Self::Search { .. } | Self::Opencode
+            Self::App { .. }
+                | Self::Url { .. }
+                | Self::Search { .. }
+                | Self::Opencode
+                | Self::Terminal { .. }
+                | Self::Folder { .. }
         )
     }
 
@@ -412,8 +437,36 @@ fn session_dir(prefix: &str) -> std::path::PathBuf {
         .join(format!("{prefix}-{secs}"))
 }
 
-/// A terminal that starts in `dir` running OpenCode. The terminals listed here are the
-/// ones whose "start in this folder" flag is known; any other is refused, not guessed.
+/// A terminal that starts in `dir`, optionally running one program. The terminals listed
+/// here are the ones whose "start in this folder" flag is known; any other is refused,
+/// not guessed.
+fn terminal_argv(
+    dir: &std::path::Path,
+    run: Option<String>,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Result<Vec<String>, String> {
+    let terminal = exe_for("terminal", resolve)?;
+    let dir = dir.display().to_string();
+    let name = std::path::Path::new(&terminal)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    let mut argv = vec![terminal.clone()];
+    match (name, run) {
+        ("kitty", run) => argv.extend(["--directory".into(), dir].into_iter().chain(run)),
+        ("foot", run) => argv.extend(["--working-directory".into(), dir].into_iter().chain(run)),
+        ("alacritty", run) => {
+            argv.extend(["--working-directory".into(), dir]);
+            if let Some(run) = run {
+                argv.extend(["-e".into(), run]);
+            }
+        }
+        (other, _) => return Err(format!("X does not know how to start {other} in a folder")),
+    }
+    Ok(argv)
+}
+
+/// A terminal that starts in `dir` running OpenCode.
 fn opencode_argv(
     dir: &std::path::Path,
     resolve: &dyn Fn(&str) -> Option<String>,
@@ -426,20 +479,7 @@ fn opencode_argv(
                 .map(|p| p.display().to_string())
         })
         .ok_or("OpenCode not found")?;
-    let terminal = exe_for("terminal", resolve)?;
-    let dir = dir.display().to_string();
-    let name = std::path::Path::new(&terminal)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-    let mut argv = vec![terminal.clone()];
-    match name {
-        "kitty" => argv.extend(["--directory".into(), dir, opencode]),
-        "foot" => argv.extend(["--working-directory".into(), dir, opencode]),
-        "alacritty" => argv.extend(["--working-directory".into(), dir, "-e".into(), opencode]),
-        other => return Err(format!("X does not know how to start {other} in a folder")),
-    }
-    Ok(argv)
+    terminal_argv(dir, Some(opencode), resolve)
 }
 
 /// "open an OpenCode session": the person wants OpenCode itself, with no task named.
