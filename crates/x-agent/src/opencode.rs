@@ -6,7 +6,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -308,7 +311,7 @@ impl Canceller {
     /// SIGTERM the whole process group; the supervisor escalates to SIGKILL.
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::SeqCst);
-        signal_group(self.pgid.load(Ordering::SeqCst), libc::SIGTERM);
+        signal_group(self.pgid.load(Ordering::SeqCst), Signal::Term);
     }
 }
 
@@ -317,16 +320,20 @@ impl Run {
         let before = change_snapshot(&cfg.workspace);
         let args = cfg.args();
         let mut child = crate::retry_busy(|| {
-            Command::new(&cfg.exe)
-                .args(&args)
+            let mut cmd = Command::new(&cfg.exe);
+            cmd.args(&args)
                 .current_dir(&cfg.workspace)
                 .env("PWD", &cfg.workspace)
                 .env("OPENCODE_CONFIG_CONTENT", cfg.policy())
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .process_group(0)
-                .spawn()
+                .stderr(Stdio::piped());
+            // Its own process group, so Stop reaches everything OpenCode started.
+            #[cfg(unix)]
+            cmd.process_group(0);
+            #[cfg(windows)]
+            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+            cmd.spawn()
         })
         .map_err(|e| format!("could not start {}: {e}", cfg.exe.display()))?;
         let pgid = Arc::new(AtomicI32::new(child.id() as i32));
@@ -359,25 +366,57 @@ impl Run {
     }
 }
 
-fn signal_group(pgid: i32, sig: i32) {
+#[cfg(windows)]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+/// A polite stop first, then a forced one.
+#[derive(Clone, Copy)]
+enum Signal {
+    Term,
+    Kill,
+}
+
+#[cfg(unix)]
+fn signal_group(pgid: i32, sig: Signal) {
     if pgid > 0 {
+        let sig = match sig {
+            Signal::Term => libc::SIGTERM,
+            Signal::Kill => libc::SIGKILL,
+        };
         // SAFETY: plain syscall on a process group we created with process_group(0).
         unsafe { libc::killpg(pgid, sig) };
     }
 }
 
+/// Windows has no process-group signals; `taskkill /T` ends the whole process tree.
+#[cfg(windows)]
+fn signal_group(pgid: i32, sig: Signal) {
+    if pgid > 0 {
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pgid.to_string(), "/T"]);
+        if matches!(sig, Signal::Kill) {
+            cmd.arg("/F");
+        }
+        let _ = cmd
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 fn terminate(child: &mut Child) {
     let pgid = child.id() as i32;
-    signal_group(pgid, libc::SIGTERM);
+    signal_group(pgid, Signal::Term);
     let deadline = Instant::now() + KILL_GRACE;
     while Instant::now() < deadline {
         if matches!(child.try_wait(), Ok(Some(_))) {
-            signal_group(pgid, libc::SIGKILL); // reap any stragglers in the group
+            signal_group(pgid, Signal::Kill); // reap any stragglers in the group
             return;
         }
         thread::sleep(Duration::from_millis(50));
     }
-    signal_group(pgid, libc::SIGKILL);
+    signal_group(pgid, Signal::Kill);
     let _ = child.wait();
 }
 
@@ -504,5 +543,5 @@ fn wait_with_grace(child: &mut Child) -> Option<std::process::ExitStatus> {
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

@@ -206,10 +206,11 @@ impl DictationOutput {
             return Err(eyre!("text replacements produced empty output"));
         }
         let printed = paster.is_none();
-        if let Some(paster) = paster {
-            if !crate::agent_host::intercept(&processed.text) {
-                paster.paste(&processed.text)?;
-            }
+        if let Some(paster) = paster
+            && !crate::agent_host::intercept(&processed.text)
+        {
+            paster.paste(&processed.text)?;
+            crate::agent_host::record_insertion(&processed.text);
         }
         if let Some(history) = &self.history {
             let mut draft = crate::dictation::modes::history_draft(
@@ -267,6 +268,8 @@ pub(crate) fn run(
     let mut engine = Arc::new(TranscriptionEngine::start(transcriber)?);
     // The local API transcribes host audio on this engine's model.
     engine.share();
+    // Starts the opt-in hands-free wake listener (a no-op until `hex agent listen on`).
+    crate::agent_host::wake::start();
     // Drop audio/hotkeys and close the job queue before joining slow output on
     // every exit, including failures during startup or recording.
     let mut output = OutputWorker {

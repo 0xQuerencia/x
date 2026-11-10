@@ -149,5 +149,5 @@ impl Stt for HexCli {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

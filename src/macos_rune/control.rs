@@ -345,6 +345,12 @@ impl Pump {
             ControlCommand::VocabularyAdd { .. } | ControlCommand::VocabularyRemove { .. } => {
                 Some(reply_with(self.edit_vocabulary(&command)))
             }
+            // X's desktop control (context, voice edits, workflows) reads windows through
+            // Hyprland and AT-SPI. There is no macOS backend yet, so say so.
+            ControlCommand::Agent { .. } => Some(ControlReply::error(
+                "unsupported",
+                "X agent features are not available on macOS yet",
+            )),
         }
     }
 

@@ -373,6 +373,15 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Hands-free wake word, off by default: `on` keeps the microphone open and runs any
+    /// speech that starts with a wake word ("Friday, start coding") as an X command. Other
+    /// speech is dropped, never typed, stored or sent. `off` closes the microphone again.
+    Listen {
+        #[arg(value_parser = ["on", "off", "status"])]
+        mode: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// Rerun the last Work goal with command number `index` (from `status`, 0 first) that
     /// OpenCode was refused allowed for that one run. The rerun still asks for approval.
     Allow {
@@ -382,6 +391,24 @@ pub enum AgentCommand {
     },
     /// Which window-control backend this desktop has and what it can do.
     Desktop {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Saved desktop workflows, run by trigger phrase or by id. `list` shows them with their
+    /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
+    /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
+    Workflow {
+        #[arg(value_parser = ["list", "show", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
+        command: String,
+        /// A workflow id, or a file path for import.
+        #[arg(default_value = "")]
+        value: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// What X can see right now: the focused window and whether text is selected. The
+    /// selected text itself is never printed.
+    Context {
         #[command(flatten)]
         output: Output,
     },
@@ -589,6 +616,12 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
+                AgentCommand::Context { output } => (AgentAction::Context, output),
+                AgentCommand::Workflow {
+                    command,
+                    value,
+                    output,
+                } => (AgentAction::Workflow { command, value }, output),
                 AgentCommand::Wake {
                     command,
                     value,
@@ -602,6 +635,7 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Planner { model, output } => (AgentAction::Planner { model }, output),
                 AgentCommand::Allow { index, output } => (AgentAction::Allow { index }, output),
                 AgentCommand::Voice { mode, output } => (AgentAction::Voice { mode }, output),
+                AgentCommand::Listen { mode, output } => (AgentAction::Listen { mode }, output),
                 AgentCommand::Trust { state, output } => {
                     (AgentAction::Trust { on: state == "on" }, output)
                 }

@@ -10,10 +10,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use crate::context::{self, Context, Engine};
 use crate::hexcli::{Stt, SttError};
 use crate::opencode::{self, Canceller, Run, RunConfig, RunStatus};
 use crate::phase::Phase;
 use crate::tools::{self, Action};
+
+mod edit;
+mod workflow;
+pub use edit::Preview;
 
 pub const MAX_INPUT: usize = 1500;
 const MAX_EVENTS: usize = 400;
@@ -41,6 +46,9 @@ pub struct Step {
     /// pending | running | launched | done | failed
     pub status: String,
     pub risk: String,
+    /// What happened, once it has: shown when a workflow step fails or cannot be verified.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -56,6 +64,9 @@ pub struct Task {
     pub workspace: Option<String>,
     /// Commands OpenCode asked to run that X refused; each can be allowed for one rerun.
     pub blocked: Vec<String>,
+    /// A text edit waiting for review: the proposal, not yet applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit: Option<Preview>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -140,6 +151,19 @@ struct State {
     grants: Vec<String>,
     computer_apps: Vec<String>,
     computer_remote: bool,
+    /// The snapshot a contextual plan was resolved from, rechecked just before it runs.
+    guard: Option<Guard>,
+    /// The private working state of a pending text edit; never serialized.
+    edit: Option<edit::Job>,
+    /// The saved workflow waiting to run, or running.
+    workflow: Option<crate::workflows::Workflow>,
+    /// How to put back the last workflow run's changes.
+    undo: Vec<crate::workflows::engine::Reversal>,
+}
+
+struct Guard {
+    ctx: Context,
+    strict_focus: bool,
 }
 
 #[derive(Clone)]
@@ -151,6 +175,10 @@ pub struct Service {
     planner: Arc<Mutex<Option<Arc<dyn Planner>>>>,
     session_root: Arc<Mutex<Option<PathBuf>>>,
     desktop: Arc<Mutex<Arc<dyn crate::desktop::Desktop>>>,
+    context: Arc<Mutex<Arc<Engine>>>,
+    editor: Arc<crate::edit::Editor>,
+    workflow_dirs: Arc<Mutex<Option<(PathBuf, PathBuf)>>>,
+    machine: Arc<Mutex<Arc<dyn crate::workflows::Host>>>,
 }
 
 fn now() -> u64 {
@@ -178,6 +206,10 @@ impl Service {
             grants: vec![],
             computer_apps: vec![],
             computer_remote: false,
+            guard: None,
+            edit: None,
+            workflow: None,
+            undo: vec![],
             voice_mode: Mode::Actions,
             workspace: None,
         };
@@ -189,6 +221,10 @@ impl Service {
             planner: Arc::new(Mutex::new(None)),
             session_root: Arc::new(Mutex::new(None)),
             desktop: Arc::new(Mutex::new(Arc::new(crate::desktop::AgentDesktop::detect()))),
+            context: Arc::new(Mutex::new(Arc::new(Engine::system()))),
+            editor: Arc::new(crate::edit::Editor::default()),
+            workflow_dirs: Arc::new(Mutex::new(None)),
+            machine: Arc::new(Mutex::new(Arc::new(crate::workflows::system::SystemHost))),
         }
     }
 
@@ -260,6 +296,59 @@ impl Service {
         }
     }
 
+    pub fn set_context(&self, engine: Arc<Engine>) {
+        if let Ok(mut slot) = self.context.lock() {
+            *slot = engine;
+        }
+    }
+
+    pub fn context_engine(&self) -> Arc<Engine> {
+        self.context
+            .lock()
+            .map_or_else(|p| p.into_inner().clone(), |e| e.clone())
+    }
+
+    /// "search this on GitHub": resolve the reference against what is on screen right
+    /// now, then plan the resulting action like any other. The plan shows the exact text
+    /// that will be used, so approving it is approving that text.
+    fn plan_contextual(
+        &self,
+        text: &str,
+        cmd: &context::commands::Command,
+    ) -> Result<Task, String> {
+        {
+            let s = self.lock();
+            if s.phase.is_busy() {
+                return Err(busy(s.phase));
+            }
+        }
+        let engine = self.context_engine();
+        let ctx = engine.capture(cmd.needs_selection());
+        for note in &ctx.notes {
+            self.emit("info", note);
+        }
+        let resolved = context::commands::resolve(cmd, &ctx).map_err(|e| e.to_string())?;
+        for note in &resolved.notes {
+            self.emit("info", note);
+        }
+        // Text from the primary selection can be stale or from another window, so it is
+        // always shown for approval, even with Trusted Actions on.
+        let from_primary = ctx.selection.source == context::Source::PrimarySelection;
+        let task = self.plan_task(text, Mode::Actions, Some(resolved.actions))?;
+        self.lock().guard = Some(Guard {
+            ctx,
+            strict_focus: false,
+        });
+        if self.lock().trust_actions && !from_primary {
+            self.emit("info", "Trusted Actions: running without a prompt");
+            if let Some(g) = self.lock().guard.as_mut() {
+                g.strict_focus = true; // no prompt in between, so focus must not have moved
+            }
+            self.approve(task.id)?;
+        }
+        Ok(task)
+    }
+
     /// Apps the person lets X read and operate. Anything else asks first, every time.
     pub fn set_computer_apps(&self, apps: Vec<String>) {
         self.lock().computer_apps = apps;
@@ -299,7 +388,10 @@ impl Service {
 
     /// True when this request would go to the model (the rules do not know it).
     pub fn needs_model(&self, text: &str) -> bool {
-        tools::plan_rules(text).is_none() && self.planner.lock().is_ok_and(|p| p.is_some())
+        let spoken_edit =
+            self.is_edit_command(text) || context::commands::parse_utterance(text).is_some();
+        spoken_edit
+            || tools::plan_rules(text).is_none() && self.planner.lock().is_ok_and(|p| p.is_some())
     }
 
     pub fn plan(&self, text: &str, mode: Mode) -> Result<Task, String> {
@@ -313,6 +405,42 @@ impl Service {
     }
 
     fn plan_with(&self, text: &str, mode: Mode, smart: bool) -> Result<Task, String> {
+        if mode == Mode::Actions {
+            if let Some(cmd) = context::commands::parse_utterance(text) {
+                if cmd == context::commands::Command::Explain {
+                    use crate::edit::commands::{Command, Scope, Transform};
+                    let explain = Command::Transform(Transform::Explain, Scope::Selection);
+                    return self.plan_edit(text.trim(), explain);
+                }
+                return self.plan_contextual(text.trim(), &cmd);
+            }
+            if let Some(cmd) = crate::edit::commands::parse(&tools::strip_wake_word(text)) {
+                use crate::edit::commands::Command;
+                let reply = matches!(
+                    cmd,
+                    Command::Accept | Command::Retry | Command::Cancel | Command::SendToModel
+                );
+                let waiting = {
+                    let s = self.lock();
+                    s.phase == Phase::AwaitingApproval && s.edit.is_some()
+                };
+                // Answers like "retry" only mean something while a preview waits;
+                // otherwise they are ordinary speech.
+                if !reply || waiting {
+                    return self.plan_edit(text.trim(), cmd);
+                }
+            }
+        }
+        if mode == Mode::Actions && workflow::is_undo_phrase(text) {
+            self.begin_instant(text.trim())?;
+            return self.end_instant(self.undo_workflow_inner());
+        }
+        if mode == Mode::Actions
+            && tools::plan_rules(text).is_none()
+            && let Some(found) = self.match_workflow(text)
+        {
+            return self.plan_workflow(text.trim(), found?);
+        }
         let mut preset = None;
         if mode == Mode::Actions {
             preset = tools::plan_rules(text);
@@ -405,6 +533,9 @@ impl Service {
             return Err(busy(s.phase));
         }
         s.grants.clear();
+        s.guard = None;
+        s.edit = None;
+        s.workflow = None;
         let (steps, actions, workspace) = match mode {
             Mode::Actions => {
                 let actions = preset.or_else(|| tools::plan_rules(text)).ok_or(
@@ -419,6 +550,7 @@ impl Service {
                         } else {
                             "launches an app".into()
                         },
+                        detail: String::new(),
                     })
                     .collect();
                 (steps, actions, None)
@@ -440,6 +572,7 @@ impl Service {
                     title: t.into(),
                     status: "pending".into(),
                     risk: risk.into(),
+                    detail: String::new(),
                 };
                 let steps = vec![
                     step(
@@ -464,6 +597,7 @@ impl Service {
             changed_files: None,
             workspace,
             blocked: vec![],
+            edit: None,
         };
         s.phase = Phase::AwaitingApproval;
         s.actions = actions;
@@ -498,8 +632,14 @@ impl Service {
             emit(&mut s, "approval", &format!("approved task {task_id}"));
             (s.task.clone().ok_or("no task")?, s.actions.clone())
         };
+        let (is_edit, is_workflow) = {
+            let s = self.lock();
+            (s.edit.is_some(), s.workflow.is_some())
+        };
         let me = self.clone();
         thread::spawn(move || match task.mode {
+            Mode::Actions if is_edit => me.run_edit(&task),
+            Mode::Actions if is_workflow => me.run_workflow(),
             Mode::Actions => me.run_actions(&actions),
             Mode::Work => me.run_work(&task),
         });
@@ -536,7 +676,17 @@ impl Service {
     }
 
     fn run_actions(&self, actions: &[Action]) {
+        let guard = self.lock().guard.take();
+        if let Some(guard) = guard
+            && let Err(why) = self
+                .context_engine()
+                .recheck(&guard.ctx, guard.strict_focus)
+        {
+            self.set_step(0, "failed");
+            return self.finish(Phase::Failed, Some(format!("Stopped: {why}")), None, None);
+        }
         let mut launched = 0;
+        let mut verified = 0;
         for (i, action) in actions.iter().enumerate() {
             if self.lock().stop_requested {
                 break;
@@ -559,6 +709,11 @@ impl Service {
                 _ => self.launcher.launch(action),
             };
             match result {
+                Ok(msg) if matches!(action, Action::Copy { .. }) => {
+                    self.emit("result", &format!("{msg} (confirmed)"));
+                    self.set_step(i, "done");
+                    verified += 1;
+                }
                 Ok(msg) => {
                     self.emit("result", &format!("{msg} (launched; outcome not verified)"));
                     self.set_step(i, "launched");
@@ -570,10 +725,11 @@ impl Service {
                 }
             }
         }
-        let note = format!(
-            "{} action(s) launched. X does not verify that pages loaded.",
-            launched
-        );
+        let note = match (launched, verified) {
+            (0, v) => format!("{v} action(s) done and confirmed."),
+            (l, 0) => format!("{l} action(s) launched. X does not verify that pages loaded."),
+            (l, v) => format!("{v} confirmed, {l} launched (page loads are not verified)."),
+        };
         self.finish(Phase::Completed, None, Some(note), None);
     }
 
@@ -743,7 +899,10 @@ impl Service {
             t.error = error.clone();
             t.summary = summary;
             t.changed_files = changed;
+            t.edit = None;
         }
+        s.edit = None;
+        s.workflow = None;
         set_phase(&mut s, phase);
         if let Some(e) = error {
             let seen = s
@@ -766,6 +925,11 @@ impl Service {
             Phase::AwaitingApproval => {
                 let id = s.task.as_ref().map(|task| task.id).unwrap_or_default();
                 set_phase(&mut s, Phase::Cancelled);
+                s.edit = None; // a discarded proposal never lingers in memory
+                s.workflow = None;
+                if let Some(t) = s.task.as_mut() {
+                    t.edit = None;
+                }
                 emit(&mut s, "info", "Plan discarded");
                 emit(&mut s, "approval", &format!("discarded task {id}"));
             }
@@ -862,6 +1026,7 @@ impl Service {
 
     /// App exit: stop any run and drop any recording. Blocks until the run is reaped.
     pub fn shutdown(&self) {
+        self.forget_edits();
         self.cancel();
         for _ in 0..200 {
             if !self.lock().phase.is_busy() {
@@ -919,5 +1084,5 @@ fn emit(s: &mut State, kind: &str, text: &str) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

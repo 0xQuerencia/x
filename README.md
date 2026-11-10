@@ -83,6 +83,67 @@ Basic launches don't need a model provider. **Work** needs an installed and conf
 
 For the familiar keyboard flow, bind `x dictation toggle` in your desktop's shortcut settings. **Ctrl+Space** works if nothing else has claimed it.
 
+## Context, voice editing and workflows
+
+Three things that make X feel like part of the desktop instead of a text box.
+
+**It knows what you're looking at.** Highlight an error in an app and say:
+
+```text
+"X, search this on GitHub."     -> opens a GitHub search for the selected text
+"X, look this up on Stack Overflow."
+"X, open this link."            -> opens the selected link (HTTPS only)
+"X, copy this."
+"X, explain this error."        -> a model explains the selection
+"X, focus my editor." / "X, go back to the previous window."
+```
+
+"This" is resolved from the real focused window and its real text selection, read through accessibility (AT-SPI) at the moment you ask. Nothing is polled, no keys are watched, and the clipboard is never read. If nothing is selected, the field is a password field, or the app doesn't expose its selection, X says so and does nothing. Before it acts, it checks the window is still there (and, without a prompt, still focused).
+
+**Dictation you can edit.** X remembers what it just typed (a few items, in memory, for 15 minutes) so you can say:
+
+```text
+"X, scratch that."  "X, remove the last sentence."  "X, delete the last word."
+"X, add a new paragraph."  "X, select the last sentence."  "X, undo that."
+"X, make that shorter."  "X, fix the grammar."  "X, make this more casual."
+"X, turn this into bullet points."  "X, translate this into English."
+"X, replace it."  "X, try again."  "X, keep the original."
+```
+
+Rewrites show a small review card, original, suggestion and a word-level diff, with **Replace / Retry / Cancel**. Nothing changes until you accept. Right before it applies, X refocuses the original window, re-reads the field, and refuses if the text changed while the card was open. "Scratch that" never sends Ctrl+Z: it only removes text it can read back and match, and otherwise asks you to select the text. Changes are made through accessibility, not keystrokes, and read back afterwards. Spacing, bullets, and removing the last sentence or word need no model. Rewrites use your planner; a remote model (Gemini, an OpenAI-compatible endpoint) always asks first, each time, before any text leaves your machine, and prompts are never stored.
+
+**Workflows.** Open **Agent -> Workflows** to build one without touching a file: a name, trigger phrases, and steps (open an app, a terminal in a folder, a folder, a web page, focus or move a window, switch workspace, wait for a window, run an X action, or an OpenCode task). Then:
+
+```text
+"X, start coding."
+```
+
+Workflows are typed, not scripts: unknown keys and actions are rejected, paths must be inside your home folder (no `..`, no `~/.ssh`), URLs must be public HTTPS, and a trigger can't shadow a built-in command or another workflow. Everything is checked before anything launches, so a missing app or folder fails up front instead of leaving half a setup behind. Windows are watched until they actually appear, moves are verified, Stop works at any point, and the result lists exactly which steps worked. Running one twice reuses windows that are already open. **`x agent workflow undo`** (or "X, undo the workflow") moves windows and workspaces back and says what it couldn't. It never closes a window, since one X opened may hold work you typed since; if a move fails, the remaining changes are kept and saying undo again retries them. Each OpenCode step is checked against the approved workflow right before it runs, so an edited, stale or stopped run is refused.
+
+```bash
+x agent workflow list              # with each one's last result
+x agent workflow run coding        # plan a run (approve as usual)
+x agent workflow import mine.json  # same validation as the editor
+x agent context                    # what X can see right now (never the text)
+```
+
+### What's actually been tested
+
+| | Result |
+|---|---|
+| Hyprland / Wayland (Arch), GTK 3 text field | Verified live: context capture (~0.2s), exact selection read, search resolution, verified replace, stale-edit refusal, undo, password field refused |
+| Workflow on Hyprland | Verified live: terminal opened in a folder, found by its new window, moved to workspace 10 and confirmed, then undo left the window open on purpose (X never closes windows) |
+| Everything else in the three features | Unit and integration tests against fake desktops and fake accessibility |
+| KDE Plasma, GNOME, Sway/i3, X11-only | **Not tested.** The window backends exist, but context and workflows are unverified there |
+| VS Code and other Electron apps | **Not verified.** They only expose text to accessibility when accessibility is switched on, and some editors don't expose it at all. When X can't read the selection it says so and does nothing |
+| Qt apps, Firefox/Zen selections | Not tested for selection or editing |
+
+Run the live checks yourself: `cargo test -p x-agent --test live -- --ignored --test-threads=1`. They briefly open a test window and a terminal.
+
+**Hands-free wake word.** `hex agent listen on` keeps the microphone open and runs any speech that starts with a wake word ("Friday, start coding", or "Friday" and then the command within 8 seconds) as an X command, planned and approved exactly like a typed one. Everything else is transcribed locally, checked for a wake word and dropped: never typed, logged, stored or sent. It is off by default, steps aside while a dictation is recording, and `hex agent listen off` closes the microphone again. Linux only; it uses the default microphone and the dictation model, so it needs the model loaded. With Trusted Actions on, anything you say aloud that starts with the wake word and matches an allowed action runs without a prompt, so leave Trusted Actions off if others can speak near your microphone.
+
+Known limits: needs `python3` with `python-gobject` and `at-spi2-core` for the selection helper; editing only works in fields that accept edits through accessibility (others are refused rather than typed into); for apps that expose no text to accessibility (browsers, some Electron apps) "search this", "open this link" and "copy this" fall back to the last text you highlighted (the Wayland primary selection, needs `wl-paste`), marked low confidence and always shown for approval even with Trusted Actions on, and never used for edits; `open terminal` supports kitty, foot and alacritty; opening a URL can't be verified; one task (or workflow) at a time; ambiguous windows in a workflow step fail with a message and a `pick` option rather than a chooser.
+
 ## Permissions
 
 "Open Firefox" shouldn't mean "run whatever the model wants."

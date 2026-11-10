@@ -8,8 +8,11 @@
 //! * [`hexcli`]: Hex's own speech-to-text over its control CLI (never pastes).
 //! * [`service`]: the one-task-at-a-time state machine the UI drives.
 
+pub mod clipboard;
 pub mod computer;
+pub mod context;
 pub mod desktop;
+pub mod edit;
 pub mod hexcli;
 pub mod opencode;
 pub mod phase;
@@ -17,6 +20,7 @@ pub mod planner;
 pub mod service;
 pub mod tools;
 pub mod wm;
+pub mod workflows;
 
 /// Retry a spawn that fails with ETXTBSY: another thread forked while the executable was
 /// still open for writing (only happens right after an executable is created).

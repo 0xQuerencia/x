@@ -299,7 +299,7 @@ fn valid_args(args: &[&str]) -> Result<(), String> {
 }
 
 /// Runs `cmd` with a deadline and capped output. Returns success and stdout.
-fn capture(cmd: &mut Command, limit: Duration) -> Result<(bool, Vec<u8>), String> {
+pub(crate) fn capture(cmd: &mut Command, limit: Duration) -> Result<(bool, Vec<u8>), String> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

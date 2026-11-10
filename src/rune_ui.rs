@@ -368,6 +368,7 @@ pub(crate) enum Destination {
     Meetings(Option<String>),
     Modes,
     History,
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Agent,
 }
 

@@ -247,12 +247,24 @@ pub enum AgentAction {
     Voice {
         mode: String,
     },
+    /// Hands-free wake word: `on`, `off` or `status`.
+    Listen {
+        mode: String,
+    },
     /// Rerun the last Work goal with one refused command allowed for that run only.
     Allow {
         index: usize,
     },
     /// Which window-control backend this desktop has and what it can do.
     Desktop,
+    /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
+    /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
+    Workflow {
+        command: String,
+        value: String,
+    },
+    /// What X can see right now: the focused window and what is selected (never the text).
+    Context,
     /// The words that make speech a command: `list`, `add <word>`, `remove <word>`, `set <word>`.
     Wake {
         command: String,
