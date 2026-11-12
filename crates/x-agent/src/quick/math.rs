@@ -11,7 +11,11 @@ struct Parser<'a> {
 
 impl Parser<'_> {
     fn skip_space(&mut self) {
-        while self.bytes.get(self.index).is_some_and(u8::is_ascii_whitespace) {
+        while self
+            .bytes
+            .get(self.index)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
             self.index += 1;
         }
     }
@@ -44,9 +48,17 @@ impl Parser<'_> {
         if digits == 0 {
             return None;
         }
-        if self.bytes.get(self.index).is_some_and(|x| *x == b'e' || *x == b'E') {
+        if self
+            .bytes
+            .get(self.index)
+            .is_some_and(|x| *x == b'e' || *x == b'E')
+        {
             self.index += 1;
-            if self.bytes.get(self.index).is_some_and(|x| *x == b'+' || *x == b'-') {
+            if self
+                .bytes
+                .get(self.index)
+                .is_some_and(|x| *x == b'+' || *x == b'-')
+            {
                 self.index += 1;
             }
             let exponent_start = self.index;
@@ -90,7 +102,10 @@ impl Parser<'_> {
                 break;
             }
             self.index += 1;
-            let right = self.expr(precedence + if right_associative { 0 } else { 1 }, depth + 1)?;
+            let right = self.expr(
+                precedence + if right_associative { 0 } else { 1 },
+                depth + 1,
+            )?;
             left = match op {
                 b'+' => left + right,
                 b'-' => left - right,
@@ -128,7 +143,12 @@ pub(super) fn calculate(expression: &str) -> Option<String> {
         return Some(format!("{value:.10e}"));
     }
     let precise = format!("{value:.10}");
-    Some(precise.trim_end_matches('0').trim_end_matches('.').to_string())
+    Some(
+        precise
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -153,8 +173,18 @@ mod tests {
     #[test]
     fn malformed_and_dangerous_expressions_are_refused() {
         for bad in [
-            "", "1/0", "10%", "1+", "2*(", "()", "2 + fn()", "NaN",
-            "0^(-1)", "2..3", "1e", "((((((((((((((((((((((((((1))))))))))))))))))))))))))",
+            "",
+            "1/0",
+            "10%",
+            "1+",
+            "2*(",
+            "()",
+            "2 + fn()",
+            "NaN",
+            "0^(-1)",
+            "2..3",
+            "1e",
+            "((((((((((((((((((((((((((1))))))))))))))))))))))))))",
         ] {
             assert!(calculate(bad).is_none(), "{bad}");
         }
