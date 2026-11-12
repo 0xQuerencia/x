@@ -149,7 +149,9 @@ Known limits: needs `python3` with `python-gobject` and `at-spi2-core` for the s
 In the Agent pane, open **Quick** to search approved applications, focus an
 existing app, switch workspaces or plan a saved workflow without speaking.
 Search is local and deterministic. Results use the same typed Actions and
-workflow approval paths as the rest of X. Quick is an in-app tab, **not** a
+workflow approval paths as the rest of X. Free-form queries also offer an
+explicit validated web-search result. Prefix `gh ` or `yt ` to target GitHub
+or YouTube, for example; no search launches without selecting it. Quick is an in-app tab, **not** a
 system-wide launcher shortcut yet. The public `v0.1.0-alpha.1` binary predates
 this work; do not expect it there until a newer build is released and verified.
 
