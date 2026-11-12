@@ -17,6 +17,7 @@ pub mod hexcli;
 pub mod opencode;
 pub mod phase;
 pub mod planner;
+pub mod quick;
 pub mod service;
 pub mod tools;
 pub mod wm;

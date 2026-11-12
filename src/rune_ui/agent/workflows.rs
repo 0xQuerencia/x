@@ -364,6 +364,21 @@ pub(in crate::rune_ui) struct Manager {
 }
 
 impl Manager {
+    /// Reuse the cached, validated workflow list for local Quick search. Do not
+    /// re-read workflow JSON on every keystroke or offer invalid/conflicting entries.
+    pub(super) fn quick_entries(&self) -> Vec<(String, String)> {
+        self.rows
+            .iter()
+            .filter(|row| row.entry.runnable() && row.entry.conflicts.is_empty())
+            .map(|row| {
+                (
+                    row.entry.workflow.id.clone(),
+                    row.entry.workflow.name.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// Reloads the list when something changed it or a few seconds passed (a run may have
     /// finished). True when what is shown differs.
     pub(super) fn refresh(&mut self) -> bool {

@@ -46,6 +46,28 @@ pane is selected.
 desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
 once: X refuses to start while any task or recording of its own is in flight.
 
+## X Quick (local action search)
+
+The Agent pane's **Quick** tab searches the existing approved app registry,
+workspace switches (1–10), and runnable saved workflows. Search matches are
+ranked deterministically on the current machine. It does not run a language
+model and never turns a result label into a shell command.
+
+- Opening or focusing an app and switching workspace goes through the existing
+  Actions planner, showing the same plan and approval controls as spoken input.
+- Saved workflows go through their existing validator, preflight and approval
+  path. Invalid or conflicting workflow entries are omitted from Quick.
+- The workflow list is reused from the manager's short-lived cache; no workflow
+  files are reread for every search keystroke.
+- This is currently a **native pane tab**, not a globally bound floating
+  launcher or a replacement for Hex's dictation shortcut.
+- The search UI does not run an action automatically on selection; the button
+  prepares a plan that can be reviewed in the Commands pane.
+
+Source: `crates/x-agent/src/quick.rs`, `src/rune_ui/agent/quick.rs`,
+`src/rune_ui/agent.rs`. Unit tests cover ranking and typed-action routing;
+real key focus, UI accessibility, layout and desktop latency remain unverified.
+
 ## What X will and won't do
 
 * **Actions** are a closed registry: launch an approved app, open a public
