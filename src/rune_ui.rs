@@ -386,6 +386,7 @@ pub(crate) fn destination(pane: Option<crate::control::Pane>) -> Destination {
         Some(Named::History) => Destination::History,
         Some(Named::Meetings) => Destination::Meetings(None),
         Some(Named::Agent) => Destination::Agent,
+        Some(Named::Quick) => Destination::Quick,
     }
 }
 
@@ -396,13 +397,17 @@ pub(crate) fn show(ui: &mut Ui, destination: Destination, tx: &mut Tx) {
         Destination::Meetings(_) => Pane::Meetings,
         Destination::Modes => Pane::Output,
         Destination::History => Pane::History,
-        Destination::Agent => Pane::Agent,
+        Destination::Agent | Destination::Quick => Pane::Agent,
     };
     picker::close(ui);
     explainer::close(ui);
     sound_sets::close(ui);
     vocabulary::close(ui);
     if pane.shown(ui) {
+        if destination == Destination::Quick {
+            ui.agent.show_quick = true;
+            ui.agent.show_workflows = false;
+        }
         ui.select_pane(pane, tx);
     }
     match destination {
