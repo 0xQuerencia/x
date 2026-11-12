@@ -14,7 +14,7 @@ use crate::rune_ui::lists::section_label;
 
 pub(super) fn view(p: Paint, ui: &Ui) -> El {
     let input = TextInput::new(&ui.agent.quick_query)
-        .placeholder(tr("Find an app, workspace, or saved workflow"))
+        .placeholder(tr("Apps, workflows, =2*(3+4), color #abc, or web search"))
         .width(None)
         .on_edit(|ui: &mut Ui| &mut ui.agent.quick_query)
         .build(p.k)
@@ -49,6 +49,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
         let title = hit.title;
         let detail = hit.detail;
         let target = hit.target;
+        let is_copy = matches!(&target, Target::CopyResult(_));
         content = content.child(
             row()
                 .key(format!("quick-row-{i}"))
@@ -74,11 +75,36 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                 .child(button(
                     p,
                     &format!("quick-use-{i}"),
-                    tr("Plan"),
+                    if is_copy {
+                        tr("Copy")
+                    } else if matches!(&target, Target::PickColor) {
+                        tr("Pick")
+                    } else {
+                        tr("Plan")
+                    },
                     ButtonKind::Secondary,
                     move |ui: &mut Ui, _| {
-                        ui.agent.show_quick = false;
+                        if !is_copy {
+                            ui.agent.show_quick = false;
+                        }
                         match &target {
+                            Target::CopyResult(value) => {
+                                let value = value.clone();
+                                std::thread::spawn(move || {
+                                    match ::x_agent::clipboard::copy(&value) {
+                                        Ok(message) => agent_host::service().emit("info", &message),
+                                        Err(error) => agent_host::service().emit("error", &error),
+                                    }
+                                });
+                            }
+                            Target::PickColor => {
+                                std::thread::spawn(move || {
+                                    match ::x_agent::quick::picker::pick() {
+                                        Ok(message) => agent_host::service().emit("info", &message),
+                                        Err(error) => agent_host::service().emit("error", &error),
+                                    }
+                                });
+                            }
                             Target::Workflow(id) => {
                                 if let Err(error) = agent_host::service().plan_workflow_by_id(id) {
                                     agent_host::service().emit("error", &error);

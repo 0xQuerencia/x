@@ -56,7 +56,7 @@ hex
 │   ├── init                       create ~/.config/hex (local, no running Hex needed)
 │   └── check                      validate ~/.config/hex/hex.config.ts transformations
 ├── window
-│   ├── show [settings|models|modes|history|meetings]
+│   ├── show [settings|models|modes|history|meetings|agent|quick]
 │   ├── hide                       close the window; Hex stays in the menu bar
 │   └── story <story> [--variant V] [--play]  the playground (Labs): open a story
 ├── onboarding reset (alias restart)  replay the first run now; every OS (below)

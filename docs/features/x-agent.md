@@ -51,7 +51,11 @@ once: X refuses to start while any task or recording of its own is in flight.
 The Agent pane's **Quick** tab searches the existing approved app registry,
 workspace switches (1–10), and runnable saved workflows. Search matches are
 ranked deterministically on the current machine. It does not run a language
-model and never turns a result label into a shell command.
+model and never turns a result label into a shell command. When no exact
+local action matches, Quick also offers an **explicit** web-search row (never
+opens a URL without a click). Prefix queries with `gh `, `yt `, `g `, `w `,
+`r `, or `so ` for GitHub, YouTube, Google, Wikipedia, Reddit, or Stack Overflow.
+This uses the existing typed Search action and its normal approval gate.
 
 - Opening or focusing an app and switching workspace goes through the existing
   Actions planner, showing the same plan and approval controls as spoken input.
@@ -59,6 +63,11 @@ model and never turns a result label into a shell command.
   path. Invalid or conflicting workflow entries are omitted from Quick.
 - The workflow list is reused from the manager's short-lived cache; no workflow
   files are reread for every search keystroke.
+- The existing window-control API now exposes `hex window show quick`. Bind
+  that command to a desktop shortcut to jump straight into the Quick tab
+  from another app without adding a new global keyboard interceptor.
+- A query starting with `=` or `calc ` evaluates bounded arithmetic entirely locally (parentheses, +, -, *, /, %, exponentiation); invalid calculations are refused instead of guessed.
+- A HEX or RGB color query (e.g. `color #2563EB` or `rgb(37, 99, 235)`) produces copyable HEX, RGB, HSL, and OKLCH values without a model or screen capture. `Copy` uses the existing Wayland clipboard action, which is not cross-platform yet.
 - This is currently a **native pane tab**, not a globally bound floating
   launcher or a replacement for Hex's dictation shortcut.
 - The search UI does not run an action automatically on selection; the button
