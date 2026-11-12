@@ -117,7 +117,11 @@ fn web_search(query: &str) -> Option<Hit> {
         ("so ", "stackoverflow"),
     ]
     .iter()
-    .find_map(|(prefix, site)| lower.starts_with(*prefix).then_some((*site, &raw[prefix.len()..])))
+    .find_map(|(prefix, site)| {
+        lower
+            .starts_with(*prefix)
+            .then_some((*site, &raw[prefix.len()..]))
+    })
     .unwrap_or(("google", raw));
     let terms = terms.trim();
     if terms.is_empty() || terms.chars().count() > 300 || terms.chars().any(char::is_control) {
@@ -130,18 +134,24 @@ fn web_search(query: &str) -> Option<Hit> {
     let phrase = target.phrase()?;
     // Keep search routing inside the existing typed action registry, including
     // its URL encoding and query limits; invalid input gets no suggestion.
-    if !matches!(tools::plan_rules(&phrase).as_deref(), Some([tools::Action::Search { .. }])) {
+    if !matches!(
+        tools::plan_rules(&phrase).as_deref(),
+        Some([tools::Action::Search { .. }])
+    ) {
         return None;
     }
-    let title = format!("Search {} for \"{terms}\"", match site {
-        "github" => "GitHub",
-        "youtube" => "YouTube",
-        "google" => "Google",
-        "wikipedia" => "Wikipedia",
-        "reddit" => "Reddit",
-        "stackoverflow" => "Stack Overflow",
-        _ => return None,
-    });
+    let title = format!(
+        "Search {} for \"{terms}\"",
+        match site {
+            "github" => "GitHub",
+            "youtube" => "YouTube",
+            "google" => "Google",
+            "wikipedia" => "Wikipedia",
+            "reddit" => "Reddit",
+            "stackoverflow" => "Stack Overflow",
+            _ => return None,
+        }
+    );
     Some(Hit {
         title,
         detail: "Web search · uses the existing Actions approval".into(),
@@ -295,14 +305,17 @@ mod tests {
         assert!(matches!(hits[0].target, Target::WebSearch { .. }));
     }
 
-
     #[test]
     fn web_search_fallback_reuses_existing_search_action() {
         let hits = search("rust desktop automation", std::iter::empty());
         let last = hits.last().unwrap();
-        assert_eq!(last.target, Target::WebSearch {
-            site: "google".into(), query: "rust desktop automation".into(),
-        });
+        assert_eq!(
+            last.target,
+            Target::WebSearch {
+                site: "google".into(),
+                query: "rust desktop automation".into(),
+            }
+        );
         assert!(matches!(
             tools::plan_rules(&last.target.phrase().unwrap()).as_deref(),
             Some([tools::Action::Search { .. }])
@@ -312,13 +325,18 @@ mod tests {
     #[test]
     fn web_prefixes_select_the_existing_approved_search_sites() {
         for (text, expected_site) in [
-            ("gh rust", "github"), ("yt parakeet", "youtube"),
-            ("g linux", "google"), ("w wayland", "wikipedia"),
-            ("r rust", "reddit"), ("so rust", "stackoverflow"),
+            ("gh rust", "github"),
+            ("yt parakeet", "youtube"),
+            ("g linux", "google"),
+            ("w wayland", "wikipedia"),
+            ("r rust", "reddit"),
+            ("so rust", "stackoverflow"),
         ] {
-            assert!(matches!(search(text, std::iter::empty()).last().unwrap().target,
-                Target::WebSearch { ref site, .. } if site == expected_site
-            ));
+            assert!(
+                matches!(search(text, std::iter::empty()).last().unwrap().target,
+                    Target::WebSearch { ref site, .. } if site == expected_site
+                )
+            );
         }
     }
 
