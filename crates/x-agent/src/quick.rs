@@ -3,6 +3,10 @@
 
 use crate::tools;
 
+mod colors;
+mod math;
+pub mod picker;
+
 const MAX_RESULTS: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,6 +16,9 @@ pub enum Target {
     Workspace(u8),
     Workflow(String),
     WebSearch { site: String, query: String },
+    /// A pure local result explicitly copied by the user, never executed as a command.
+    CopyResult(String),
+    PickColor,
 }
 
 impl Target {
@@ -23,7 +30,7 @@ impl Target {
             Self::FocusApp(app) => Some(format!("focus {app}")),
             Self::Workspace(n) => Some(format!("switch to workspace {n}")),
             Self::WebSearch { site, query } => Some(format!("search {site} for {query}")),
-            Self::Workflow(_) => None,
+            Self::Workflow(_) | Self::CopyResult(_) | Self::PickColor => None,
         }
     }
 }
@@ -107,11 +114,7 @@ fn web_search(query: &str) -> Option<Hit> {
         ("so ", "stackoverflow"),
     ]
     .iter()
-    .find_map(|(prefix, site)| {
-        lower
-            .starts_with(*prefix)
-            .then_some((*site, &raw[prefix.len()..]))
-    })
+    .find_map(|(prefix, site)| lower.starts_with(*prefix).then_some((*site, &raw[prefix.len()..])))
     .unwrap_or(("google", raw));
     let terms = terms.trim();
     if terms.is_empty() || terms.chars().count() > 300 || terms.chars().any(char::is_control) {
@@ -124,29 +127,69 @@ fn web_search(query: &str) -> Option<Hit> {
     let phrase = target.phrase()?;
     // Keep search routing inside the existing typed action registry, including
     // its URL encoding and query limits; invalid input gets no suggestion.
-    if !matches!(
-        tools::plan_rules(&phrase).as_deref(),
-        Some([tools::Action::Search { .. }])
-    ) {
+    if !matches!(tools::plan_rules(&phrase).as_deref(), Some([tools::Action::Search { .. }])) {
         return None;
     }
-    let title = format!(
-        "Search {} for \"{terms}\"",
-        match site {
-            "github" => "GitHub",
-            "youtube" => "YouTube",
-            "google" => "Google",
-            "wikipedia" => "Wikipedia",
-            "reddit" => "Reddit",
-            "stackoverflow" => "Stack Overflow",
-            _ => return None,
-        }
-    );
+    let title = format!("Search {} for \"{terms}\"", match site {
+        "github" => "GitHub",
+        "youtube" => "YouTube",
+        "google" => "Google",
+        "wikipedia" => "Wikipedia",
+        "reddit" => "Reddit",
+        "stackoverflow" => "Stack Overflow",
+        _ => return None,
+    });
     Some(Hit {
         title,
         detail: "Web search · uses the existing Actions approval".into(),
         target,
     })
+}
+
+/// High-signal local utilities run without a model or shell and cannot
+/// execute arbitrary code. They only offer a copyable result on demand.
+fn local_results(query: &str) -> Vec<Hit> {
+    let trimmed = query.trim();
+    let mut results = Vec::new();
+    if picker::available()
+        && (trimmed.eq_ignore_ascii_case("pick color")
+            || trimmed.eq_ignore_ascii_case("color picker")
+            || trimmed.eq_ignore_ascii_case("pick"))
+    {
+        results.push(Hit {
+            title: "Pick a color from the screen".into(),
+            detail: "Requires hyprpicker · click to select one pixel".into(),
+            target: Target::PickColor,
+        });
+    }
+    let expression = trimmed.strip_prefix('=').or_else(|| trimmed.strip_prefix("calc "));
+    if let Some(expression) = expression
+        && let Some(value) = math::calculate(expression)
+    {
+        results.push(Hit {
+            title: format!("= {value}"),
+            detail: "Calculated locally · copy result".into(),
+            target: Target::CopyResult(value),
+        });
+    }
+    if let Some(formats) = colors::convert(trimmed) {
+        for (name, value) in [
+            ("HEX", formats.hex),
+            ("RGB", formats.rgb),
+            ("HSL", formats.hsl),
+            ("OKLCH", formats.oklch),
+        ] {
+            results.push(Hit {
+                title: format!("{name}: {value}"),
+                detail: "Converted locally · copy result".into(),
+                target: Target::CopyResult(value),
+            });
+        }
+    }
+    let mut local = local_results(query);
+    local.extend(results);
+    local.truncate(MAX_RESULTS);
+    local
 }
 
 /// `workflows` contains only runnable, validated workflows. Their identifiers
@@ -247,17 +290,14 @@ mod tests {
         assert!(matches!(hits[0].target, Target::WebSearch { .. }));
     }
 
+
     #[test]
     fn web_search_fallback_reuses_existing_search_action() {
         let hits = search("rust desktop automation", std::iter::empty());
         let last = hits.last().unwrap();
-        assert_eq!(
-            last.target,
-            Target::WebSearch {
-                site: "google".into(),
-                query: "rust desktop automation".into(),
-            }
-        );
+        assert_eq!(last.target, Target::WebSearch {
+            site: "google".into(), query: "rust desktop automation".into(),
+        });
         assert!(matches!(
             tools::plan_rules(&last.target.phrase().unwrap()).as_deref(),
             Some([tools::Action::Search { .. }])
@@ -267,18 +307,13 @@ mod tests {
     #[test]
     fn web_prefixes_select_the_existing_approved_search_sites() {
         for (text, expected_site) in [
-            ("gh rust", "github"),
-            ("yt parakeet", "youtube"),
-            ("g linux", "google"),
-            ("w wayland", "wikipedia"),
-            ("r rust", "reddit"),
-            ("so rust", "stackoverflow"),
+            ("gh rust", "github"), ("yt parakeet", "youtube"),
+            ("g linux", "google"), ("w wayland", "wikipedia"),
+            ("r rust", "reddit"), ("so rust", "stackoverflow"),
         ] {
-            assert!(
-                matches!(search(text, std::iter::empty()).last().unwrap().target,
-                    Target::WebSearch { ref site, .. } if site == expected_site
-                )
-            );
+            assert!(matches!(search(text, std::iter::empty()).last().unwrap().target,
+                Target::WebSearch { ref site, .. } if site == expected_site
+            ));
         }
     }
 
@@ -288,6 +323,22 @@ mod tests {
         assert!(web_search(&format!("g {}", "a".repeat(301))).is_none());
         assert!(web_search("g hello\\nworld").is_some());
         assert!(web_search("g hello\nworld").is_none());
+    }
+
+    #[test]
+    fn calculator_is_a_bounded_local_result_not_an_action() {
+        let hits = search("=2 * (3 + 4)", std::iter::empty());
+        assert_eq!(hits[0].target, Target::CopyResult("14".into()));
+        assert_eq!(hits[0].target.phrase(), None);
+        assert!(!search("=0/0", std::iter::empty()).iter().any(|h| matches!(h.target, Target::CopyResult(_))));
+    }
+
+    #[test]
+    fn color_values_are_available_in_four_formats() {
+        let hits = search("color #abc", std::iter::empty());
+        assert_eq!(hits[0].target, Target::CopyResult("#AABBCC".into()));
+        assert_eq!(hits[1].target, Target::CopyResult("rgb(170, 187, 204)".into()));
+        assert!(hits.iter().any(|h| h.title.starts_with("OKLCH:")));
     }
 
     #[test]
