@@ -98,6 +98,8 @@ pub(super) struct StepEd {
     app: usize,
     /// 0 means "no workspace".
     workspace: u8,
+    /// 0 means automatic (only safe if a single window matches).
+    pick: u8,
     text: TextEdit,
     /// OpenCode's folder (its goal is `text`).
     folder: TextEdit,
@@ -110,6 +112,7 @@ impl StepEd {
             kind: Kind::OpenApp,
             app: 0,
             workspace: 0,
+            pick: 0,
             text: TextEdit::default(),
             folder: TextEdit::default(),
         }
@@ -144,18 +147,20 @@ impl StepEd {
                 ed.kind = Kind::OpenUrl;
                 ed.text.text = url.clone();
             }
-            StepAction::FocusWindow { app, .. } => {
+            StepAction::FocusWindow { app, pick } => {
                 ed.kind = Kind::FocusWindow;
                 ed.app = app_index(app);
+                ed.pick = pick.unwrap_or(0);
             }
             StepAction::SwitchWorkspace { workspace } => {
                 ed.kind = Kind::SwitchWorkspace;
                 ed.workspace = *workspace;
             }
-            StepAction::MoveWindow { app, workspace, .. } => {
+            StepAction::MoveWindow { app, workspace, pick } => {
                 ed.kind = Kind::MoveWindow;
                 ed.app = app_index(app);
                 ed.workspace = *workspace;
+                ed.pick = pick.unwrap_or(0);
             }
             StepAction::WaitForWindow { app } => {
                 ed.kind = Kind::WaitForWindow;
@@ -200,7 +205,7 @@ impl StepEd {
             },
             Kind::FocusWindow => StepAction::FocusWindow {
                 app: self.app_name(),
-                pick: None,
+                pick: (self.pick != 0).then_some(self.pick),
             },
             Kind::SwitchWorkspace => StepAction::SwitchWorkspace {
                 workspace: self.workspace.max(1),
@@ -208,7 +213,7 @@ impl StepEd {
             Kind::MoveWindow => StepAction::MoveWindow {
                 app: self.app_name(),
                 workspace: self.workspace.max(1),
-                pick: None,
+                pick: (self.pick != 0).then_some(self.pick),
             },
             Kind::WaitForWindow => StepAction::WaitForWindow {
                 app: self.app_name(),
