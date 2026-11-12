@@ -82,7 +82,12 @@ fn hsl(rgb: [u8; 3]) -> String {
     } else {
         60.0 * ((r - g) / delta + 4.0)
     };
-    format!("hsl({:.1} {:.1}% {:.1}%)", hue, saturation * 100.0, lightness * 100.0)
+    format!(
+        "hsl({:.1} {:.1}% {:.1}%)",
+        hue,
+        saturation * 100.0,
+        lightness * 100.0
+    )
 }
 
 pub(super) fn convert(input: &str) -> Option<Formats> {
@@ -125,7 +130,15 @@ mod tests {
 
     #[test]
     fn invalid_colors_do_not_get_coerced() {
-        for bad in ["#GGGGGG", "#12", "#12345", "#12345678", "rgb(256,0,0)", "rgb(1,2)", "color not a color"] {
+        for bad in [
+            "#GGGGGG",
+            "#12",
+            "#12345",
+            "#12345678",
+            "rgb(256,0,0)",
+            "rgb(1,2)",
+            "color not a color",
+        ] {
             assert!(convert(bad).is_none(), "{bad}");
         }
     }
