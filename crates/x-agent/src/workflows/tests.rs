@@ -883,6 +883,13 @@ mod running {
             run(&wf, &host, &cfg(h.path())).report.state,
             RunState::Completed
         );
+
+        // If the user chose the second window and it disappears, never silently
+        // redirect the saved workflow to the first remaining window.
+        host.w.lock().unwrap().wins.retain(|w| w.id != "0x2");
+        let result = run(&wf, &host, &cfg(h.path()));
+        assert_eq!(result.report.state, RunState::Failed);
+        assert!(result.report.steps[0].detail.contains("Window pick 2"));
     }
 
     #[test]
