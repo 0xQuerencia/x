@@ -63,6 +63,9 @@ This uses the existing typed Search action and its normal approval gate.
   path. Invalid or conflicting workflow entries are omitted from Quick.
 - The workflow list is reused from the manager's short-lived cache; no workflow
   files are reread for every search keystroke.
+- The existing window-control API now exposes `hex window show quick`. Bind
+  that command to a desktop shortcut to jump straight into the Quick tab
+  from another app without adding a new global keyboard interceptor.
 - This is currently a **native pane tab**, not a globally bound floating
   launcher or a replacement for Hex's dictation shortcut.
 - The search UI does not run an action automatically on selection; the button

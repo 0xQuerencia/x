@@ -72,6 +72,8 @@ pub enum Pane {
     Meetings,
     /// X's Agent pane (Labs › X agent).
     Agent,
+    /// The Quick search tab of X's Agent pane (Labs › X agent).
+    Quick,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
