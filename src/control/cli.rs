@@ -646,6 +646,10 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Allow { index, output } => (AgentAction::Allow { index }, output),
                 AgentCommand::Voice { mode, output } => (AgentAction::Voice { mode }, output),
                 AgentCommand::Listen { mode, output } => (AgentAction::Listen { mode }, output),
+                AgentCommand::Awake { command, minutes, output } => (
+                    AgentAction::Awake { command, minutes },
+                    output,
+                ),
                 AgentCommand::Trust { state, output } => {
                     (AgentAction::Trust { on: state == "on" }, output)
                 }
