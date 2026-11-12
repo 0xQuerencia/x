@@ -893,6 +893,54 @@ mod running {
     }
 
     #[test]
+    fn ambiguous_target_fails_preflight_before_unrelated_launches() {
+        let h = home();
+        let host = Fake::new();
+        host.w
+            .lock()
+            .unwrap()
+            .wins
+            .extend([win("0x1", "code", 1), win("0x2", "code", 2)]);
+        let mut wf = coding(h.path());
+        wf.steps = vec![
+            step("browser", open("firefox", None)),
+            step(
+                "focus",
+                StepAction::FocusWindow {
+                    app: "vscode".into(),
+                    pick: None,
+                },
+            ),
+        ];
+        let result = run(&wf, &host, &cfg(h.path()));
+        assert_eq!(result.report.state, RunState::Failed);
+        assert_eq!(host.launches.load(Ordering::SeqCst), 0);
+        assert!(result.report.summary.contains("2 vscode windows"));
+    }
+
+    #[test]
+    fn stale_target_fails_preflight_before_unrelated_launches() {
+        let h = home();
+        let host = Fake::new();
+        host.w.lock().unwrap().wins.push(win("0x1", "code", 1));
+        let mut wf = coding(h.path());
+        wf.steps = vec![
+            step("browser", open("firefox", None)),
+            step(
+                "focus",
+                StepAction::FocusWindow {
+                    app: "vscode".into(),
+                    pick: Some(2),
+                },
+            ),
+        ];
+        let result = run(&wf, &host, &cfg(h.path()));
+        assert_eq!(result.report.state, RunState::Failed);
+        assert_eq!(host.launches.load(Ordering::SeqCst), 0);
+        assert!(result.report.summary.contains("Window pick 2"));
+    }
+
+    #[test]
     fn undo_puts_back_what_the_run_changed() {
         let h = home();
         let host = Fake::new();
