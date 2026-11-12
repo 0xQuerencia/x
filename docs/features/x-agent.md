@@ -67,6 +67,10 @@ This uses the existing typed Search action and its normal approval gate.
   launcher or a replacement for Hex's dictation shortcut.
 - The search UI does not run an action automatically on selection; the button
   prepares a plan that can be reviewed in the Commands pane.
+- A nonempty unmatched query offers an explicit web-search action. Type `gh `,
+  `yt `, `g `, `w `, `r `, or `so ` before the search terms to choose
+  GitHub, YouTube, Google, Wikipedia, Reddit, or Stack Overflow. The suggestion
+  is validated by the existing Actions parser; nothing is sent until approval.
 
 Source: `crates/x-agent/src/quick.rs`, `src/rune_ui/agent/quick.rs`,
 `src/rune_ui/agent.rs`. Unit tests cover ranking and typed-action routing;
