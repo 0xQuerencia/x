@@ -51,7 +51,11 @@ once: X refuses to start while any task or recording of its own is in flight.
 The Agent pane's **Quick** tab searches the existing approved app registry,
 workspace switches (1–10), and runnable saved workflows. Search matches are
 ranked deterministically on the current machine. It does not run a language
-model and never turns a result label into a shell command.
+model and never turns a result label into a shell command. When no exact
+local action matches, Quick also offers an **explicit** web-search row (never
+opens a URL without a click). Prefix queries with `gh `, `yt `, `g `, `w `,
+`r `, or `so ` for GitHub, YouTube, Google, Wikipedia, Reddit, or Stack Overflow.
+This uses the existing typed Search action and its normal approval gate.
 
 - Opening or focusing an app and switching workspace goes through the existing
   Actions planner, showing the same plan and approval controls as spoken input.

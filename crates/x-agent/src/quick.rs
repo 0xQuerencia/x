@@ -11,6 +11,7 @@ pub enum Target {
     FocusApp(String),
     Workspace(u8),
     Workflow(String),
+    WebSearch { site: String, query: String },
 }
 
 impl Target {
@@ -21,6 +22,7 @@ impl Target {
             Self::OpenApp(app) => Some(format!("open {app}")),
             Self::FocusApp(app) => Some(format!("focus {app}")),
             Self::Workspace(n) => Some(format!("switch to workspace {n}")),
+            Self::WebSearch { site, query } => Some(format!("search {site} for {query}")),
             Self::Workflow(_) => None,
         }
     }
@@ -87,6 +89,66 @@ fn score(query: &str, hit: &Hit) -> Option<usize> {
     Some(sum)
 }
 
+/// A web-search suggestion uses the same verified action parser as voice
+/// requests. Prefixes are deliberately explicit; ordinary queries search
+/// Google. Never invoke an LLM or construct a URL directly from a query.
+fn web_search(query: &str) -> Option<Hit> {
+    let raw = query.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let lower = raw.to_ascii_lowercase();
+    let (site, terms) = [
+        ("gh ", "github"),
+        ("yt ", "youtube"),
+        ("g ", "google"),
+        ("w ", "wikipedia"),
+        ("r ", "reddit"),
+        ("so ", "stackoverflow"),
+    ]
+    .iter()
+    .find_map(|(prefix, site)| {
+        lower
+            .starts_with(*prefix)
+            .then_some((*site, &raw[prefix.len()..]))
+    })
+    .unwrap_or(("google", raw));
+    let terms = terms.trim();
+    if terms.is_empty() || terms.chars().count() > 300 || terms.chars().any(char::is_control) {
+        return None;
+    }
+    let target = Target::WebSearch {
+        site: site.into(),
+        query: terms.into(),
+    };
+    let phrase = target.phrase()?;
+    // Keep search routing inside the existing typed action registry, including
+    // its URL encoding and query limits; invalid input gets no suggestion.
+    if !matches!(
+        tools::plan_rules(&phrase).as_deref(),
+        Some([tools::Action::Search { .. }])
+    ) {
+        return None;
+    }
+    let title = format!(
+        "Search {} for \"{terms}\"",
+        match site {
+            "github" => "GitHub",
+            "youtube" => "YouTube",
+            "google" => "Google",
+            "wikipedia" => "Wikipedia",
+            "reddit" => "Reddit",
+            "stackoverflow" => "Stack Overflow",
+            _ => return None,
+        }
+    );
+    Some(Hit {
+        title,
+        detail: "Web search · uses the existing Actions approval".into(),
+        target,
+    })
+}
+
 /// `workflows` contains only runnable, validated workflows. Their identifiers
 /// are not treated as free-form commands and are handed to the existing engine.
 pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>) -> Vec<Hit> {
@@ -131,11 +193,18 @@ pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>
     ranked.sort_by(|(a_score, a), (b_score, b)| {
         a_score.cmp(b_score).then_with(|| a.title.cmp(&b.title))
     });
-    ranked
+    let mut results: Vec<_> = ranked
         .into_iter()
         .take(MAX_RESULTS)
         .map(|(_, hit)| hit)
-        .collect()
+        .collect();
+    if let Some(web) = web_search(query) {
+        // Search fallback: the last result is always an explicit search
+        // option. Don't hide an app or workflow hit unless the list is full.
+        results.truncate(MAX_RESULTS - 1);
+        results.push(web);
+    }
+    results
 }
 
 #[cfg(test)]
@@ -172,8 +241,53 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_query_does_not_make_up_actions() {
-        assert!(search("this command does not exist", std::iter::empty()).is_empty());
+    fn unmatched_query_offers_only_an_explicit_web_search() {
+        let hits = search("this command does not exist", std::iter::empty());
+        assert_eq!(hits.len(), 1);
+        assert!(matches!(hits[0].target, Target::WebSearch { .. }));
+    }
+
+    #[test]
+    fn web_search_fallback_reuses_existing_search_action() {
+        let hits = search("rust desktop automation", std::iter::empty());
+        let last = hits.last().unwrap();
+        assert_eq!(
+            last.target,
+            Target::WebSearch {
+                site: "google".into(),
+                query: "rust desktop automation".into(),
+            }
+        );
+        assert!(matches!(
+            tools::plan_rules(&last.target.phrase().unwrap()).as_deref(),
+            Some([tools::Action::Search { .. }])
+        ));
+    }
+
+    #[test]
+    fn web_prefixes_select_the_existing_approved_search_sites() {
+        for (text, expected_site) in [
+            ("gh rust", "github"),
+            ("yt parakeet", "youtube"),
+            ("g linux", "google"),
+            ("w wayland", "wikipedia"),
+            ("r rust", "reddit"),
+            ("so rust", "stackoverflow"),
+        ] {
+            assert!(
+                matches!(search(text, std::iter::empty()).last().unwrap().target,
+                    Target::WebSearch { ref site, .. } if site == expected_site
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn web_query_is_bounded_and_cannot_inject_control_characters() {
+        assert!(web_search("g ").is_none());
+        assert!(web_search(&format!("g {}", "a".repeat(301))).is_none());
+        assert!(web_search("g hello\\nworld").is_some());
+        assert!(web_search("g hello\nworld").is_none());
     }
 
     #[test]
