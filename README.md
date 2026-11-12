@@ -138,7 +138,7 @@ x agent context                    # what X can see right now (never the text)
 | VS Code and other Electron apps | **Not verified.** They only expose text to accessibility when accessibility is switched on, and some editors don't expose it at all. When X can't read the selection it says so and does nothing |
 | Qt apps, Firefox/Zen selections | Not tested for selection or editing |
 
-Run the live checks yourself: `cargo test -p x-agent --test live -- --ignored --test-threads=1`. They briefly open a test window and a terminal.
+Run the live checks yourself: `cargo test -p x-agent --test live -- --ignored --test-threads=1`. They briefly open a test window and a terminal. The [X release QA checklist](docs/x-release-qa.md) records additional manual application tests, benchmark requirements, and release-quality gates; these are **not** claims that the tests have passed.
 
 **Hands-free wake word.** `hex agent listen on` keeps the microphone open and runs any speech that starts with a wake word ("Friday, start coding", or "Friday" and then the command within 8 seconds) as an X command, planned and approved exactly like a typed one. Everything else is transcribed locally, checked for a wake word and dropped: never typed, logged, stored or sent. It is off by default, steps aside while a dictation is recording, and `hex agent listen off` closes the microphone again. Linux only; it uses the default microphone and the dictation model, so it needs the model loaded. With Trusted Actions on, anything you say aloud that starts with the wake word and matches an allowed action runs without a prompt, so leave Trusted Actions off if others can speak near your microphone.
 
