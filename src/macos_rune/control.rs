@@ -524,7 +524,7 @@ impl Pump {
             Some(Pane::History) => Destination::History,
             // While Meetings is off the pane shows its opt-in.
             Some(Pane::Meetings) => Destination::Meetings(None),
-            Some(Pane::Agent) => Destination::Settings,
+            Some(Pane::Agent) | Some(Pane::Quick) => Destination::Settings,
         };
         show(&self.window, destination);
         Ok(ControlReply::done("Opened the window"))

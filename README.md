@@ -144,15 +144,30 @@ Run the live checks yourself: `cargo test -p x-agent --test live -- --ignored --
 
 Known limits: needs `python3` with `python-gobject` and `at-spi2-core` for the selection helper; editing only works in fields that accept edits through accessibility (others are refused rather than typed into); for apps that expose no text to accessibility (browsers, some Electron apps) "search this", "open this link" and "copy this" fall back to the last text you highlighted (the Wayland primary selection, needs `wl-paste`), marked low confidence and always shown for approval even with Trusted Actions on, and never used for edits; `open terminal` supports kitty, foot and alacritty; opening a URL can't be verified; one task (or workflow) at a time; ambiguous windows in a workflow step fail with a message and a `pick` option rather than a chooser.
 
+## Open X Quick from any Linux app
+
+X Quick reuses the app's existing window-control API. Bind the following command
+in Hyprland (or another desktop shortcut manager) to open X directly to Quick:
+
+```ini
+bind = CTRL, SPACE, exec, hex window show quick
+```
+
+This is an opt-in binding: check for conflicts with your dictation hotkey
+before enabling it. X agent must be enabled under Labs. It opens the native
+Agent pane's Quick tab; it is not yet a separate floating palette. On macOS,
+X's agent remains unvalidated and this window destination opens Settings.
+
 ## X Quick (source builds)
 
-In the Agent pane, open **Quick** to search approved applications, focus an
-existing app, switch workspaces or plan a saved workflow without speaking.
 For local utilities, type `=2*(3+4)` to calculate or `color #2563EB` to
 convert a color to HEX, RGB, HSL and OKLCH. Click Copy to use a result on
 supported Wayland desktops (`wl-copy` from `wl-clipboard` is required).
 These utilities do not invoke an AI model.
 
+
+In the Agent pane, open **Quick** to search approved applications, focus an
+existing app, switch workspaces or plan a saved workflow without speaking.
 Search is local and deterministic. Results use the same typed Actions and
 workflow approval paths as the rest of X. Free-form queries also offer an
 explicit validated web-search result. Prefix `gh ` or `yt ` to target GitHub
