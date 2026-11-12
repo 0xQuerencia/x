@@ -107,7 +107,7 @@ fn web_search(query: &str) -> Option<Hit> {
         ("so ", "stackoverflow"),
     ]
     .iter()
-    .find_map(|(prefix, site)| lower.starts_with(prefix).then_some((*site, &raw[prefix.len()..])))
+    .find_map(|(prefix, site)| lower.starts_with(*prefix).then_some((*site, &raw[prefix.len()..])))
     .unwrap_or(("google", raw));
     let terms = terms.trim();
     if terms.is_empty() || terms.chars().count() > 300 || terms.chars().any(char::is_control) {
@@ -231,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_query_does_not_make_up_actions() {
+    fn unmatched_query_offers_only_an_explicit_web_search() {
         let hits = search("this command does not exist", std::iter::empty());
         assert_eq!(hits.len(), 1);
         assert!(matches!(hits[0].target, Target::WebSearch { .. }));
