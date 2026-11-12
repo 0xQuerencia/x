@@ -22,9 +22,12 @@ fn pick_window(host: &dyn Host, app: &str, pick: Option<u8>) -> Result<WinInfo, 
     let mut found = windows_of(host, app)?;
     match (found.len(), pick) {
         (0, _) => Err(format!("No open {app} window")),
-        (1, _) => Ok(found.remove(0)),
+        (1, None) => Ok(found.remove(0)),
         (n, Some(p)) if (1..=n).contains(&usize::from(p)) => Ok(found.remove(usize::from(p) - 1)),
-        (n, _) => Err(format!(
+        (n, Some(p)) => Err(format!(
+            "Window pick {p} is no longer valid: {n} {app} window(s) are open; choose again"
+        )),
+        (n, None) => Err(format!(
             "{n} {app} windows are open; set pick to choose one"
         )),
     }
@@ -374,20 +377,27 @@ pub fn preflight(wf: &Workflow, host: &dyn Host, cfg: &Config) -> Vec<String> {
                     browser: String::new(),
                 }));
             }
-            StepAction::FocusWindow { app, .. } => {
+            StepAction::FocusWindow { app, pick } => {
                 need(cap(Cap::Focus, "focus windows"));
                 if !has_window(app) {
                     need(Err(format!(
                         "no {app} window is open and no earlier step opens one"
                     )));
+                } else if !opens.contains(&app.as_str()) {
+                    // Check a currently ambiguous or stale pick before unrelated steps run.
+                    // A previous OpenApp can change the window set, so those picks are
+                    // still checked at execution time against a fresh window list.
+                    need(pick_window(host, app, *pick).map(drop));
                 }
             }
-            StepAction::MoveWindow { app, .. } => {
+            StepAction::MoveWindow { app, pick, .. } => {
                 need(cap(Cap::MoveToWorkspace, "move windows between workspaces"));
                 if !has_window(app) {
                     need(Err(format!(
                         "no {app} window is open and no earlier step opens one"
                     )));
+                } else if !opens.contains(&app.as_str()) {
+                    need(pick_window(host, app, *pick).map(drop));
                 }
             }
             StepAction::SwitchWorkspace { .. } => {
