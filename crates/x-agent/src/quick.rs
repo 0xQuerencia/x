@@ -80,8 +80,8 @@ fn score(query: &str, hit: &Hit) -> Option<usize> {
     let details = hit.detail.to_lowercase();
     let mut sum = 0usize;
     for term in query.to_lowercase().split_whitespace() {
-        let best = term_score(term, &title)
-            .or_else(|| term_score(term, &details).map(|n| n + 80))?;
+        let best =
+            term_score(term, &title).or_else(|| term_score(term, &details).map(|n| n + 80))?;
         sum += best;
     }
     Some(sum)
@@ -89,10 +89,7 @@ fn score(query: &str, hit: &Hit) -> Option<usize> {
 
 /// `workflows` contains only runnable, validated workflows. Their identifiers
 /// are not treated as free-form commands and are handed to the existing engine.
-pub fn search(
-    query: &str,
-    workflows: impl IntoIterator<Item = (String, String)>,
-) -> Vec<Hit> {
+pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>) -> Vec<Hit> {
     let mut catalog = Vec::new();
     for (id, name) in workflows {
         catalog.push(Hit {
