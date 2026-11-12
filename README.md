@@ -144,6 +144,14 @@ Run the live checks yourself: `cargo test -p x-agent --test live -- --ignored --
 
 Known limits: needs `python3` with `python-gobject` and `at-spi2-core` for the selection helper; editing only works in fields that accept edits through accessibility (others are refused rather than typed into); for apps that expose no text to accessibility (browsers, some Electron apps) "search this", "open this link" and "copy this" fall back to the last text you highlighted (the Wayland primary selection, needs `wl-paste`), marked low confidence and always shown for approval even with Trusted Actions on, and never used for edits; `open terminal` supports kitty, foot and alacritty; opening a URL can't be verified; one task (or workflow) at a time; ambiguous windows in a workflow step fail with a message and a `pick` option rather than a chooser.
 
+## Keep Awake (source builds)
+
+To prevent the OS from idling during a presentation or long task, use
+`hex agent awake on --minutes 60`. Check with `hex agent awake status`, and
+turn it off using `hex agent awake off`. This is optional, capped at eight
+hours, and does not change the dictation state. Some Linux session policies
+allow inhibition of idle only, rather than suspending sleep entirely.
+
 ## X Quick (source builds)
 
 In the Agent pane, open **Quick** to search approved applications, focus an
