@@ -14,7 +14,7 @@ use crate::rune_ui::lists::section_label;
 
 pub(super) fn view(p: Paint, ui: &Ui) -> El {
     let input = TextInput::new(&ui.agent.quick_query)
-        .placeholder(tr("Apps, workflows, =2*(3+4), color #abc, or web search"))
+        .placeholder(tr("Apps, file report, =2*(3+4), color #abc, or web search"))
         .width(None)
         .on_edit(|ui: &mut Ui| &mut ui.agent.quick_query)
         .build(p.k)
@@ -79,6 +79,8 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                         tr("Copy")
                     } else if matches!(&target, Target::PickColor) {
                         tr("Pick")
+                    } else if matches!(&target, Target::OpenFile(_)) {
+                        tr("Open")
                     } else {
                         tr("Plan")
                     },
@@ -92,6 +94,15 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                                 let value = value.clone();
                                 std::thread::spawn(move || {
                                     match ::x_agent::clipboard::copy(&value) {
+                                        Ok(message) => agent_host::service().emit("info", &message),
+                                        Err(error) => agent_host::service().emit("error", &error),
+                                    }
+                                });
+                            }
+                            Target::OpenFile(path) => {
+                                let path = path.clone();
+                                std::thread::spawn(move || {
+                                    match ::x_agent::quick::files::open(&path) {
                                         Ok(message) => agent_host::service().emit("info", &message),
                                         Err(error) => agent_host::service().emit("error", &error),
                                     }

@@ -168,6 +168,12 @@ allow inhibition of idle only, rather than suspending sleep entirely.
 
 ## X Quick (source builds)
 
+Use `file report` to search filenames on demand under common home folders
+(Desktop, Documents, Downloads, Projects, code and src). Results are local,
+limited and never sent to a model. Clicking **Open** requests the default
+system file opener; X refuses executable-looking files and reports the launch
+as unverified.
+
 For local utilities, type `=2*(3+4)` to calculate or `color #2563EB` to
 convert a color to HEX, RGB, HSL and OKLCH. Click Copy to use a result on
 supported Wayland desktops (`wl-copy` from `wl-clipboard` is required).
