@@ -792,6 +792,37 @@ fn step_row(p: Paint, step: &StepEd, i: usize, count: usize) -> El {
             },
         ));
     }
+    if matches!(kind, Kind::FocusWindow | Kind::MoveWindow) {
+        // A saved pick is a 1-based index in the current sorted window list.
+        // Auto refuses ambiguous windows rather than guessing. This is a simple
+        // control, not a persistent identity pin: a deleted/reordered window can
+        // change the meaning of an index, so review picks before running.
+        let label = if step.pick == 0 {
+            tr("window: auto (only one match)").to_string()
+        } else {
+            format!("{} {}", tr("window"), step.pick)
+        };
+        line = line
+            .child(button(
+                p,
+                &key("pick-"),
+                "−",
+                ButtonKind::Secondary,
+                move |ui: &mut Ui, _| {
+                    with_step(ui, i, |s| s.pick = s.pick.saturating_sub(1));
+                },
+            ))
+            .child(text(label).key(key("pick")).font(DESCRIPTION).color(p.text()))
+            .child(button(
+                p,
+                &key("pick+"),
+                "+",
+                ButtonKind::Secondary,
+                move |ui: &mut Ui, _| {
+                    with_step(ui, i, |s| s.pick = s.pick.saturating_add(1));
+                },
+            ));
+    }
     if kind.uses_workspace() {
         let optional = kind.workspace_optional();
         let label = if step.workspace == 0 {
