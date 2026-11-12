@@ -156,7 +156,11 @@ impl StepEd {
                 ed.kind = Kind::SwitchWorkspace;
                 ed.workspace = *workspace;
             }
-            StepAction::MoveWindow { app, workspace, pick } => {
+            StepAction::MoveWindow {
+                app,
+                workspace,
+                pick,
+            } => {
                 ed.kind = Kind::MoveWindow;
                 ed.app = app_index(app);
                 ed.workspace = *workspace;
@@ -812,7 +816,12 @@ fn step_row(p: Paint, step: &StepEd, i: usize, count: usize) -> El {
                     with_step(ui, i, |s| s.pick = s.pick.saturating_sub(1));
                 },
             ))
-            .child(text(label).key(key("pick")).font(DESCRIPTION).color(p.text()))
+            .child(
+                text(label)
+                    .key(key("pick"))
+                    .font(DESCRIPTION)
+                    .color(p.text()),
+            )
             .child(button(
                 p,
                 &key("pick+"),
