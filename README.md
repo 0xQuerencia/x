@@ -148,6 +148,11 @@ Known limits: needs `python3` with `python-gobject` and `at-spi2-core` for the s
 
 In the Agent pane, open **Quick** to search approved applications, focus an
 existing app, switch workspaces or plan a saved workflow without speaking.
+For local utilities, type `=2*(3+4)` to calculate or `color #2563EB` to
+convert a color to HEX, RGB, HSL and OKLCH. Click Copy to use a result on
+supported Wayland desktops (`wl-copy` from `wl-clipboard` is required).
+These utilities do not invoke an AI model.
+
 Search is local and deterministic. Results use the same typed Actions and
 workflow approval paths as the rest of X. Free-form queries also offer an
 explicit validated web-search result. Prefix `gh ` or `yt ` to target GitHub
