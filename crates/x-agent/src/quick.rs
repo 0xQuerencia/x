@@ -4,6 +4,7 @@
 use crate::tools;
 
 mod colors;
+pub mod files;
 mod math;
 pub mod picker;
 
@@ -22,6 +23,7 @@ pub enum Target {
     /// A pure local result explicitly copied by the user, never executed as a command.
     CopyResult(String),
     PickColor,
+    OpenFile(String),
 }
 
 impl Target {
@@ -33,7 +35,7 @@ impl Target {
             Self::FocusApp(app) => Some(format!("focus {app}")),
             Self::Workspace(n) => Some(format!("switch to workspace {n}")),
             Self::WebSearch { site, query } => Some(format!("search {site} for {query}")),
-            Self::Workflow(_) | Self::CopyResult(_) | Self::PickColor => None,
+            Self::Workflow(_) | Self::CopyResult(_) | Self::PickColor | Self::OpenFile(_) => None,
         }
     }
 }
@@ -164,6 +166,13 @@ fn web_search(query: &str) -> Option<Hit> {
 fn local_results(query: &str) -> Vec<Hit> {
     let trimmed = query.trim();
     let mut results = Vec::new();
+    for file in files::search(trimmed) {
+        results.push(Hit {
+            title: file.name,
+            detail: format!("Local file · {}", file.path),
+            target: Target::OpenFile(file.path),
+        });
+    }
     if picker::available()
         && (trimmed.eq_ignore_ascii_case("pick color")
             || trimmed.eq_ignore_ascii_case("color picker")
