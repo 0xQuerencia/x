@@ -382,6 +382,16 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Keep the desktop awake for a bounded duration, stop it or check remaining time.
+    /// Uses the OS's existing native recording-inhibitor backend without recording.
+    Awake {
+        #[arg(value_parser = ["on", "off", "status"])]
+        command: String,
+        #[arg(long, default_value_t = 60)]
+        minutes: u32,
+        #[command(flatten)]
+        output: Output,
+    },
     /// Rerun the last Work goal with command number `index` (from `status`, 0 first) that
     /// OpenCode was refused allowed for that one run. The rerun still asks for approval.
     Allow {
