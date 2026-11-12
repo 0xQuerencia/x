@@ -370,6 +370,8 @@ pub(crate) enum Destination {
     History,
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     Agent,
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    Quick,
 }
 
 /// Where `hex window show` opens the window. While Meetings is off, its
