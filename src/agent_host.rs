@@ -772,6 +772,31 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Err(error) => ControlReply::error("refused", error),
         },
         AgentAction::Listen { mode } => wake::command(&mode),
+        AgentAction::Awake { command, minutes } => match command.as_str() {
+            "on" => match crate::audio::idle_sleep::keep_awake_start(minutes) {
+                Ok(()) => ControlReply::done(format!(
+                    "Keep Awake enabled for {minutes} minutes (the OS may limit sleep inhibition)"
+                )),
+                Err(error) => ControlReply::error("refused", error),
+            },
+            "off" => ControlReply::done(if crate::audio::idle_sleep::keep_awake_stop() {
+                "Keep Awake stopped"
+            } else {
+                "Keep Awake was already off"
+            }),
+            "status" => ControlReply::done(
+                crate::audio::idle_sleep::keep_awake_remaining().map_or_else(
+                    || "Keep Awake is off".to_string(),
+                    |remaining| {
+                        format!(
+                            "Keep Awake active for up to {} more minutes",
+                            remaining.as_secs().div_ceil(60)
+                        )
+                    },
+                ),
+            ),
+            _ => ControlReply::error("usage", "Use awake on|off|status"),
+        },
         AgentAction::Voice { mode } => match VoiceMode::parse(&mode) {
             Some(mode) => set_voice_mode(mode),
             None => ControlReply::error("usage", "mode is dictate, actions, work, auto or smart"),

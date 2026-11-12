@@ -158,6 +158,14 @@ before enabling it. X agent must be enabled under Labs. It opens the native
 Agent pane's Quick tab; it is not yet a separate floating palette. On macOS,
 X's agent remains unvalidated and this window destination opens Settings.
 
+## Keep Awake (source builds)
+
+To prevent the OS from idling during a presentation or long task, use
+`hex agent awake on --minutes 60`. Check with `hex agent awake status`, and
+turn it off using `hex agent awake off`. This is optional, capped at eight
+hours, and does not change the dictation state. Some Linux session policies
+allow inhibition of idle only, rather than suspending sleep entirely.
+
 ## X Quick (source builds)
 
 For local utilities, type `=2*(3+4)` to calculate or `color #2563EB` to
