@@ -7,6 +7,7 @@ mod colors;
 pub mod files;
 mod math;
 pub mod picker;
+pub mod snippets;
 
 const MAX_RESULTS: usize = 8;
 
@@ -171,6 +172,13 @@ fn local_results(query: &str) -> Vec<Hit> {
             title: file.name,
             detail: format!("Local file · {}", file.path),
             target: Target::OpenFile(file.path),
+        });
+    }
+    for snippet in snippets::search(trimmed) {
+        results.push(Hit {
+            title: format!("Snippet: {}", snippet.name),
+            detail: "Saved locally · copy text".into(),
+            target: Target::CopyResult(snippet.text),
         });
     }
     if picker::available()
