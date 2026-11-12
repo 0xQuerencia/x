@@ -3,7 +3,7 @@
 
 use ::x_agent::quick::{self, Target};
 use ::x_agent::service::Mode;
-use rune::{El, TextEdit, col, row, text};
+use rune::{El, col, row, text};
 use rune_kit::TextInput;
 
 use crate::agent_host;
