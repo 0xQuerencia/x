@@ -15,7 +15,10 @@ pub enum Target {
     FocusApp(String),
     Workspace(u8),
     Workflow(String),
-    WebSearch { site: String, query: String },
+    WebSearch {
+        site: String,
+        query: String,
+    },
     /// A pure local result explicitly copied by the user, never executed as a command.
     CopyResult(String),
     PickColor,
@@ -162,7 +165,9 @@ fn local_results(query: &str) -> Vec<Hit> {
             target: Target::PickColor,
         });
     }
-    let expression = trimmed.strip_prefix('=').or_else(|| trimmed.strip_prefix("calc "));
+    let expression = trimmed
+        .strip_prefix('=')
+        .or_else(|| trimmed.strip_prefix("calc "));
     if let Some(expression) = expression
         && let Some(value) = math::calculate(expression)
     {
@@ -186,10 +191,7 @@ fn local_results(query: &str) -> Vec<Hit> {
             });
         }
     }
-    let mut local = local_results(query);
-    local.extend(results);
-    local.truncate(MAX_RESULTS);
-    local
+    results
 }
 
 /// `workflows` contains only runnable, validated workflows. Their identifiers
@@ -247,7 +249,10 @@ pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>
         results.truncate(MAX_RESULTS - 1);
         results.push(web);
     }
-    results
+    let mut local = local_results(query);
+    local.extend(results);
+    local.truncate(MAX_RESULTS);
+    local
 }
 
 #[cfg(test)]
@@ -330,14 +335,21 @@ mod tests {
         let hits = search("=2 * (3 + 4)", std::iter::empty());
         assert_eq!(hits[0].target, Target::CopyResult("14".into()));
         assert_eq!(hits[0].target.phrase(), None);
-        assert!(!search("=0/0", std::iter::empty()).iter().any(|h| matches!(h.target, Target::CopyResult(_))));
+        assert!(
+            !search("=0/0", std::iter::empty())
+                .iter()
+                .any(|h| matches!(h.target, Target::CopyResult(_)))
+        );
     }
 
     #[test]
     fn color_values_are_available_in_four_formats() {
         let hits = search("color #abc", std::iter::empty());
         assert_eq!(hits[0].target, Target::CopyResult("#AABBCC".into()));
-        assert_eq!(hits[1].target, Target::CopyResult("rgb(170, 187, 204)".into()));
+        assert_eq!(
+            hits[1].target,
+            Target::CopyResult("rgb(170, 187, 204)".into())
+        );
         assert!(hits.iter().any(|h| h.title.starts_with("OKLCH:")));
     }
 
