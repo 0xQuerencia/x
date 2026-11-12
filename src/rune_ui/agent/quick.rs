@@ -28,10 +28,12 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
         .child(section_label(p, "quick-title", tr("Quick actions")))
         .child(input)
         .child(
-            text(tr("Local search only. Actions use X's normal plan and approval checks."))
-                .key("quick-description")
-                .font(DESCRIPTION)
-                .color(p.muted()),
+            text(tr(
+                "Local search only. Actions use X's normal plan and approval checks.",
+            ))
+            .key("quick-description")
+            .font(DESCRIPTION)
+            .color(p.muted()),
         );
 
     if matches.is_empty() {
@@ -78,9 +80,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                         ui.agent.show_quick = false;
                         match &target {
                             Target::Workflow(id) => {
-                                if let Err(error) =
-                                    agent_host::service().plan_workflow_by_id(id)
-                                {
+                                if let Err(error) = agent_host::service().plan_workflow_by_id(id) {
                                     agent_host::service().emit("error", &error);
                                 }
                             }
