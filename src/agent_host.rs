@@ -787,7 +787,12 @@ pub fn handle(action: AgentAction) -> ControlReply {
             "status" => ControlReply::done(
                 crate::audio::idle_sleep::keep_awake_remaining().map_or_else(
                     || "Keep Awake is off".to_string(),
-                    |remaining| format!("Keep Awake active for up to {} more minutes", remaining.as_secs().div_ceil(60)),
+                    |remaining| {
+                        format!(
+                            "Keep Awake active for up to {} more minutes",
+                            remaining.as_secs().div_ceil(60)
+                        )
+                    },
                 ),
             ),
             _ => ControlReply::error("usage", "Use awake on|off|status"),
