@@ -70,17 +70,17 @@ pub struct OpenCodeSessionTime {
 }
 
 fn executable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
     #[cfg(unix)]
     {
+        if !path.is_file() {
+            return false;
+        }
         use std::os::unix::fs::PermissionsExt;
         fs::metadata(path).is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
     }
     #[cfg(not(unix))]
     {
-        true
+        path.is_file()
     }
 }
 
