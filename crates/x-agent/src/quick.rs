@@ -93,8 +93,8 @@ fn score(query: &str, hit: &Hit) -> Option<usize> {
 /// requests. Prefixes are deliberately explicit; ordinary queries search
 /// Google. Never invoke an LLM or construct a URL directly from a query.
 fn web_search(query: &str) -> Option<Hit> {
-    let raw = query.trim();
-    if raw.is_empty() {
+    let raw = query.trim_start();
+    if raw.trim().is_empty() {
         return None;
     }
     let lower = raw.to_ascii_lowercase();
@@ -199,7 +199,7 @@ pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>
         .map(|(_, hit)| hit)
         .collect();
     if let Some(web) = web_search(query) {
-        // Search fallback: the last result is always an explicit search
+        // Explicit search fallback: the last result is always a searchable
         // option. Don't hide an app or workflow hit unless the list is full.
         results.truncate(MAX_RESULTS - 1);
         results.push(web);
