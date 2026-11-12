@@ -18,10 +18,12 @@ pub(super) fn available() -> bool {
 /// a worker thread in response to the explicit Pick button.
 pub fn pick() -> Result<String, String> {
     if !cfg!(target_os = "linux") {
-        return Err("Screen color picking currently requires a supported Linux Wayland session".into());
+        return Err(
+            "Screen color picking currently requires a supported Linux Wayland session".into(),
+        );
     }
-    let executable = tools::which("hyprpicker")
-        .ok_or("Install hyprpicker to enable screen color picking")?;
+    let executable =
+        tools::which("hyprpicker").ok_or("Install hyprpicker to enable screen color picking")?;
     if tools::which("wl-copy").is_none() {
         return Err("Install wl-clipboard so the selected color can be copied".into());
     }
@@ -37,7 +39,9 @@ pub fn pick() -> Result<String, String> {
         match child.try_wait() {
             Ok(Some(status)) => {
                 if !status.success() {
-                    return Err(format!("Color selection was cancelled or failed ({status})"));
+                    return Err(format!(
+                        "Color selection was cancelled or failed ({status})"
+                    ));
                 }
                 let mut bytes = Vec::new();
                 child
