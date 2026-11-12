@@ -42,6 +42,109 @@ impl Drop for PreventSleep {
     }
 }
 
+/// An optional, explicitly requested, time-limited system idle inhibitor.
+/// Unlike recording prevention, it does NOT increment HELD: using this utility
+/// cannot suppress speech-model idle unloading or pretend a dictation exists.
+struct WakeSession {
+    until: Option<std::time::Instant>,
+    inhibition: Option<platform::PreventSleep>,
+}
+
+struct WakeShared {
+    state: std::sync::Mutex<WakeSession>,
+    changed: std::sync::Condvar,
+}
+
+static KEEP_AWAKE: std::sync::OnceLock<Result<std::sync::Arc<WakeShared>, String>> =
+    std::sync::OnceLock::new();
+
+fn awake_shared() -> Result<std::sync::Arc<WakeShared>, String> {
+    KEEP_AWAKE
+        .get_or_init(|| {
+            let shared = std::sync::Arc::new(WakeShared {
+                state: std::sync::Mutex::new(WakeSession {
+                    until: None,
+                    inhibition: None,
+                }),
+                changed: std::sync::Condvar::new(),
+            });
+            let worker = shared.clone();
+            std::thread::Builder::new()
+                .name("x-keep-awake-timer".into())
+                .spawn(move || {
+                    loop {
+                        let mut state = worker.state.lock().unwrap_or_else(|e| e.into_inner());
+                        match state.until {
+                            None => {
+                                state = worker.changed.wait(state).unwrap_or_else(|e| e.into_inner());
+                                drop(state);
+                            }
+                            Some(until) if std::time::Instant::now() >= until => {
+                                state.until = None;
+                                state.inhibition.take();
+                                drop(state);
+                            }
+                            Some(until) => {
+                                let timeout = until.saturating_duration_since(std::time::Instant::now());
+                                let (state, _) = worker
+                                    .changed
+                                    .wait_timeout(state, timeout)
+                                    .unwrap_or_else(|e| e.into_inner());
+                                drop(state);
+                            }
+                        }
+                    }
+                })
+                .map_err(|e| format!("Could not start Keep Awake timer: {e}"))?;
+            Ok(shared)
+        })
+        .clone()
+}
+
+fn checked_minutes(minutes: u32) -> Result<std::time::Duration, String> {
+    (1..=480)
+        .contains(&minutes)
+        .then_some(std::time::Duration::from_secs(u64::from(minutes) * 60))
+        .ok_or_else(|| "Keep Awake duration must be 1–480 minutes".to_string())
+}
+
+/// Hold the OS's idle inhibitor for at most eight hours. Consecutive starts
+/// replace the old duration and guard rather than leaking timer threads.
+pub fn keep_awake_start(minutes: u32) -> Result<(), String> {
+    let duration = checked_minutes(minutes)?;
+    let shared = awake_shared()?;
+    let inhibitor = platform::PreventSleep::start()
+        .map_err(|e| format!("This desktop could not inhibit idle sleep: {e}"))?;
+    let mut session = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    session.until = Some(std::time::Instant::now() + duration);
+    session.inhibition = Some(inhibitor);
+    shared.changed.notify_one();
+    Ok(())
+}
+
+/// Release the inhibitor immediately; never terminate a running recording.
+pub fn keep_awake_stop() -> bool {
+    let Some(Ok(shared)) = KEEP_AWAKE.get() else {
+        return false;
+    };
+    let mut session = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    let was_active = session.until.take().is_some();
+    session.inhibition.take();
+    shared.changed.notify_one();
+    was_active
+}
+
+pub fn keep_awake_remaining() -> Option<std::time::Duration> {
+    let Some(Ok(shared)) = KEEP_AWAKE.get() else {
+        return None;
+    };
+    let session = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+    session
+        .until
+        .filter(|_| session.inhibition.is_some())
+        .map(|until| until.saturating_duration_since(std::time::Instant::now()))
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     use std::ffi::c_void;
