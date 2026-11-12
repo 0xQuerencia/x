@@ -327,6 +327,19 @@ mod platform {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn keep_awake_duration_is_bounded() {
+        assert!(super::checked_minutes(0).is_err());
+        assert!(super::checked_minutes(1).is_ok());
+        assert!(super::checked_minutes(480).is_ok());
+        assert!(super::checked_minutes(481).is_err());
+    }
+
+    #[test]
+    fn keep_awake_is_off_before_the_first_request() {
+        assert!(super::keep_awake_remaining().is_none());
+    }
+
+    #[test]
     #[ignore = "exercises the OS's native idle-sleep prevention"]
     fn native_idle_sleep_prevention_acquires_and_releases() {
         drop(super::platform::PreventSleep::start().unwrap());
