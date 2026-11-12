@@ -251,6 +251,11 @@ pub enum AgentAction {
     Listen {
         mode: String,
     },
+    /// Explicit timed desktop sleep inhibition; independent of dictation state.
+    Awake {
+        command: String,
+        minutes: u32,
+    },
     /// Rerun the last Work goal with one refused command allowed for that run only.
     Allow {
         index: usize,
