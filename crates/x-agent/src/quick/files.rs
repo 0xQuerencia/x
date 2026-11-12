@@ -19,11 +19,20 @@ pub struct FileHit {
 }
 
 fn roots(home: &Path) -> Vec<PathBuf> {
-    ["Desktop", "Documents", "Downloads", "Projects", "code", "src"]
-        .iter()
-        .map(|folder| home.join(folder))
-        .filter(|root| fs::symlink_metadata(root).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()))
-        .collect()
+    [
+        "Desktop",
+        "Documents",
+        "Downloads",
+        "Projects",
+        "code",
+        "src",
+    ]
+    .iter()
+    .map(|folder| home.join(folder))
+    .filter(|root| {
+        fs::symlink_metadata(root).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+    })
+    .collect()
 }
 
 /// Search only filenames, never file contents. Common build/cache directories
@@ -61,7 +70,10 @@ fn scan(roots: &[PathBuf], text: &str) -> Vec<FileHit> {
             }
             if file_type.is_dir() {
                 if depth < MAX_DEPTH
-                    && !matches!(name.as_str(), "node_modules" | "target" | "build" | "dist" | "venv" | "__pycache__")
+                    && !matches!(
+                        name.as_str(),
+                        "node_modules" | "target" | "build" | "dist" | "venv" | "__pycache__"
+                    )
                 {
                     queue.push_back((entry.path(), depth + 1));
                 }
@@ -91,7 +103,9 @@ fn scan(roots: &[PathBuf], text: &str) -> Vec<FileHit> {
 /// Triggering is explicit: "file report" or "f report" searches on this machine.
 pub fn search(query: &str) -> Vec<FileHit> {
     let text = query.trim();
-    let prefix = text.strip_prefix("file ").or_else(|| text.strip_prefix("f "));
+    let prefix = text
+        .strip_prefix("file ")
+        .or_else(|| text.strip_prefix("f "));
     let Some(needle) = prefix else {
         return Vec::new();
     };
@@ -102,10 +116,15 @@ pub fn search(query: &str) -> Vec<FileHit> {
 }
 
 fn refused_extension(path: &Path) -> bool {
-    let suffix = path.extension().and_then(|s| s.to_str()).unwrap_or_default();
-    ["desktop", "sh", "exe", "bat", "cmd", "com", "msi", "ps1", "appimage", "jar", "run"]
-        .iter()
-        .any(|blocked| suffix.eq_ignore_ascii_case(blocked))
+    let suffix = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    [
+        "desktop", "sh", "exe", "bat", "cmd", "com", "msi", "ps1", "appimage", "jar", "run",
+    ]
+    .iter()
+    .any(|blocked| suffix.eq_ignore_ascii_case(blocked))
 }
 
 /// Open only a regular nonexecutable file in one of X Quick's scoped user roots.
@@ -121,8 +140,14 @@ pub fn open(path: &str) -> Result<String, String> {
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err("This action opens ordinary local files only".into());
     }
-    let canonical = selected.canonicalize().map_err(|e| format!("File is unavailable: {e}"))?;
-    if !allowed.iter().filter_map(|p| p.canonicalize().ok()).any(|root| canonical.starts_with(root)) {
+    let canonical = selected
+        .canonicalize()
+        .map_err(|e| format!("File is unavailable: {e}"))?;
+    if !allowed
+        .iter()
+        .filter_map(|p| p.canonicalize().ok())
+        .any(|root| canonical.starts_with(root))
+    {
         return Err("The file is outside the configured Quick search folders".into());
     }
     if refused_extension(&canonical) {
@@ -174,7 +199,13 @@ mod tests {
 
     #[test]
     fn refuses_executable_extension_and_blank_queries() {
-        for name in ["run.sh", "app.desktop", "helper.exe", "installer.msi", "test.jar"] {
+        for name in [
+            "run.sh",
+            "app.desktop",
+            "helper.exe",
+            "installer.msi",
+            "test.jar",
+        ] {
             assert!(refused_extension(Path::new(name)), "{name}");
         }
         assert!(scan(&[], "").is_empty());
@@ -189,7 +220,11 @@ mod tests {
         let root = tmp.path().join("Documents");
         fs::create_dir(&root).unwrap();
         fs::write(tmp.path().join("private-report.txt"), "private").unwrap();
-        symlink(tmp.path().join("private-report.txt"), root.join("linked-report.txt")).unwrap();
+        symlink(
+            tmp.path().join("private-report.txt"),
+            root.join("linked-report.txt"),
+        )
+        .unwrap();
         assert!(scan(&[root], "report").is_empty());
     }
 }
