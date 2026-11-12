@@ -68,6 +68,18 @@ Source: `crates/x-agent/src/quick.rs`, `src/rune_ui/agent/quick.rs`,
 `src/rune_ui/agent.rs`. Unit tests cover ranking and typed-action routing;
 real key focus, UI accessibility, layout and desktop latency remain unverified.
 
+## Timed Keep Awake
+
+`hex agent awake on --minutes 60` holds an OS idle inhibitor for up to one
+hour, while `hex agent awake off` releases it and `hex agent awake status`
+reports the remaining duration. Durations must be 1–480 minutes.
+
+The timer uses Hex's platform-native idle prevention but does **not** set
+its recording-in-progress state or keep the speech model warm. On Linux,
+logind may refuse blocking system sleep and allow only idle inhibition. This
+is an explicit session control, not a calendar-based schedule. Nothing runs
+until the user asks for it.
+
 ## What X will and won't do
 
 * **Actions** are a closed registry: launch an approved app, open a public
