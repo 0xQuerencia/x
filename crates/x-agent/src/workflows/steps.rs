@@ -22,9 +22,12 @@ fn pick_window(host: &dyn Host, app: &str, pick: Option<u8>) -> Result<WinInfo, 
     let mut found = windows_of(host, app)?;
     match (found.len(), pick) {
         (0, _) => Err(format!("No open {app} window")),
-        (1, _) => Ok(found.remove(0)),
+        (1, None) => Ok(found.remove(0)),
         (n, Some(p)) if (1..=n).contains(&usize::from(p)) => Ok(found.remove(usize::from(p) - 1)),
-        (n, _) => Err(format!(
+        (n, Some(p)) => Err(format!(
+            "Window pick {p} is no longer valid: {n} {app} window(s) are open; choose again"
+        )),
+        (n, None) => Err(format!(
             "{n} {app} windows are open; set pick to choose one"
         )),
     }
