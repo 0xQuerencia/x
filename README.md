@@ -160,6 +160,12 @@ X's agent remains unvalidated and this window destination opens Settings.
 
 ## X Quick (source builds)
 
+For local utilities, type `=2*(3+4)` to calculate or `color #2563EB` to
+convert a color to HEX, RGB, HSL and OKLCH. Click Copy to use a result on
+supported Wayland desktops (`wl-copy` from `wl-clipboard` is required).
+These utilities do not invoke an AI model.
+
+
 In the Agent pane, open **Quick** to search approved applications, focus an
 existing app, switch workspaces or plan a saved workflow without speaking.
 Search is local and deterministic. Results use the same typed Actions and

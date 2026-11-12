@@ -3,6 +3,10 @@
 
 use crate::tools;
 
+mod colors;
+mod math;
+pub mod picker;
+
 const MAX_RESULTS: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -11,7 +15,13 @@ pub enum Target {
     FocusApp(String),
     Workspace(u8),
     Workflow(String),
-    WebSearch { site: String, query: String },
+    WebSearch {
+        site: String,
+        query: String,
+    },
+    /// A pure local result explicitly copied by the user, never executed as a command.
+    CopyResult(String),
+    PickColor,
 }
 
 impl Target {
@@ -23,7 +33,7 @@ impl Target {
             Self::FocusApp(app) => Some(format!("focus {app}")),
             Self::Workspace(n) => Some(format!("switch to workspace {n}")),
             Self::WebSearch { site, query } => Some(format!("search {site} for {query}")),
-            Self::Workflow(_) => None,
+            Self::Workflow(_) | Self::CopyResult(_) | Self::PickColor => None,
         }
     }
 }
@@ -149,6 +159,51 @@ fn web_search(query: &str) -> Option<Hit> {
     })
 }
 
+/// High-signal local utilities run without a model or shell and cannot
+/// execute arbitrary code. They only offer a copyable result on demand.
+fn local_results(query: &str) -> Vec<Hit> {
+    let trimmed = query.trim();
+    let mut results = Vec::new();
+    if picker::available()
+        && (trimmed.eq_ignore_ascii_case("pick color")
+            || trimmed.eq_ignore_ascii_case("color picker")
+            || trimmed.eq_ignore_ascii_case("pick"))
+    {
+        results.push(Hit {
+            title: "Pick a color from the screen".into(),
+            detail: "Requires hyprpicker · click to select one pixel".into(),
+            target: Target::PickColor,
+        });
+    }
+    let expression = trimmed
+        .strip_prefix('=')
+        .or_else(|| trimmed.strip_prefix("calc "));
+    if let Some(expression) = expression
+        && let Some(value) = math::calculate(expression)
+    {
+        results.push(Hit {
+            title: format!("= {value}"),
+            detail: "Calculated locally · copy result".into(),
+            target: Target::CopyResult(value),
+        });
+    }
+    if let Some(formats) = colors::convert(trimmed) {
+        for (name, value) in [
+            ("HEX", formats.hex),
+            ("RGB", formats.rgb),
+            ("HSL", formats.hsl),
+            ("OKLCH", formats.oklch),
+        ] {
+            results.push(Hit {
+                title: format!("{name}: {value}"),
+                detail: "Converted locally · copy result".into(),
+                target: Target::CopyResult(value),
+            });
+        }
+    }
+    results
+}
+
 /// `workflows` contains only runnable, validated workflows. Their identifiers
 /// are not treated as free-form commands and are handed to the existing engine.
 pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>) -> Vec<Hit> {
@@ -204,7 +259,10 @@ pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>
         results.truncate(MAX_RESULTS - 1);
         results.push(web);
     }
-    results
+    let mut local = local_results(query);
+    local.extend(results);
+    local.truncate(MAX_RESULTS);
+    local
 }
 
 #[cfg(test)]
@@ -288,6 +346,29 @@ mod tests {
         assert!(web_search(&format!("g {}", "a".repeat(301))).is_none());
         assert!(web_search("g hello\\nworld").is_some());
         assert!(web_search("g hello\nworld").is_none());
+    }
+
+    #[test]
+    fn calculator_is_a_bounded_local_result_not_an_action() {
+        let hits = search("=2 * (3 + 4)", std::iter::empty());
+        assert_eq!(hits[0].target, Target::CopyResult("14".into()));
+        assert_eq!(hits[0].target.phrase(), None);
+        assert!(
+            !search("=0/0", std::iter::empty())
+                .iter()
+                .any(|h| matches!(h.target, Target::CopyResult(_)))
+        );
+    }
+
+    #[test]
+    fn color_values_are_available_in_four_formats() {
+        let hits = search("color #abc", std::iter::empty());
+        assert_eq!(hits[0].target, Target::CopyResult("#AABBCC".into()));
+        assert_eq!(
+            hits[1].target,
+            Target::CopyResult("rgb(170, 187, 204)".into())
+        );
+        assert!(hits.iter().any(|h| h.title.starts_with("OKLCH:")));
     }
 
     #[test]

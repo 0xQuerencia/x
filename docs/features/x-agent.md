@@ -66,6 +66,8 @@ This uses the existing typed Search action and its normal approval gate.
 - The existing window-control API now exposes `hex window show quick`. Bind
   that command to a desktop shortcut to jump straight into the Quick tab
   from another app without adding a new global keyboard interceptor.
+- A query starting with `=` or `calc ` evaluates bounded arithmetic entirely locally (parentheses, +, -, *, /, %, exponentiation); invalid calculations are refused instead of guessed.
+- A HEX or RGB color query (e.g. `color #2563EB` or `rgb(37, 99, 235)`) produces copyable HEX, RGB, HSL, and OKLCH values without a model or screen capture. `Copy` uses the existing Wayland clipboard action, which is not cross-platform yet.
 - This is currently a **native pane tab**, not a globally bound floating
   launcher or a replacement for Hex's dictation shortcut.
 - The search UI does not run an action automatically on selection; the button
