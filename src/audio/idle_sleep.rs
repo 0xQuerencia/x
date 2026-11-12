@@ -76,7 +76,10 @@ fn awake_shared() -> Result<std::sync::Arc<WakeShared>, String> {
                         let mut state = worker.state.lock().unwrap_or_else(|e| e.into_inner());
                         match state.until {
                             None => {
-                                state = worker.changed.wait(state).unwrap_or_else(|e| e.into_inner());
+                                state = worker
+                                    .changed
+                                    .wait(state)
+                                    .unwrap_or_else(|e| e.into_inner());
                                 drop(state);
                             }
                             Some(until) if std::time::Instant::now() >= until => {
@@ -85,7 +88,8 @@ fn awake_shared() -> Result<std::sync::Arc<WakeShared>, String> {
                                 drop(state);
                             }
                             Some(until) => {
-                                let timeout = until.saturating_duration_since(std::time::Instant::now());
+                                let timeout =
+                                    until.saturating_duration_since(std::time::Instant::now());
                                 let (state, _) = worker
                                     .changed
                                     .wait_timeout(state, timeout)
