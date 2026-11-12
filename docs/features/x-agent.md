@@ -56,6 +56,11 @@ local action matches, Quick also offers an **explicit** web-search row (never
 opens a URL without a click). Prefix queries with `gh `, `yt `, `g `, `w `,
 `r `, or `so ` for GitHub, YouTube, Google, Wikipedia, Reddit, or Stack Overflow.
 This uses the existing typed Search action and its normal approval gate.
+- On Linux Wayland sessions with `hyprpicker` and `wl-clipboard` installed,
+  type `pick color` in Quick to open a **user-initiated** screen pixel selector.
+  The selected HEX value is copied to the clipboard. This is optional and
+  times out after 45 seconds. Other desktops do not advertise this picker.
+
 
 - Opening or focusing an app and switching workspace goes through the existing
   Actions planner, showing the same plan and approval controls as spoken input.
@@ -63,6 +68,8 @@ This uses the existing typed Search action and its normal approval gate.
   path. Invalid or conflicting workflow entries are omitted from Quick.
 - The workflow list is reused from the manager's short-lived cache; no workflow
   files are reread for every search keystroke.
+- A query starting with `=` or `calc ` evaluates bounded arithmetic entirely locally (parentheses, +, -, *, /, %, exponentiation); invalid calculations are refused instead of guessed.
+- A HEX or RGB color query (e.g. `color #2563EB` or `rgb(37, 99, 235)`) produces copyable HEX, RGB, HSL, and OKLCH values without a model or screen capture. `Copy` uses the existing Wayland clipboard action, which is not cross-platform yet.
 - This is currently a **native pane tab**, not a globally bound floating
   launcher or a replacement for Hex's dictation shortcut.
 - The search UI does not run an action automatically on selection; the button
