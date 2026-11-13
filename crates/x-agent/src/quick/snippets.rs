@@ -110,7 +110,10 @@ impl Store {
     }
 
     fn write(&self, snippets: &[Snippet]) -> Result<(), String> {
-        let parent = self.path.parent().ok_or("No snippet configuration directory")?;
+        let parent = self
+            .path
+            .parent()
+            .ok_or("No snippet configuration directory")?;
         fs::create_dir_all(parent)
             .map_err(|error| format!("Cannot create snippet directory: {error}"))?;
         let dir = fs::symlink_metadata(parent)
@@ -169,7 +172,9 @@ fn validate(trigger: &str, text: &str) -> Result<(), String> {
     if text.is_empty()
         || text.chars().count() > MAX_BODY
         || text.contains('\0')
-        || text.chars().any(|ch| ch.is_control() && ch != '\n' && ch != '\t')
+        || text
+            .chars()
+            .any(|ch| ch.is_control() && ch != '\n' && ch != '\t')
     {
         return Err("Snippet text must be 1–4096 characters without control characters".into());
     }
@@ -220,7 +225,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("x-snippets.json");
         let store = Store::at(path.clone());
-        for trigger in ["", "not allowed", "too-long-a-trigger-name-that-is-absolutely-invalid"] {
+        for trigger in [
+            "",
+            "not allowed",
+            "too-long-a-trigger-name-that-is-absolutely-invalid",
+        ] {
             assert!(store.upsert(trigger, "Hello").is_err());
         }
         assert!(store.upsert("valid", "").is_err());
