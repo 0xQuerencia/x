@@ -114,7 +114,7 @@ struct Raw {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum Step {
+pub enum Step {
     Click(String),
     Type(String, String),
     Key(Key),
@@ -287,6 +287,7 @@ fn wait_for_window(desktop: &dyn Desktop, app: &str, host: &dyn Host) -> Result<
 }
 
 struct Progress {
+    app: String,
     acts: usize,
     errors: usize,
     unchanged: usize,
@@ -321,11 +322,14 @@ pub fn run(
 /// Drive the same desktop verification loop with typed decisions rather than
 /// text-generating chat completions. Jev uses this; all safety guards remain
 /// inside the executor below.
+type DecisionFn<'a> =
+    dyn Fn(&str, &str, &Observation, &[String]) -> Result<Step, String> + 'a;
+
 pub(crate) fn run_with(
     app: &str,
     goal: &str,
     desktop: &dyn Desktop,
-    decide: &dyn Fn(&str, &str, &Observation, &[String]) -> Result<Step, String>,
+    decide: &DecisionFn<'_>,
     host: &dyn Host,
     limits: &Limits,
 ) -> Outcome {
@@ -335,6 +339,7 @@ pub(crate) fn run_with(
         Err(e) => return Outcome::Failed(e),
     };
     let mut p = Progress {
+        app: app.into(),
         acts: 0,
         errors: 0,
         unchanged: 0,
@@ -435,7 +440,7 @@ pub(crate) fn run_with(
                     return Outcome::Failed("Stopped: could not verify the result".into());
                 }
             }
-            action => match act(desktop, &win, &obs, action, &mut p, host, goal, app) {
+            action => match act(desktop, &win, &obs, action, &mut p, host, goal) {
                 Ok(()) => {
                     p.acts += 1;
                     p.acted_last = true;
@@ -501,13 +506,12 @@ fn act(
     p: &mut Progress,
     host: &dyn Host,
     goal: &str,
-    app: &str,
 ) -> Result<(), Refusal> {
     let retry = |e: String| Refusal::Retry(e);
     // Browser navigation shortcuts (including Enter in an address/search
     // bar) are not applicable to file managers or editors. The model cannot
     // turn a supposed browser UI command into a terminal/editor hotkey.
-    if !matches!(app, "firefox" | "chrome" | "chromium" | "brave")
+    if !matches!(p.app.as_str(), "firefox" | "chrome" | "chromium" | "brave")
         && matches!(
             step,
             Step::Navigate(_)
