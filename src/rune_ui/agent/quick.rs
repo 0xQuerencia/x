@@ -210,7 +210,11 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
             col()
                 .key("quick-file-preview")
                 .gap(6.0)
-                .child(section_label(p, "quick-file-preview-title", tr("Local file preview")))
+                .child(section_label(
+                    p,
+                    "quick-file-preview-title",
+                    tr("Local file preview"),
+                ))
                 .child(
                     text(preview.clone())
                         .key("quick-file-preview-text")
@@ -222,7 +226,9 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                     "quick-file-preview-dismiss",
                     tr("Close preview"),
                     ButtonKind::Secondary,
-                    |ui: &mut Ui, _| { ui.agent.quick_file_preview = None; },
+                    |ui: &mut Ui, _| {
+                        ui.agent.quick_file_preview = None;
+                    },
                 )),
         );
     }
