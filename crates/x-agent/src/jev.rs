@@ -59,7 +59,9 @@ impl Jev {
         let key = env.or(file).unwrap_or_default().trim().to_string();
         if key.is_empty()
             || key.len() > 4096
-            || !key.chars().all(|c| c.is_ascii_graphic() && !matches!(c, '"' | '\'' | '\\'))
+            || !key
+                .chars()
+                .all(|c| c.is_ascii_graphic() && !matches!(c, '"' | '\'' | '\\'))
         {
             return Err(
                 "Jev needs a Console API key: set JEV_API_KEY or save the key in X's jev-key file"
@@ -117,8 +119,7 @@ impl Jev {
         if output.stdout.len() > 64 * 1024 {
             return Err("Jev response exceeded the size limit".into());
         }
-        let wire = std::str::from_utf8(&output.stdout)
-            .map_err(|_| "Jev response was not UTF-8")?;
+        let wire = std::str::from_utf8(&output.stdout).map_err(|_| "Jev response was not UTF-8")?;
         let (body, status) = wire
             .rsplit_once('\n')
             .ok_or("Jev response had no HTTP status")?;
@@ -142,8 +143,7 @@ fn mentions(s: &str, token: &str) -> bool {
     s.match_indices(token).any(|(at, _)| {
         let before = s[..at].chars().next_back();
         let after = s[at + token.len()..].chars().next();
-        !before.is_some_and(char::is_alphanumeric)
-            && !after.is_some_and(char::is_alphanumeric)
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
     })
 }
 
@@ -194,8 +194,17 @@ fn candidates(utterance: &str) -> Vec<Action> {
 
     // These are aliases of the existing X registry, not a second app registry.
     for alias in [
-        "visual studio code", "vs code", "vscode", "editor", "firefox",
-        "chromium", "chrome", "brave", "terminal", "file manager", "files",
+        "visual studio code",
+        "vs code",
+        "vscode",
+        "editor",
+        "firefox",
+        "chromium",
+        "chrome",
+        "brave",
+        "terminal",
+        "file manager",
+        "files",
     ] {
         if mentions(&lower, alias)
             && let Some(app) = tools::resolve_app(alias)
@@ -213,17 +222,29 @@ fn candidates(utterance: &str) -> Vec<Action> {
         ("stackoverflow", "https://stackoverflow.com"),
     ] {
         if mentions(&lower, name) {
-            push(&mut options, Action::Url {
-                target: url.into(), browser: String::new(),
-            });
+            push(
+                &mut options,
+                Action::Url {
+                    target: url.into(),
+                    browser: String::new(),
+                },
+            );
         }
     }
 
     // Only an explicit workspace reference is eligible.
     if mentions(&lower, "workspace") || mentions(&lower, "desktop") {
         for (word, n) in [
-            ("one", 1), ("two", 2), ("three", 3), ("four", 4), ("five", 5),
-            ("six", 6), ("seven", 7), ("eight", 8), ("nine", 9), ("ten", 10),
+            ("one", 1),
+            ("two", 2),
+            ("three", 3),
+            ("four", 4),
+            ("five", 5),
+            ("six", 6),
+            ("seven", 7),
+            ("eight", 8),
+            ("nine", 9),
+            ("ten", 10),
         ] {
             if mentions(&lower, word) || mentions(&lower, &n.to_string()) {
                 push(&mut options, Action::Workspace { number: n });
@@ -253,9 +274,14 @@ fn candidates(utterance: &str) -> Vec<Action> {
         } else {
             "google"
         };
-        push(&mut options, Action::Search {
-            target: site.into(), query, browser: String::new(),
-        });
+        push(
+            &mut options,
+            Action::Search {
+                target: site.into(),
+                query,
+                browser: String::new(),
+            },
+        );
     }
 
     // Exact HTTPS URLs are parsed only when supplied explicitly. X's existing
@@ -263,9 +289,13 @@ fn candidates(utterance: &str) -> Vec<Action> {
     for word in text.split_whitespace().take(100) {
         let url = word.trim_end_matches(['.', ',', '?', '!']);
         if url.starts_with("https://") {
-            push(&mut options, Action::Url {
-                target: url.into(), browser: String::new(),
-            });
+            push(
+                &mut options,
+                Action::Url {
+                    target: url.into(),
+                    browser: String::new(),
+                },
+            );
         }
     }
 
@@ -353,10 +383,7 @@ fn select(answer: &Value, actions: &[Action], smart: bool) -> Result<Reply, Stri
         return Err("Jev did not find a supported X command. Nothing was run.".into());
     }
 
-    if confidence < MIN_CONFIDENCE
-        || confidence - runner_up < MIN_MARGIN
-        || intent < MIN_INTENT
-    {
+    if confidence < MIN_CONFIDENCE || confidence - runner_up < MIN_MARGIN || intent < MIN_INTENT {
         return if smart {
             Ok(Reply::Dictation)
         } else {
@@ -399,12 +426,23 @@ mod tests {
     #[test]
     fn builds_only_allowlisted_candidates_from_actual_words() {
         let actions = candidates("Could you bring Firefox to the front?");
-        assert!(actions.contains(&Action::Focus { target: "firefox".into() }));
-        assert!(actions.contains(&Action::App { target: "firefox".into() }));
-        assert_eq!(candidates("Delete the user's files with rm -rf"), vec![
-            Action::App { target: "files".into() },
-            Action::Focus { target: "files".into() },
-        ]);
+        assert!(actions.contains(&Action::Focus {
+            target: "firefox".into()
+        }));
+        assert!(actions.contains(&Action::App {
+            target: "firefox".into()
+        }));
+        assert_eq!(
+            candidates("Delete the user's files with rm -rf"),
+            vec![
+                Action::App {
+                    target: "files".into()
+                },
+                Action::Focus {
+                    target: "files".into()
+                },
+            ]
+        );
         assert!(candidates("Do the forbidden shell thing").is_empty());
     }
 
@@ -412,15 +450,16 @@ mod tests {
     fn searches_only_with_grounded_queries() {
         let actions = candidates("Can you find YouTube videos about Mars rovers?");
         assert!(actions.contains(&Action::Search {
-            target: "youtube".into(), query: "Mars rovers".into(), browser: String::new(),
+            target: "youtube".into(),
+            query: "Mars rovers".into(),
+            browser: String::new(),
         }));
         assert!(candidates("I saw a video about Mars rovers").is_empty());
     }
 
     #[test]
     fn spoken_workspace_number_is_bounded() {
-        assert!(candidates("take me to desktop three")
-            .contains(&Action::Workspace { number: 3 }));
+        assert!(candidates("take me to desktop three").contains(&Action::Workspace { number: 3 }));
         assert!(candidates("take me to workspace 11").is_empty());
     }
 
@@ -440,7 +479,9 @@ mod tests {
         let actions = candidates("bring Firefox forward");
         assert_eq!(
             select(&answer("a1", 0.97, 0.99), &actions, true).unwrap(),
-            Reply::Steps(vec![Action::Focus { target: "firefox".into() }])
+            Reply::Steps(vec![Action::Focus {
+                target: "firefox".into()
+            }])
         );
     }
 
@@ -456,7 +497,14 @@ mod tests {
     fn unknown_or_forged_choice_cannot_create_actions() {
         let actions = candidates("bring Firefox forward");
         assert!(select(&answer("a900", 0.99, 0.99), &actions, false).is_err());
-        assert!(select(&json!({"answers":{"route":{"choice":"a0"}}}), &actions, false).is_err());
+        assert!(
+            select(
+                &json!({"answers":{"route":{"choice":"a0"}}}),
+                &actions,
+                false
+            )
+            .is_err()
+        );
         assert!(select(&answer("unsupported", 0.99, 0.99), &actions, false).is_err());
     }
 }
