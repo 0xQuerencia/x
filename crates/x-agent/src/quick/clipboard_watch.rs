@@ -1,16 +1,25 @@
 //! Explicit, short-lived clipboard-change capture for X Quick on Linux/Wayland.
 //! Disabled by default. Stops on timeout, user request or process exit.
 //! No network, no screen access and no capture of image/file MIME types.
+#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+#[cfg(target_os = "linux")]
+use std::time::Duration;
+use std::time::Instant;
 
+#[cfg(target_os = "linux")]
 use crate::desktop::capture;
+#[cfg(target_os = "linux")]
 use crate::quick::clipboard_history::Store;
+#[cfg(target_os = "linux")]
 use crate::tools::which;
 
+#[cfg(target_os = "linux")]
 const CAPTURE_INTERVAL: Duration = Duration::from_secs(1);
+#[cfg(target_os = "linux")]
 const MAX_TEXT: usize = 16 * 1024;
+#[cfg(target_os = "linux")]
 const MAX_MIME: usize = 4096;
 const MAX_MINUTES: u32 = 30;
 
@@ -23,6 +32,7 @@ struct Session {
 type Shared = Arc<(Mutex<Session>, Condvar)>;
 static ACTIVE: OnceLock<Shared> = OnceLock::new();
 
+#[cfg(target_os = "linux")]
 fn shared() -> &'static Shared {
     ACTIVE.get_or_init(|| Arc::new((Mutex::new(Session::default()), Condvar::new())))
 }
@@ -32,6 +42,7 @@ fn locked<'a>(mutex: &'a Mutex<Session>) -> std::sync::MutexGuard<'a, Session> {
 }
 
 /// An offer marked concealed by a supported password manager is never read.
+#[cfg(target_os = "linux")]
 fn confidential_offer(mimes: &str) -> bool {
     let lower = mimes.to_ascii_lowercase();
     [
@@ -42,6 +53,7 @@ fn confidential_offer(mimes: &str) -> bool {
 
 /// Best-effort text redaction. Not a substitute for an app-specific privacy
 /// protocol: unmarked secrets can still be copied and must be erased by the user.
+#[cfg(target_os = "linux")]
 fn likely_secret(text: &str) -> bool {
     let trimmed = text.trim();
     let lower = trimmed.to_ascii_lowercase();
@@ -184,6 +196,7 @@ pub fn active() -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn recognizes_secret_markers_and_long_tokens() {
         assert!(confidential_offer("text/plain\napplication/x-kde-passwordManagerHint"));
