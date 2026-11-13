@@ -96,7 +96,9 @@ fn gemini_key_file() -> Option<PathBuf> {
 fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
     if model == "jev" {
         return Arc::new(x_agent::jev::Jev {
-            key_file: crate::app_paths::support_dir().ok().map(|dir| dir.join("jev-key")),
+            key_file: crate::app_paths::support_dir()
+                .ok()
+                .map(|dir| dir.join("jev-key")),
         });
     }
     if let Some(name) = model
@@ -128,7 +130,10 @@ fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
 fn set_planner(model: &str) -> ControlReply {
     let model = model.trim();
     if model.is_empty() || model.len() > 100 || model.contains(char::is_whitespace) {
-        return ControlReply::error("usage", "give jev, gemini, openai:<model>, an Ollama model, or off");
+        return ControlReply::error(
+            "usage",
+            "give jev, gemini, openai:<model>, an Ollama model, or off",
+        );
     }
     let Some(path) = planner_file() else {
         return ControlReply::error("failed", "the data folder is unavailable");
