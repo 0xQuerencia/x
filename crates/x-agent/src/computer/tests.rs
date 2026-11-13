@@ -252,13 +252,18 @@ fn page_box_is_not_omnibox() {
     assert!(!acts.contains(&UiAct::Key(Key::Enter)));
 }
 
-
 #[test]
 fn structured_jev_decisions_reuse_screen_verification() {
     let desktop = Fake {
         screens: Mutex::new(vec![
-            screen("before click", vec![el("e1", "link", "Latest pull request")]),
-            screen("All checks passed", vec![el("e1", "link", "Latest pull request")]),
+            screen(
+                "before click",
+                vec![el("e1", "link", "Latest pull request")],
+            ),
+            screen(
+                "All checks passed",
+                vec![el("e1", "link", "Latest pull request")],
+            ),
         ]),
         acts: Mutex::new(Vec::new()),
     };
@@ -308,7 +313,10 @@ fn real_searchbox_can_submit_but_normal_text_field_cannot() {
 #[test]
 fn editor_cannot_use_browser_keys() {
     let desktop = Fake {
-        screens: Mutex::new(vec![screen("Settings", vec![el("e1", "menuitem", "Themes")])]),
+        screens: Mutex::new(vec![screen(
+            "Settings",
+            vec![el("e1", "menuitem", "Themes")],
+        )]),
         acts: Mutex::new(Vec::new()),
     };
     let outcome = run_with(
