@@ -15,10 +15,46 @@ Off by default. Turn it on in Settings › Labs › X agent, or `hex labs on x-a
 | Work | "find the bug in this project and fix it" | `opencode run` in a folder you chose |
 | Computer | "find the latest pull request on GitHub" | a granted browser, editor, or file manager, using accessibility controls and on-screen evidence |
 
-Every task passes through the same phases, and nothing runs before you approve:
+### Execution policy: Default or Autonomous
+
+X's *execution policy* is separate from the dictation shortcut's voice modes
+(Dictate, Actions, Work, Auto, Smart).
+
+| Execution mode | Behavior |
+| --- | --- |
+| **Default** | Every new desktop task pauses for approval before execution. |
+| **Autonomous** | Low-risk local Actions start without per-task approval. A Jev computer-use task can also run immediately **only** when that app already has a specific screen grant and remote-screen permission has been explicitly enabled if needed. |
+
+Choose in the **Agent pane → Execution** controls or by CLI:
+
+```sh
+hex agent autonomy status
+hex agent autonomy autonomous  # opt in, persisted across X restarts
+hex agent autonomy default     # return to manual approval
+hex agent stop                 # stop the active task at any time
+```
+
+In Autonomous mode, each approved computer task can already run multiple
+observe → decide → act → verify cycles without repeatedly asking. This does
+**not** enable screen reading or remote transmission on its own. Grant apps
+separately (`hex agent computer grant firefox`) and opt into remote screen
+data separately (`hex agent computer remote on`). Computer tasks remain
+bounded to the permitted app, 15 steps, three minutes and X's existing Stop
+control. The agent still refuses payment, posting, deleting, accepting
+permissions, password entry and other consequential UI actions. Work/OpenCode
+jobs and risky or untrusted operations require human review.
+
+The prior `hex agent trust on|off` command is maintained as an alias for
+Autonomous/Default, using the same owner-controlled persisted setting; it
+doesn't create a second conflicting mode. The default for a fresh install
+is **Default**. A previously enabled Trusted Actions setting is interpreted
+as Autonomous until switched off.
+
+A task runs through the same phases, but Autonomous may skip
+`awaiting_approval` on permitted tasks:
 
 ```
-idle → listening → transcribing → planning → awaiting_approval → running
+idle → listening → transcribing → planning → [approval if required] → running
      → completed | failed | cancelled
 ```
 
@@ -31,6 +67,7 @@ hex agent say --mode actions open firefox   # type instead of speaking
 hex agent status                       # phase, plan with its steps, recent events
 hex agent approve 3                    # run task 3
 hex agent stop                         # discard the plan, drop the recording, or stop the run
+hex agent autonomy autonomous          # optional: safe actions run without repeated approval
 ```
 
 The Agent pane in the window (sidebar, while the Labs switch is on) does the same with
