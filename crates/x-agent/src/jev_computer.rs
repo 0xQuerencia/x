@@ -574,9 +574,12 @@ mod tests {
         let mut obs = view();
         obs.title = "Private private.user@example.com".into();
         obs.texts.push("012345678901234567".into());
-        let o = offers("check my PR", "firefox", &obs, &[
-            "clicked private.user@example.com".into()
-        ]);
+        let o = offers(
+            "check my PR",
+            "firefox",
+            &obs,
+            &["clicked private.user@example.com".into()],
+        );
         let body = request(
             "check my PR",
             "firefox",
