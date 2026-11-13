@@ -204,7 +204,12 @@ pub fn matches(query: &str) -> Result<Vec<Snippet>, String> {
 
 /// Resolve only explicitly named placeholders. Every source value is inserted
 /// once; placeholders inside a copied snapshot are never recursively expanded.
-fn render_fields(text: &str, utc_date: &str, utc_time: &str, clipboard: Option<&str>) -> Result<String, String> {
+fn render_fields(
+    text: &str,
+    utc_date: &str,
+    utc_time: &str,
+    clipboard: Option<&str>,
+) -> Result<String, String> {
     let mut output = text
         .replace("{{utc_date}}", utc_date)
         .replace("{{utc_time}}", utc_time);
@@ -230,7 +235,10 @@ pub fn render_live(text: &str) -> Result<String, String> {
     let time = crate::quick::datetime::now("time utc")
         .ok_or("UTC clock unavailable")?
         .1;
-    let clock = time.split_whitespace().last().ok_or("UTC time unavailable")?;
+    let clock = time
+        .split_whitespace()
+        .last()
+        .ok_or("UTC time unavailable")?;
     let clip = if text.contains("{{clipboard_snapshot}}") {
         Some(
             crate::quick::clipboard_history::Store::user()?
@@ -294,7 +302,9 @@ pub fn spoken(phrase: &str) -> Result<Option<String>, String> {
         return Ok(None);
     }
     let entries = Store::user()?.list()?;
-    spoken_from(&entries, phrase).map(|text| render_live(&text)).transpose()
+    spoken_from(&entries, phrase)
+        .map(|text| render_live(&text))
+        .transpose()
 }
 
 #[cfg(test)]
@@ -307,8 +317,13 @@ mod tests {
         let output = render_fields(text, "2026-11-13", "18:30", Some("{{utc_date}}")).unwrap();
         assert_eq!(output, "Today 2026-11-13 at 18:30: {{utc_date}}");
         assert!(render_fields(text, "2026-11-13", "18:30", None).is_err());
-        assert_eq!(render_fields("{{unknown}}", "a", "b", None).unwrap(), "{{unknown}}");
-        assert!(render_fields("{{clipboard_snapshot}}", "a", "b", Some(&"x".repeat(9000))).is_err());
+        assert_eq!(
+            render_fields("{{unknown}}", "a", "b", None).unwrap(),
+            "{{unknown}}"
+        );
+        assert!(
+            render_fields("{{clipboard_snapshot}}", "a", "b", Some(&"x".repeat(9000))).is_err()
+        );
     }
 
     #[test]
