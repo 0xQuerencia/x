@@ -15,6 +15,7 @@ pub mod desktop;
 pub mod edit;
 pub mod hexcli;
 pub mod jev;
+mod jev_computer;
 pub mod opencode;
 pub mod phase;
 pub mod planner;
