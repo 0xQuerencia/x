@@ -148,9 +148,23 @@ item using `clip <words>` or `clipboard <words>`; use the same explicit
 Copy action as other Quick values. Click **Erase saved snapshots** to remove
 the entire saved store. Saving the same text again moves it to the top.
 
-- This is **not** background clipboard history: X does not poll the clipboard,
-  track unrelated copied items, read clipboard images, or watch password-manager
-  offers. The user must intentionally capture each snapshot.
+- **Session capture (Linux Wayland, optional):** The Quick pane also has
+  **Capture changes · 10 min** and **Stop capture** controls. Clicking the
+  first explicitly enables a 10-minute one-second text polling session,
+  with a hard 30-minute per-session maximum. The session is never restored
+  on app restart and stops when X exits. The Stop button cancels further reads
+  and waits for any in-flight save to finish. Outside an enabled session,
+  the original manual snapshots remain the only way to save clipboard text.
+- **Privacy:** The watcher skips non-text offers, MIME types advertising
+  password-manager or sensitive content, and likely high-entropy tokens.
+  This is only best-effort: not every password manager marks clipboard
+  offers, and heuristics cannot recognize all secrets. **Do not copy
+  passwords while the session is active**. Nothing is uploaded to a model
+  or cloud service. Saved text follows the existing 24-hour local retention
+  policy and can be erased with **Erase saved snapshots**.
+- Watcher sessions are Linux Wayland only (require `wl-paste`). X11, macOS
+  and Windows do not yet have session monitoring. Images, files and rich
+  clipboard formats are not captured by this text-only implementation.
 - Capture currently needs `wl-paste` on Wayland and text/plain clipboard
   data. Copying results uses X's existing `wl-copy` support.
 - The JSON store is local to `hex/x-clipboard-snapshots.json` in the user

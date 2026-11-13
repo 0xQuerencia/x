@@ -248,11 +248,23 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                 .color(p.warning()),
         );
     }
-    // No clipboard polling: a capture happens only after an explicit button press.
+    // Background capture is disabled by default, and only runs during a user-started
+    // bounded session. Regular snapshots still require an explicit click.
+    let clipboard_active = ::x_agent::quick::clipboard_watch::active();
     content = content
         .child(section_label(p, "quick-clipboard-title", tr("Clipboard snapshots")))
         .child(
-            text(tr("Opt-in text snapshots only; no background capture. Review copied text before saving."))
+            text(if clipboard_active {
+                tr("SESSION ACTIVE: copied text may be saved locally. Stop capture before copying secrets.")
+            } else {
+                tr("Session off: copied text is not monitored.")
+            })
+            .key("quick-clipboard-watch-status")
+            .font(DESCRIPTION)
+            .color(if clipboard_active { p.warning() } else { p.muted() }),
+        )
+        .child(
+            text(tr("Manual text snapshots, or opt in to a 10-minute local text-change session. It may capture unmarked secrets: avoid copying passwords while active."))
                 .key("quick-clipboard-note")
                 .font(DESCRIPTION)
                 .color(p.muted()),
@@ -272,6 +284,31 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                                 Ok(message) => agent_host::service().emit("info", &message),
                                 Err(error) => agent_host::service().emit("error", &error),
                             }
+                        });
+                    },
+                ))
+                .child(button(
+                    p,
+                    "quick-clipboard-watch-start",
+                    tr("Capture changes · 10 min"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        ui.agent.quick_notice = Some(
+                            ::x_agent::quick::clipboard_watch::start(10)
+                                .unwrap_or_else(|error| error),
+                        );
+                    },
+                ))
+                .child(button(
+                    p,
+                    "quick-clipboard-watch-stop",
+                    tr("Stop capture"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        ui.agent.quick_notice = Some(if ::x_agent::quick::clipboard_watch::stop() {
+                            "Clipboard-change capture stopped".into()
+                        } else {
+                            "Clipboard-change capture was already off".into()
                         });
                     },
                 ))
