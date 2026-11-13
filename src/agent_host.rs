@@ -772,30 +772,63 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Err(error) => ControlReply::error("refused", error),
         },
         AgentAction::Listen { mode } => wake::command(&mode),
-        AgentAction::Awake { command, minutes } => match command.as_str() {
-            "on" => match crate::audio::idle_sleep::keep_awake_start(minutes) {
-                Ok(()) => ControlReply::done(format!(
-                    "Keep Awake enabled for {minutes} minutes (the OS may limit sleep inhibition)"
-                )),
-                Err(error) => ControlReply::error("refused", error),
-            },
-            "off" => ControlReply::done(if crate::audio::idle_sleep::keep_awake_stop() {
-                "Keep Awake stopped"
+        AgentAction::Awake {
+            command,
+            minutes,
+            clock,
+            utc_offset,
+        } => {
+            if command != "until" && (clock.is_some() || utc_offset.is_some()) {
+                ControlReply::error("usage", "--clock and --utc-offset require 'awake until'")
             } else {
-                "Keep Awake was already off"
-            }),
-            "status" => ControlReply::done(
-                crate::audio::idle_sleep::keep_awake_remaining().map_or_else(
-                    || "Keep Awake is off".to_string(),
-                    |remaining| {
-                        format!(
-                            "Keep Awake active for up to {} more minutes",
-                            remaining.as_secs().div_ceil(60)
-                        )
+                match command.as_str() {
+                    "on" => match crate::audio::idle_sleep::keep_awake_start(minutes) {
+                        Ok(()) => ControlReply::done(format!(
+                            "Keep Awake enabled for {minutes} minutes (the OS may limit sleep inhibition)"
+                        )),
+                        Err(error) => ControlReply::error("refused", error),
                     },
-                ),
-            ),
-            _ => ControlReply::error("usage", "Use awake on|off|status"),
+                    "until" => match (clock.as_deref(), utc_offset.as_deref()) {
+                        (Some(clock), Some(offset)) => {
+                            let duration = crate::audio::clock_deadline::minutes_until(
+                                clock,
+                                offset,
+                                std::time::SystemTime::now(),
+                            );
+                            match duration.and_then(|minutes| {
+                                crate::audio::idle_sleep::keep_awake_start(minutes)?;
+                                Ok(minutes)
+                            }) {
+                                Ok(minutes) => ControlReply::done(format!(
+                                    "Keep Awake enabled until {clock} at fixed offset {offset}                                     (approximately {minutes} minutes; under 60 seconds rounding)"
+                                )),
+                                Err(error) => ControlReply::error("refused", error),
+                            }
+                        }
+                        _ => ControlReply::error(
+                            "usage",
+                            "Use awake until --clock HH:MM --utc-offset +05:30",
+                        ),
+                    },
+                    "off" => ControlReply::done(if crate::audio::idle_sleep::keep_awake_stop() {
+                        "Keep Awake stopped"
+                    } else {
+                        "Keep Awake was already off"
+                    }),
+                    "status" => ControlReply::done(
+                        crate::audio::idle_sleep::keep_awake_remaining().map_or_else(
+                            || "Keep Awake is off".to_string(),
+                            |remaining| {
+                                format!(
+                                    "Keep Awake active for up to {} more minutes",
+                                    remaining.as_secs().div_ceil(60)
+                                )
+                            },
+                        ),
+                    ),
+                    _ => ControlReply::error("usage", "Use awake on|until|off|status"),
+                }
+            }
         },
         AgentAction::Voice { mode } => match VoiceMode::parse(&mode) {
             Some(mode) => set_voice_mode(mode),
