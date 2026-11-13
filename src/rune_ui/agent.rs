@@ -375,13 +375,11 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             p,
             "agent-empty",
             tr("Nothing planned"),
-            Some(tr(
-                if autonomous {
-                    "Type a goal or press Speak. Safe Actions run automatically; protected tasks still ask."
-                } else {
-                    "Type a goal or press Speak. You review the plan before anything runs."
-                },
-            )),
+            Some(tr(if autonomous {
+                "Type a goal or press Speak. Safe Actions run automatically; protected tasks still ask."
+            } else {
+                "Type a goal or press Speak. You review the plan before anything runs."
+            })),
         ));
     }
     body = body.child(event_stream(p, snapshot));
