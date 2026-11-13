@@ -38,7 +38,9 @@ fn shared() -> &'static Shared {
 }
 
 fn locked<'a>(mutex: &'a Mutex<Session>) -> std::sync::MutexGuard<'a, Session> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// An offer marked concealed by a supported password manager is never read.
@@ -46,9 +48,15 @@ fn locked<'a>(mutex: &'a Mutex<Session>) -> std::sync::MutexGuard<'a, Session> {
 fn confidential_offer(mimes: &str) -> bool {
     let lower = mimes.to_ascii_lowercase();
     [
-        "passwordmanagerhint", "keepass", "secret", "sensitive",
-        "x-kde-password", "x-gnome-password",
-    ].iter().any(|pattern| lower.contains(pattern))
+        "passwordmanagerhint",
+        "keepass",
+        "secret",
+        "sensitive",
+        "x-kde-password",
+        "x-gnome-password",
+    ]
+    .iter()
+    .any(|pattern| lower.contains(pattern))
 }
 
 /// Best-effort text redaction. Not a substitute for an app-specific privacy
@@ -61,9 +69,18 @@ fn likely_secret(text: &str) -> bool {
         return true;
     }
     if [
-        "-----begin ", "ghp_", "gho_", "github_pat_", "sk-",
-        "api_key=", "password=", "authorization: bearer",
-    ].iter().any(|prefix| lower.starts_with(prefix)) {
+        "-----begin ",
+        "ghp_",
+        "gho_",
+        "github_pat_",
+        "sk-",
+        "api_key=",
+        "password=",
+        "authorization: bearer",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+    {
         return true;
     }
     // A long single token is much more likely to be a password/API key than
@@ -81,20 +98,20 @@ fn current_text() -> Option<String> {
     let (ok, types) = capture(
         Command::new(&executable).arg("--list-types"),
         Duration::from_secs(2),
-    ).ok()?;
+    )
+    .ok()?;
     if !ok || types.len() > MAX_MIME {
         return None;
     }
     let types = String::from_utf8(types).ok()?;
-    if confidential_offer(&types)
-        || !types.to_ascii_lowercase().contains("text/plain")
-    {
+    if confidential_offer(&types) || !types.to_ascii_lowercase().contains("text/plain") {
         return None;
     }
     let (ok, data) = capture(
         Command::new(&executable).args(["--no-newline", "--type", "text/plain"]),
         Duration::from_secs(2),
-    ).ok()?;
+    )
+    .ok()?;
     if !ok || data.len() > MAX_TEXT {
         return None;
     }
@@ -109,8 +126,7 @@ fn run(shared: Shared, generation: u64) {
     loop {
         {
             let state = locked(mutex);
-            if state.generation != generation
-                || state.expires.is_none_or(|at| Instant::now() >= at)
+            if state.generation != generation || state.expires.is_none_or(|at| Instant::now() >= at)
             {
                 break;
             }
@@ -177,7 +193,9 @@ pub fn start(minutes: u32) -> Result<String, String> {
 
 /// Stop new reads and wait for any in-flight store operation to release its lock.
 pub fn stop() -> bool {
-    let Some(shared) = ACTIVE.get() else { return false };
+    let Some(shared) = ACTIVE.get() else {
+        return false;
+    };
     let (mutex, cv) = &**shared;
     let mut state = locked(mutex);
     let was_active = state.expires.take().is_some();
@@ -187,7 +205,9 @@ pub fn stop() -> bool {
 }
 
 pub fn active() -> bool {
-    let Some(shared) = ACTIVE.get() else { return false };
+    let Some(shared) = ACTIVE.get() else {
+        return false;
+    };
     let state = locked(&shared.0);
     state.expires.is_some_and(|at| Instant::now() < at)
 }
@@ -199,13 +219,17 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn recognizes_secret_markers_and_long_tokens() {
-        assert!(confidential_offer("text/plain\napplication/x-kde-passwordManagerHint"));
+        assert!(confidential_offer(
+            "text/plain\napplication/x-kde-passwordManagerHint"
+        ));
         assert!(confidential_offer("application/x-keepassxc"));
         assert!(!confidential_offer("text/plain;charset=utf-8"));
         assert!(likely_secret("sk-1234567890123456789"));
         assert!(likely_secret("1234567890abcdefghijABCDEFGHIJ"));
         assert!(!likely_secret("https://example.com/some-long-link"));
-        assert!(!likely_secret("A useful sentence with multiple ordinary words."));
+        assert!(!likely_secret(
+            "A useful sentence with multiple ordinary words."
+        ));
     }
 
     #[test]
