@@ -21,7 +21,30 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
         .key("quick-search");
 
     let workflows = ui.agent.workflows.quick_entries();
-    let matches = quick::search(&ui.agent.quick_query.text, workflows);
+    let mut matches = quick::search(&ui.agent.quick_query.text, workflows);
+    // History search is deliberate and local; it reuses Hex's own retention,
+    // ranking and vocabulary logic rather than creating another index.
+    let history_query = ui
+        .agent
+        .quick_query
+        .text
+        .strip_prefix("history ")
+        .or_else(|| ui.agent.quick_query.text.strip_prefix("hist "));
+    if let Some(query) = history_query
+        && (3..=120).contains(&query.trim().chars().count())
+        && let Ok(entries) = crate::control::transcript_cli::quick_history(query)
+    {
+        let history_hits = entries.into_iter().map(|(final_text, app)| {
+            let preview = final_text.chars().take(80).collect::<String>();
+            quick::Hit {
+                title: format!("History: {preview}"),
+                detail: format!("Retained dictation · {app} · copy on request"),
+                target: Target::CopyResult(final_text),
+            }
+        });
+        matches.splice(0..0, history_hits);
+        matches.truncate(8);
+    }
     let mut content = col()
         .key("x-quick")
         .gap(10.0)
