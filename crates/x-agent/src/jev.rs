@@ -38,7 +38,13 @@ impl Planner for Jev {
         observation: &crate::desktop::Observation,
         history: &[String],
     ) -> Option<Result<crate::computer::Step, String>> {
-        Some(crate::jev_computer::decide(self, goal, app, observation, history))
+        Some(crate::jev_computer::decide(
+            self,
+            goal,
+            app,
+            observation,
+            history,
+        ))
     }
 
     fn plan(&self, text: &str, smart: bool) -> Result<Reply, String> {
@@ -207,20 +213,39 @@ fn candidates(utterance: &str) -> Vec<Action> {
     // does not invent a JSON script, shell command, or model-generated text.
     // A caller must separately grant this app's screen and remote context.
     let interactive = [
-        "click", "choose", "select", "play", "scroll", "check", "read",
-        "latest", "first result", "next result", "fill", "on the page",
-        "settings", "theme", "change", "summarize", "show me",
-        "find", "search",
+        "click",
+        "choose",
+        "select",
+        "play",
+        "scroll",
+        "check",
+        "read",
+        "latest",
+        "first result",
+        "next result",
+        "fill",
+        "on the page",
+        "settings",
+        "theme",
+        "change",
+        "summarize",
+        "show me",
+        "find",
+        "search",
     ]
     .iter()
     .any(|term| lower.contains(term));
     if interactive {
         let app = [
-            ("vs code", "vscode"), ("vscode", "vscode"),
+            ("vs code", "vscode"),
+            ("vscode", "vscode"),
             ("visual studio code", "vscode"),
-            ("file manager", "files"), ("files", "files"),
-            ("firefox", "firefox"), ("chrome", "chrome"),
-            ("chromium", "chromium"), ("brave", "brave"),
+            ("file manager", "files"),
+            ("files", "files"),
+            ("firefox", "firefox"),
+            ("chrome", "chrome"),
+            ("chromium", "chromium"),
+            ("brave", "brave"),
         ]
         .iter()
         .find(|(name, _)| mentions(&lower, name))
@@ -228,23 +253,37 @@ fn candidates(utterance: &str) -> Vec<Action> {
         // An explicitly named website plus interactive steps means browser
         // use. When no browser is named, take the person's default browser
         // if it is one of X's supported browsers, or Firefox.
-        let web_goal = ["github", "youtube", "wikipedia", "reddit",
-            "website", "browser", "web page", "stackoverflow"]
-            .iter()
-            .any(|name| mentions(&lower, name))
+        let web_goal = [
+            "github",
+            "youtube",
+            "wikipedia",
+            "reddit",
+            "website",
+            "browser",
+            "web page",
+            "stackoverflow",
+        ]
+        .iter()
+        .any(|name| mentions(&lower, name))
             || lower.contains("https://");
-        let app = app.or_else(|| web_goal.then(|| {
-            match std::env::var("BROWSER").unwrap_or_default().as_str() {
-                "chrome" | "google-chrome" => "chrome",
-                "brave" => "brave",
-                "chromium" => "chromium",
-                _ => "firefox",
-            }
-        }));
+        let app = app.or_else(|| {
+            web_goal.then(
+                || match std::env::var("BROWSER").unwrap_or_default().as_str() {
+                    "chrome" | "google-chrome" => "chrome",
+                    "brave" => "brave",
+                    "chromium" => "chromium",
+                    _ => "firefox",
+                },
+            )
+        });
         if let Some(app) = app {
-            push(&mut options, Action::Computer {
-                app: app.into(), goal: text.clone(),
-            });
+            push(
+                &mut options,
+                Action::Computer {
+                    app: app.into(),
+                    goal: text.clone(),
+                },
+            );
         }
     }
 
@@ -507,15 +546,19 @@ mod tests {
         let goal = "Open GitHub, find my latest PR and check whether tests passed";
         let found = candidates(goal);
         assert!(found.contains(&Action::Computer {
-            app: "firefox".into(), goal: goal.into(),
+            app: "firefox".into(),
+            goal: goal.into(),
         }));
         let vscode_goal = "In VS Code change the selected theme";
         assert!(candidates(vscode_goal).contains(&Action::Computer {
-            app: "vscode".into(), goal: vscode_goal.into(),
+            app: "vscode".into(),
+            goal: vscode_goal.into(),
         }));
-        assert!(!candidates("hello there").iter().any(
-            |a| matches!(a, Action::Computer { .. })
-        ));
+        assert!(
+            !candidates("hello there")
+                .iter()
+                .any(|a| matches!(a, Action::Computer { .. }))
+        );
     }
 
     #[test]
