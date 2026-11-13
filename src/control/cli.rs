@@ -363,6 +363,16 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// How X runs desktop commands: `default` asks each time, `autonomous`
+    /// auto-starts safe Actions and explicitly granted screen sessions without
+    /// a separate prompt. Work, destructive actions and missing grants still ask.
+    /// `status` reports the active policy. This reuses the legacy trust setting.
+    Autonomy {
+        #[arg(value_parser = ["default", "autonomous", "status"])]
+        mode: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// What your dictation shortcut does with speech: `dictate` types it (Hex as usual),
     /// `actions` or `work` send it to X, `auto` sends only speech that starts with "Friday" or
     /// "hey Friday" (or "x") and types the rest, and `smart` lets the planner model decide each time whether
@@ -669,6 +679,9 @@ pub fn run(command: ControlCli) -> u8 {
                 ),
                 AgentCommand::Trust { state, output } => {
                     (AgentAction::Trust { on: state == "on" }, output)
+                }
+                AgentCommand::Autonomy { mode, output } => {
+                    (AgentAction::Autonomy { mode }, output)
                 }
                 AgentCommand::Workspace { path, output } => {
                     let absolute =
