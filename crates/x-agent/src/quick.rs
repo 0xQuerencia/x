@@ -30,6 +30,7 @@ pub enum Target {
     CopySnippet(String),
     PickColor,
     OpenFile(String),
+    PreviewFile(String),
     EndProcess(processes::ProcessInfo),
 }
 
@@ -47,6 +48,7 @@ impl Target {
             | Self::CopySnippet(_)
             | Self::PickColor
             | Self::OpenFile(_)
+            | Self::PreviewFile(_)
             | Self::EndProcess(_) => None,
         }
     }
@@ -203,11 +205,17 @@ fn web_search(query: &str) -> Option<Hit> {
 fn local_results(query: &str) -> Vec<Hit> {
     let trimmed = query.trim();
     let mut results = Vec::new();
+    let preview_request = trimmed.starts_with("read ") || trimmed.starts_with("view ");
     for file in files::search(trimmed) {
+        let target = if preview_request {
+            Target::PreviewFile(file.path.clone())
+        } else {
+            Target::OpenFile(file.path.clone())
+        };
         results.push(Hit {
             title: file.name,
             detail: format!("Local file · {}", file.path),
-            target: Target::OpenFile(file.path),
+            target,
         });
     }
     if picker::available()
