@@ -326,8 +326,9 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
-    /// Start listening, or stop listening and plan what was said. Nothing runs until
-    /// you `approve` the plan. The transcript never pastes into the focused app.
+    /// Start listening, or stop listening and plan what was said. Default mode
+    /// asks for approval; Autonomous mode can start safe Actions immediately.
+    /// The transcript never pastes into the focused app.
     Toggle {
         /// `actions` (open apps and sites) or `work` (hand a goal to OpenCode).
         #[arg(long, default_value = "actions")]
