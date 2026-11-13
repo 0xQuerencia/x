@@ -506,8 +506,13 @@ fn act(
             step,
             Step::Navigate(_)
                 | Step::Key(
-                    Key::Address | Key::Find | Key::Back | Key::Forward |
-                    Key::Reload | Key::NewTab | Key::Enter
+                    Key::Address
+                        | Key::Find
+                        | Key::Back
+                        | Key::Forward
+                        | Key::Reload
+                        | Key::NewTab
+                        | Key::Enter
                 )
         )
     {
