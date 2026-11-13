@@ -48,7 +48,9 @@ fn valid(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= MAX_TEXT_BYTES
         && !text.contains('\0')
-        && !text.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
+        && !text
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
 }
 
 impl Store {
@@ -72,7 +74,10 @@ impl Store {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
             Err(error) => return Err(format!("Cannot inspect clipboard snapshots: {error}")),
         };
-        if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_FILE_BYTES {
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.len() > MAX_FILE_BYTES
+        {
             return Err("Clipboard snapshot store is not a safe, bounded regular file".into());
         }
         let mut data = Vec::new();
@@ -96,7 +101,8 @@ impl Store {
     pub fn search(&self, filter: &str) -> Result<Vec<Entry>, String> {
         let now = now();
         let needle = filter.trim().to_lowercase();
-        Ok(self.load()?
+        Ok(self
+            .load()?
             .into_iter()
             .filter(|e| e.timestamp <= now && now - e.timestamp < RETENTION_SECS)
             .filter(|e| e.text.to_lowercase().contains(&needle))
@@ -109,15 +115,19 @@ impl Store {
             return Err("Clipboard text must contain 1–16384 safe UTF-8 bytes".into());
         }
         let now = now();
-        let mut entries: Vec<_> = self.load()?
+        let mut entries: Vec<_> = self
+            .load()?
             .into_iter()
             .filter(|e| e.timestamp <= now && now - e.timestamp < RETENTION_SECS)
             .filter(|e| e.text != text)
             .collect();
-        entries.insert(0, Entry {
-            timestamp: now,
-            text: text.into(),
-        });
+        entries.insert(
+            0,
+            Entry {
+                timestamp: now,
+                text: text.into(),
+            },
+        );
         entries.truncate(MAX_ITEMS);
         self.write(&entries)
     }
@@ -137,7 +147,10 @@ impl Store {
     }
 
     fn write(&self, entries: &[Entry]) -> Result<(), String> {
-        let parent = self.path.parent().ok_or("No clipboard configuration folder")?;
+        let parent = self
+            .path
+            .parent()
+            .ok_or("No clipboard configuration folder")?;
         fs::create_dir_all(parent).map_err(|error| format!("Cannot create folder: {error}"))?;
         let meta = fs::symlink_metadata(parent)
             .map_err(|error| format!("Cannot inspect configuration folder: {error}"))?;
@@ -164,13 +177,14 @@ impl Store {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(&tmp).map_err(|e| format!("Cannot save clipboard data: {e}"))?;
+        let mut file = options
+            .open(&tmp)
+            .map_err(|e| format!("Cannot save clipboard data: {e}"))?;
         let saved = (|| {
             file.write_all(&bytes)
                 .and_then(|_| file.sync_all())
                 .map_err(|e| format!("Could not save clipboard data: {e}"))?;
-            fs::rename(&tmp, &self.path)
-                .map_err(|e| format!("Cannot replace clipboard data: {e}"))
+            fs::rename(&tmp, &self.path).map_err(|e| format!("Cannot replace clipboard data: {e}"))
         })();
         if saved.is_err() {
             let _ = fs::remove_file(&tmp);
@@ -193,7 +207,10 @@ pub fn capture_now() -> Result<String, String> {
     }
     let text = String::from_utf8(data).map_err(|_| "Clipboard text is not UTF-8")?;
     Store::user()?.save(&text)?;
-    Ok(format!("Saved {} clipboard characters locally; expires after 24 hours", text.chars().count()))
+    Ok(format!(
+        "Saved {} clipboard characters locally; expires after 24 hours",
+        text.chars().count()
+    ))
 }
 
 /// Called only after the user types "clip " or "clipboard ".
@@ -219,7 +236,15 @@ mod tests {
         store.save("one").unwrap();
         store.save("two").unwrap();
         store.save("one").unwrap();
-        assert_eq!(store.search("").unwrap().iter().map(|e| e.text.as_str()).collect::<Vec<_>>(), vec!["one", "two"]);
+        assert_eq!(
+            store
+                .search("")
+                .unwrap()
+                .iter()
+                .map(|e| e.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["one", "two"]
+        );
         assert_eq!(store.search("two").unwrap()[0].text, "two");
         store.clear().unwrap();
         assert!(store.search("").unwrap().is_empty());
