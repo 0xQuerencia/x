@@ -780,9 +780,7 @@ impl Service {
             goal,
             desktop.as_ref(),
             &|goal, app, observation, history| {
-                if let Some(decision) =
-                    planner.decide_computer(goal, app, observation, history)
-                {
+                if let Some(decision) = planner.decide_computer(goal, app, observation, history) {
                     decision
                 } else {
                     let prompt = crate::computer::prompt(goal, app, observation, history);
