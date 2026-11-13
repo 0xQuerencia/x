@@ -202,9 +202,68 @@ pub fn matches(query: &str) -> Result<Vec<Snippet>, String> {
     Ok(matches)
 }
 
+/// Insert saved text only when the user deliberately says "insert snippet NAME"
+/// or "expand snippet NAME". Ordinary prose is never matched against triggers.
+/// The transcript is not passed to a model or saved by this lookup.
+fn spoken_name(phrase: &str) -> Option<&str> {
+    let trimmed = phrase.trim();
+    let lowered = trimmed.to_ascii_lowercase();
+    let prefix = ["insert snippet ", "expand snippet "]
+        .into_iter()
+        .find(|prefix| lowered.starts_with(prefix))?;
+    let name = trimmed[prefix.len()..].trim().trim_end_matches(['.', '!', '?']);
+    let name = name.trim();
+    if (2..=32).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        Some(name)
+    } else {
+        None
+    }
+}
+
+fn spoken_from(entries: &[Snippet], phrase: &str) -> Option<String> {
+    let name = spoken_name(phrase)?;
+    entries
+        .iter()
+        .find(|snippet| snippet.trigger.eq_ignore_ascii_case(name))
+        .map(|snippet| snippet.text.clone())
+}
+
+/// Return None for all non-snippet speech without opening any configuration
+/// files. A missing saved name is not hallucinated into an inserted value.
+pub fn spoken(phrase: &str) -> Result<Option<String>, String> {
+    if spoken_name(phrase).is_none() {
+        return Ok(None);
+    }
+    let entries = Store::user()?.list()?;
+    Ok(spoken_from(&entries, phrase))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spoken_snippets_are_explicit_and_case_insensitive() {
+        let entries = vec![Snippet {
+            trigger: "signature".into(),
+            text: "Regards,\nX".into(),
+        }];
+        assert_eq!(
+            spoken_from(&entries, "Insert snippet SIGNATURE."),
+            Some("Regards,\nX".into())
+        );
+        assert_eq!(
+            spoken_from(&entries, "expand snippet signature"),
+            Some("Regards,\nX".into())
+        );
+        assert_eq!(spoken_from(&entries, "signature"), None);
+        assert_eq!(spoken_from(&entries, "insert snippet missing"), None);
+        assert_eq!(spoken_from(&entries, "insert snippet signature and do stuff"), None);
+    }
 
     #[test]
     fn saves_updates_and_removes_without_duplication() {
