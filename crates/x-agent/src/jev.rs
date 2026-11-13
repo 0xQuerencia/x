@@ -31,6 +31,16 @@ impl Planner for Jev {
         "Jev 1.13 Free (decisions)".into()
     }
 
+    fn decide_computer(
+        &self,
+        goal: &str,
+        app: &str,
+        observation: &crate::desktop::Observation,
+        history: &[String],
+    ) -> Option<Result<crate::computer::Step, String>> {
+        Some(crate::jev_computer::decide(self, goal, app, observation, history))
+    }
+
     fn plan(&self, text: &str, smart: bool) -> Result<Reply, String> {
         let options = candidates(text);
         if options.is_empty() {
@@ -71,7 +81,7 @@ impl Jev {
         Ok(key)
     }
 
-    fn send(&self, request: &Value) -> Result<Value, String> {
+    pub(crate) fn send(&self, request: &Value) -> Result<Value, String> {
         // Curl configuration (including bearer credential and the payload) is
         // handed over stdin rather than command-line args. Only the fixed
         // OpenCode HTTPS endpoint is reachable from this integration.
