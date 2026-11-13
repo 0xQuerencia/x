@@ -115,6 +115,28 @@ on an entry. Removing a trigger deletes its stored text.
 Source: `crates/x-agent/src/quick/snippets.rs` and
 `src/rune_ui/agent/quick.rs`.
 
+## Process inspection (Linux)
+
+Type `processes`, `process <name>`, or `ps <name>` in the Quick tab to see
+up to six currently running processes owned by the signed-in user, ordered by
+resident memory. It reads Linux `/proc` on demand with a strict time/entry
+budget; it never runs a background process scanner.
+
+- Click **End…** then **Confirm SIGTERM** to request termination. The first
+  click does nothing to the process. The second validates the process's name,
+  owner and kernel start timestamp again and uses a Linux pidfd to pin its
+  identity against PID reuse before sending SIGTERM.
+- Root-owned sessions, PID 1, and X's own process cannot be terminated.
+- The UI reports signal delivery, **not verified process exit**. It never
+  escalates to SIGKILL or runs shell commands.
+- macOS and Windows do not yet have a native process viewer in this branch.
+- CPU percentages and restarting arbitrary processes are not implemented;
+  reconstructing launch arguments would be unsafe without an explicit app
+  registry.
+
+Source: `crates/x-agent/src/quick/processes.rs` and native Quick UI.
+Native Linux process-control tests should run only on an isolated test session.
+
 ## What X will and won't do
 
 * **Actions** are a closed registry: launch an approved app, open a public
