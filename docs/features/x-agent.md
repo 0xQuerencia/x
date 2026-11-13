@@ -94,6 +94,27 @@ logind may refuse blocking system sleep and allow only idle inhibition. This
 is an explicit session control, not a calendar-based schedule. Nothing runs
 until the user asks for it.
 
+## Explicit local snippets in Quick
+
+The Agent pane's Quick tab includes a small editor for named snippets. Save a
+trigger (ASCII letters, numbers, `-`, `_`; max 32) and up to 4096 characters of
+text. Search `snip <trigger>`, `snippet <trigger>`, or `snippets` and press Copy
+on an entry. Removing a trigger deletes its stored text.
+
+- Stored under the user's config directory, `hex/x-snippets.json`, as a local
+  JSON file. Updates use temporary files and refuse symlinked storage.
+- The library is bounded to 100 items. Malformed data is reported; it is never
+  automatically overwritten during a Save.
+- Only deliberate Quick searches read snippets; none are sent to a model.
+- Copy uses X's existing Wayland clipboard mechanism. On an unsupported
+  platform the copy action reports an error rather than claiming success.
+- **Not a keyboard text expander yet.** The editor can enter short strings,
+  while the JSON store supports line breaks and tabs. System-wide expansion
+  requires a separate opt-in keyboard-hook implementation and native tests.
+
+Source: `crates/x-agent/src/quick/snippets.rs` and
+`src/rune_ui/agent/quick.rs`.
+
 ## What X will and won't do
 
 * **Actions** are a closed registry: launch an approved app, open a public
