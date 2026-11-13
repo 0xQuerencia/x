@@ -217,7 +217,7 @@ impl ControlRequest {
     }
 }
 
-/// What `hex agent` asks X to do. Nothing runs until `Approve` names the planned task.
+/// What `hex agent` asks X to do. Default requires approval; Autonomous may run safe Actions directly.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case")]
 pub enum AgentAction {
