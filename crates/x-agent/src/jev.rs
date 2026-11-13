@@ -380,11 +380,16 @@ mod tests {
     use super::*;
 
     fn answer(choice: &str, confidence: f64, intent: f64) -> Value {
+        let mut probabilities = serde_json::Map::new();
+        probabilities.insert(choice.into(), json!(confidence));
+        if choice != "dictation" {
+            probabilities.insert("dictation".into(), json!(1.0 - confidence));
+        }
         json!({
             "answers": {
                 "route": {
                     "choice": choice,
-                    "probabilities": {choice: confidence, "dictation": 1.0 - confidence},
+                    "probabilities": probabilities,
                 },
                 "is_command": {"noul": intent},
             }
