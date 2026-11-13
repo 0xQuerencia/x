@@ -162,12 +162,15 @@ impl Store {
 
 /// Allow only predictable keys, never arbitrary key sequences or shortcut syntax.
 fn validate(trigger: &str, text: &str) -> Result<(), String> {
-    let valid = (1..=32).contains(&trigger.len())
+    let valid = (1..=48).contains(&trigger.len())
+        && !trigger.starts_with(' ')
+        && !trigger.ends_with(' ')
+        && !trigger.contains("  ")
         && trigger
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b' ');
     if !valid {
-        return Err("Snippet trigger must be 1–32 ASCII letters, numbers, - or _".into());
+        return Err("Snippet trigger must be 1–48 ASCII letters, numbers, -, _, or single spaces between words".into());
     }
     if text.is_empty()
         || text.chars().count() > MAX_BODY
@@ -181,7 +184,8 @@ fn validate(trigger: &str, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Only explicit `snip <query>` or `snippet <query>` searches library text.
+/// Only explicit `snip <query>` or `snippet <query>` searches
+/// the saved trigger and snippet body. The body never becomes a search URL.
 pub fn matches(query: &str) -> Result<Vec<Snippet>, String> {
     let raw = query.trim_start();
     let search = raw
@@ -191,15 +195,22 @@ pub fn matches(query: &str) -> Result<Vec<Snippet>, String> {
     let Some(search) = search else {
         return Ok(Vec::new());
     };
+    Ok(search_entries(Store::user()?.list()?, search))
+}
+
+/// Search is bounded, with the same matcher testable against an isolated store.
+fn search_entries(entries: Vec<Snippet>, search: &str) -> Vec<Snippet> {
     let needle = search.trim().to_lowercase();
-    let mut matches: Vec<_> = Store::user()?
-        .list()?
+    let mut matches: Vec<_> = entries
         .into_iter()
-        .filter(|snippet| snippet.trigger.to_lowercase().contains(&needle))
+        .filter(|snippet| {
+            snippet.trigger.to_lowercase().contains(&needle)
+                || snippet.text.to_lowercase().contains(&needle)
+        })
         .collect();
     matches.sort_by(|a, b| a.trigger.cmp(&b.trigger));
     matches.truncate(6);
-    Ok(matches)
+    matches
 }
 
 /// Resolve only explicitly named placeholders. Every source value is inserted
@@ -278,10 +289,11 @@ fn spoken_name(phrase: &str) -> Option<&str> {
         .trim()
         .trim_end_matches(['.', '!', '?']);
     let name = name.trim();
-    if (2..=32).contains(&name.len())
+    if (2..=48).contains(&name.len())
+        && !name.contains("  ")
         && name
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b' ')
     {
         Some(name)
     } else {
@@ -351,6 +363,26 @@ mod tests {
     }
 
     #[test]
+    fn phrases_and_body_search_are_explicit_and_local() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::at(tmp.path().join("x-snippets.json"));
+        store.upsert("my email", "contact@example.test").unwrap();
+        store.upsert("My Email", "new@example.test").unwrap();
+        assert_eq!(store.list().unwrap().len(), 1);
+        assert_eq!(
+            spoken_from(&store.list().unwrap(), "insert snippet MY EMAIL."),
+            Some("new@example.test".into())
+        );
+        assert_eq!(spoken_from(&store.list().unwrap(), "my email"), None);
+        let entries = store.list().unwrap();
+        assert_eq!(search_entries(entries.clone(), "example.test").len(), 1);
+        assert_eq!(search_entries(entries.clone(), "my email").len(), 1);
+        assert!(search_entries(entries, "no matching item").is_empty());
+        // Query routing remains gated by an explicit snip/snippet prefix.
+        assert!(matches("example.test").unwrap_or_default().is_empty());
+    }
+
+    #[test]
     fn saves_updates_and_removes_without_duplication() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::at(tmp.path().join("x-snippets.json"));
@@ -371,8 +403,10 @@ mod tests {
         let store = Store::at(path.clone());
         for trigger in [
             "",
-            "not allowed",
-            "too-long-a-trigger-name-that-is-absolutely-invalid",
+            " leading",
+            "trailing ",
+            "double  spaces",
+            "too-long-a-trigger-name-that-is-absolutely-invalid-and-very-long",
         ] {
             assert!(store.upsert(trigger, "Hello").is_err());
         }
