@@ -137,6 +137,8 @@ fn web_search(query: &str) -> Option<Hit> {
         "snippet ",
         "file ",
         "f ",
+        "read ",
+        "view ",
         "process ",
         "ps ",
         "calc ",
