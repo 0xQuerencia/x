@@ -114,8 +114,10 @@ fn score(query: &str, hit: &Hit) -> Option<usize> {
 /// requests. Prefixes are deliberately explicit; ordinary queries search
 /// Google. Never invoke an LLM or construct a URL directly from a query.
 fn web_search(query: &str) -> Option<Hit> {
-    let raw = query.trim();
-    if raw.is_empty() {
+    // Preserve trailing whitespace until a provider prefix is parsed:
+    // "g " is an incomplete search, not a Google search for the letter g.
+    let raw = query.trim_start();
+    if raw.trim().is_empty() {
         return None;
     }
     let lower = raw.to_ascii_lowercase();
@@ -152,7 +154,9 @@ fn web_search(query: &str) -> Option<Hit> {
     .find_map(|(prefix, site)| {
         lower
             .starts_with(*prefix)
-            .then_some((*site, &raw[prefix.len()..]))
+            // then_some() eagerly slices even for a nonmatching prefix.
+            // Then use a closure so single-letter/Unicode queries never panic.
+            .then(|| (*site, &raw[prefix.len()..]))
     })
     .unwrap_or(("google", raw));
     let terms = terms.trim();
@@ -432,6 +436,13 @@ mod tests {
                     Target::WebSearch { ref site, .. } if site == expected_site
                 )
             );
+        }
+    }
+
+    #[test]
+    fn short_and_unicode_queries_never_slice_past_input() {
+        for query in ["a", "g", "é", "🔎", "q", "x"] {
+            let _ = search(query, std::iter::empty());
         }
     }
 
