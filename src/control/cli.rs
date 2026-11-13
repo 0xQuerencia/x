@@ -655,8 +655,18 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Awake {
                     command,
                     minutes,
+                    clock,
+                    utc_offset,
                     output,
-                } => (AgentAction::Awake { command, minutes }, output),
+                } => (
+                    AgentAction::Awake {
+                        command,
+                        minutes,
+                        clock,
+                        utc_offset,
+                    },
+                    output,
+                ),
                 AgentCommand::Trust { state, output } => {
                     (AgentAction::Trust { on: state == "on" }, output)
                 }
