@@ -429,7 +429,7 @@ pub(crate) fn run_with(
                     return Outcome::Failed("Stopped: could not verify the result".into());
                 }
             }
-            action => match act(desktop, &win, &obs, action, &mut p, host, goal) {
+            action => match act(desktop, &win, &obs, action, &mut p, host, goal, app) {
                 Ok(()) => {
                     p.acts += 1;
                     p.acted_last = true;
@@ -495,8 +495,26 @@ fn act(
     p: &mut Progress,
     host: &dyn Host,
     goal: &str,
+    app: &str,
 ) -> Result<(), Refusal> {
     let retry = |e: String| Refusal::Retry(e);
+    // Browser navigation shortcuts (including Enter in an address/search
+    // bar) are not applicable to file managers or editors. The model cannot
+    // turn a supposed browser UI command into a terminal/editor hotkey.
+    if !matches!(app, "firefox" | "chrome" | "chromium" | "brave")
+        && matches!(
+            step,
+            Step::Navigate(_)
+                | Step::Key(
+                    Key::Address | Key::Find | Key::Back | Key::Forward |
+                    Key::Reload | Key::NewTab | Key::Enter
+                )
+        )
+    {
+        return Err(Refusal::Stop(
+            "Browser navigation keys are unavailable in this app".into(),
+        ));
+    }
     let find = |id: &str| {
         obs.element(id)
             .ok_or_else(|| Refusal::Retry(format!("No control {id:?} on screen now")))
