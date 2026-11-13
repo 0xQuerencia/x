@@ -72,7 +72,11 @@ mod linux {
             if i > MAX_SCAN || started.elapsed() > SCAN_BUDGET {
                 break;
             }
-            let Some(pid) = entry.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|s| s.parse::<u32>().ok())
+            else {
                 continue;
             };
             if pid <= 1 || pid == std::process::id() {
@@ -117,7 +121,9 @@ mod linux {
         let Some((current, owner)) = read(selected.pid) else {
             return Err("The selected process has already exited".into());
         };
-        if owner != uid || current.start_ticks != selected.start_ticks || current.name != selected.name
+        if owner != uid
+            || current.start_ticks != selected.start_ticks
+            || current.name != selected.name
         {
             return Err("The selected process has changed; choose it again".into());
         }
@@ -138,7 +144,10 @@ mod linux {
                 std::io::Error::last_os_error()
             ));
         }
-        Ok(format!("Sent SIGTERM to {} (PID {}); exit is not verified", current.name, current.pid))
+        Ok(format!(
+            "Sent SIGTERM to {} (PID {}); exit is not verified",
+            current.name, current.pid
+        ))
     }
 
     #[cfg(test)]
