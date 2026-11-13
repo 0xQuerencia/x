@@ -50,6 +50,9 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
         let detail = hit.detail;
         let target = hit.target;
         let is_copy = matches!(&target, Target::CopyResult(_));
+        let is_process = matches!(&target, Target::EndProcess(_));
+        let confirming = matches!(&target, Target::EndProcess(info)
+            if ui.agent.pending_process.as_ref() == Some(info));
         content = content.child(
             row()
                 .key(format!("quick-row-{i}"))
@@ -81,15 +84,32 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                         tr("Pick")
                     } else if matches!(&target, Target::OpenFile(_)) {
                         tr("Open")
+                    } else if is_process {
+                        if confirming { tr("Confirm SIGTERM") } else { tr("End…") }
                     } else {
                         tr("Plan")
                     },
                     ButtonKind::Secondary,
                     move |ui: &mut Ui, _| {
-                        if !is_copy {
+                        if !is_copy && !is_process {
                             ui.agent.show_quick = false;
                         }
                         match &target {
+                            Target::EndProcess(info) => {
+                                if !confirming {
+                                    ui.agent.pending_process = Some(info.clone());
+                                    ui.agent.quick_notice = Some(format!(
+                                        "Confirm ending {} (PID {}) with a second click. No signal sent yet.",
+                                        info.name, info.pid
+                                    ));
+                                } else {
+                                    ui.agent.pending_process = None;
+                                    ui.agent.quick_notice = Some(
+                                        ::x_agent::quick::processes::terminate(info)
+                                            .unwrap_or_else(|error| error),
+                                    );
+                                }
+                            }
                             Target::CopyResult(value) => {
                                 let value = value.clone();
                                 std::thread::spawn(move || {
@@ -138,6 +158,14 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                         }
                     },
                 )),
+        );
+    }
+    if let Some(note) = &ui.agent.quick_notice {
+        content = content.child(
+            text(note.clone())
+                .key("quick-process-confirmation")
+                .font(DESCRIPTION)
+                .color(p.warning()),
         );
     }
     // Snippets are explicit, local-only copy actions. This editor intentionally
