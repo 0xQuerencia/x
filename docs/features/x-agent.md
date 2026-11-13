@@ -46,6 +46,49 @@ pane is selected.
 desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
 once: X refuses to start while any task or recording of its own is in flight.
 
+### Jev-only command decisions (opt-in)
+
+X can use OpenCode Console's **Jev 1.13 Free** decision model for Actions
+without enabling a general-purpose chat LLM. It is NOT a text generator:
+it selects exactly one existing, validated candidate action, or says the
+utterance was dictation/unsupported. Existing deterministic rules still
+run locally first, without an API call. Work-mode OpenCode tasks still
+require whatever coding model OpenCode uses.
+
+```sh
+hex labs on x-agent
+hex agent planner jev
+hex agent voice auto
+hex agent say --mode actions "Could you bring Firefox to the front?"
+```
+
+Provide an OpenCode Console API key through `JEV_API_KEY` (or
+`OPENCODE_API_KEY`) in the **running app/service environment**, or put
+the key in the owner-only `jev-key` file inside Hex/X's application data
+folder (`app_paths::support_dir`). An export in a terminal may not reach
+an already running systemd service. Do not commit the key into the repo.
+`hex agent planner off` disables remote routing again.
+
+Only the spoken transcript goes to the fixed OpenCode HTTPS decision endpoint.
+No screenshots, clipboard contents, selected text or files are sent by this
+planner. Requests are bounded to five seconds; network failure, API-key errors,
+quota exhaustion, unexpected/forged choices, and low-confidence routing all
+fail without running anything. In Smart voice mode, low-confidence candidates
+become ordinary dictation, but transport errors are reported and consumed so
+that commands do not unexpectedly paste into an app. Already-recognized
+commands require no provider access and retain X's normal approval checks.
+
+Jev can currently choose one grounded local action: open/focus a named
+approved app, open an explicitly named supported site or public HTTPS URL,
+run a grounded web search, switch to an explicitly mentioned numbered
+workspace, or open OpenCode's terminal. It cannot compose multiple actions,
+invent arguments, operate apps, answer general questions, or replace OpenCode's
+coding model. The free model is a promotional offering and may change.
+
+Source: `crates/x-agent/src/jev.rs` and `src/agent_host.rs`.
+Unit tests use synthetic decision responses; genuine OpenCode credentials
+and a real desktop are still required for end-to-end verification.
+
 ## X Quick (local action search)
 
 The Agent pane's **Quick** tab searches the existing approved app registry,

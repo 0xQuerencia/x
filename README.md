@@ -75,6 +75,7 @@ A few useful settings:
 x agent voice auto                 # Dictate normally; commands start with "X"
 x agent trust on                   # Skip prompts for allowed basic actions
 x agent planner gemma4:e2b-it-qat  # Optional local Ollama planner
+x agent planner jev                # Optional decision-only Jev 1.13 Free routing (Console key required)
 x agent computer grant chromium    # Let X inspect and operate Chromium
 x agent stop                       # Stop the current task
 ```

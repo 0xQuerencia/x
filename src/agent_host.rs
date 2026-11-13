@@ -91,8 +91,16 @@ fn gemini_key_file() -> Option<PathBuf> {
         .map(|dir| dir.join("gemini-key"))
 }
 
-/// `gemini` or `gemini:<model>` is Gemini; any other name is a local Ollama model.
+/// `jev` uses OpenCode\'s free System One decision endpoint. Gemini and OpenAI-compatible
+/// planners remain optional; all other names select a local Ollama model.
 fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
+    if model == "jev" {
+        return Arc::new(x_agent::jev::Jev {
+            key_file: crate::app_paths::support_dir()
+                .ok()
+                .map(|dir| dir.join("jev-key")),
+        });
+    }
     if let Some(name) = model
         .strip_prefix("openai:")
         .filter(|name| !name.is_empty())
@@ -122,7 +130,10 @@ fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
 fn set_planner(model: &str) -> ControlReply {
     let model = model.trim();
     if model.is_empty() || model.len() > 100 || model.contains(char::is_whitespace) {
-        return ControlReply::error("usage", "give an Ollama model name, or off");
+        return ControlReply::error(
+            "usage",
+            "give jev, gemini, openai:<model>, an Ollama model, or off",
+        );
     }
     let Some(path) = planner_file() else {
         return ControlReply::error("failed", "the data folder is unavailable");
@@ -140,7 +151,9 @@ fn set_planner(model: &str) -> ControlReply {
     if off {
         return ControlReply::done("Planner off");
     }
-    let note = if model.starts_with("openai:") {
+    let note = if model == "jev" {
+        ". Jev makes decisions only, not prose. X sends the spoken command to OpenCode Console; set JEV_API_KEY or OPENCODE_API_KEY in X\'s environment, or save the Console key in the jev-key file in X\'s data folder. No other model is called on Jev failure.".to_string()
+    } else if model.starts_with("openai:") {
         ". What you say is sent to the endpoint saved in X's openai-base file for planning."
             .to_string()
     } else if model.starts_with("gemini") {
