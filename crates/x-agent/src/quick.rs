@@ -3,6 +3,7 @@
 
 use crate::tools;
 
+pub mod clipboard_history;
 mod colors;
 pub mod files;
 mod math;
@@ -294,6 +295,16 @@ pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>
         results.push(web);
     }
     let mut local = local_results(query);
+    if let Ok(entries) = clipboard_history::matches(query) {
+        for entry in entries {
+            let preview = entry.text.chars().take(72).collect::<String>();
+            local.push(Hit {
+                title: format!("Clipboard: {preview}"),
+                detail: "Saved explicitly · stored locally · copy on request".into(),
+                target: Target::CopyResult(entry.text),
+            });
+        }
+    }
     if let Ok(snippets) = snippets::matches(query) {
         for snippet in snippets {
             local.push(Hit {
