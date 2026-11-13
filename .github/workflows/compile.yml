@@ -63,6 +63,8 @@ jobs:
       # Run X's deterministic agent and utility tests on every PR.
       # Real-compositor and microphone integration tests remain ignored.
       - run: cargo test --locked -p x-agent --all-targets
+      # Clock-based desktop controls live in the Hex binary, not x-agent.
+      - run: cargo test --locked --bin hex audio::clock_deadline::tests
 
   macos:
     name: macOS
