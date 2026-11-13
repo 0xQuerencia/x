@@ -385,10 +385,16 @@ pub enum AgentCommand {
     /// Keep the desktop awake for a bounded duration, stop it or check remaining time.
     /// Uses the OS's existing native recording-inhibitor backend without recording.
     Awake {
-        #[arg(value_parser = ["on", "off", "status"])]
+        #[arg(value_parser = ["on", "off", "status", "until"])]
         command: String,
         #[arg(long, default_value_t = 60)]
         minutes: u32,
+        /// With 'until': 24-hour target time HH:MM in the specified UTC offset.
+        #[arg(long)]
+        clock: Option<String>,
+        /// With 'until': fixed UTC offset such as +05:30 (no DST inference).
+        #[arg(long)]
+        utc_offset: Option<String>,
         #[command(flatten)]
         output: Output,
     },
