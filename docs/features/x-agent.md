@@ -77,6 +77,10 @@ This uses the existing typed Search action and its normal approval gate.
   directory levels, 70 ms) and skips hidden paths, symlinks and build caches.
   Explicitly opening a result revalidates its location and rejects executable
   files. No indexing runs in the background and file contents are never read.
+- `convert 09:00 +05:30 to -07:00` converts a named clock time between
+  two **explicit fixed UTC offsets**, showing previous/next-day rollover.
+  Calculations are local and never infer daylight-saving rules or IANA
+  timezone names (e.g. `PST` is refused rather than guessed).
 - A query starting with `=` or `calc ` evaluates bounded arithmetic entirely locally (parentheses, +, -, *, /, %, exponentiation); invalid calculations are refused instead of guessed.
 - Explicit date/time expressions such as `date today`, `date +10`,
   `date yesterday`, `time utc`, and `time +05:30` calculate dates

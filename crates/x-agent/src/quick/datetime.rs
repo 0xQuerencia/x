@@ -58,11 +58,58 @@ fn format_clock(seconds: i64) -> String {
     format!("{:02}:{:02}", remaining / 3_600, remaining % 3_600 / 60)
 }
 
+/// Convert a named clock time between two explicit fixed UTC offsets.
+/// Returns a day-shift label so crossing midnight is not silently hidden.
+/// Example: "convert 09:00 +05:30 to -07:00".
+fn convert_clock(text: &str) -> Option<(String, String)> {
+    let mut fields = text.strip_prefix("convert ")?.split_whitespace();
+    let clock = fields.next()?;
+    let source = fields.next()?;
+    if fields.next()? != "to" {
+        return None;
+    }
+    let destination = fields.next()?;
+    if fields.next().is_some() {
+        return None;
+    }
+    let (h, m) = clock.split_once(':')?;
+    if h.len() != 2
+        || m.len() != 2
+        || !h.bytes().all(|c| c.is_ascii_digit())
+        || !m.bytes().all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    let hour = h.parse::<i32>().ok()?;
+    let minute = m.parse::<i32>().ok()?;
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    let from = parse_offset(source)?;
+    let to = parse_offset(destination)?;
+    let total = hour * 60 + minute - from + to;
+    let day_delta = total.div_euclid(1_440);
+    let local = total.rem_euclid(1_440);
+    let relative_day = match day_delta {
+        -1 => " (previous day)",
+        0 => "",
+        1 => " (next day)",
+        _ => return None,
+    };
+    Some((
+        format!("Clock conversion: {source} → {destination} (fixed offsets; no DST)"),
+        format!("{:02}:{:02}{relative_day}", local / 60, local % 60),
+    ))
+}
+
 /// An explicit X Quick command, e.g. "date +10", "date today",
 /// "time utc", "time +05:30". Values are UTC or a named fixed offset.
 /// Calendar and timezone data are not sent to any model or service.
 pub fn evaluate(query: &str, when: SystemTime) -> Option<(String, String)> {
     let text = query.trim().to_ascii_lowercase();
+    if let Some(result) = convert_clock(&text) {
+        return Some(result);
+    }
     let secs = i64::try_from(when.duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()?;
     if matches!(text.as_str(), "date" | "date today") {
         return Some(("UTC date".into(), format_date(secs.div_euclid(86_400))));
@@ -146,6 +193,31 @@ mod tests {
             evaluate("time -01:00", when(0)).unwrap().1,
             "1969-12-31 23:00"
         );
+    }
+
+    #[test]
+    fn converts_clock_times_with_explicit_day_rollover() {
+        let t = when(0);
+        assert_eq!(
+            evaluate("convert 09:00 +05:30 to -07:00", t).unwrap().1,
+            "20:30 (previous day)"
+        );
+        assert_eq!(
+            evaluate("convert 23:30 -04:00 to +05:30", t).unwrap().1,
+            "09:00 (next day)"
+        );
+        assert_eq!(
+            evaluate("convert 15:00 UTC to +05:30", t).unwrap().1,
+            "20:30"
+        );
+        for input in [
+            "convert 25:00 +05:30 to UTC",
+            "convert 09:00 PST to UTC",
+            "convert 9:00 +05:30 to UTC",
+            "convert 09:00 +05:30 until UTC",
+        ] {
+            assert!(evaluate(input, t).is_none(), "{input}");
+        }
     }
 
     #[test]
