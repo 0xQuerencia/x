@@ -18,6 +18,8 @@ const MAX_RESULTS: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Target {
+    /// Navigate only inside the existing X window; never run a shell action.
+    Navigate(String),
     OpenApp(String),
     FocusApp(String),
     Workspace(u8),
@@ -47,6 +49,7 @@ impl Target {
             Self::Workspace(n) => Some(format!("switch to workspace {n}")),
             Self::WebSearch { site, query } => Some(format!("search {site} for {query}")),
             Self::Workflow(_)
+            | Self::Navigate(_)
             | Self::CopyResult(_)
             | Self::CopySnippet(_)
             | Self::PickColor
@@ -130,6 +133,9 @@ fn web_search(query: &str) -> Option<Hit> {
         return None;
     }
     let lower = raw.to_ascii_lowercase();
+    if ["settings", "formatting", "history", "commands", "workflows"].contains(&lower.trim()) {
+        return None;
+    }
     // A local utility query must not acquire a tempting accidental web
     // fallback. Clipboard/history/snippet terms may contain private data.
     if [
@@ -302,6 +308,23 @@ fn local_results(query: &str) -> Vec<Hit> {
 /// are not treated as free-form commands and are handed to the existing engine.
 pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>) -> Vec<Hit> {
     let mut catalog = Vec::new();
+    for (id, name, detail) in [
+        ("settings", "Settings", "Open app settings"),
+        (
+            "formatting",
+            "Formatting",
+            "Open the Output formatting pane",
+        ),
+        ("history", "History", "Open saved dictations"),
+        ("commands", "Commands", "Return to X's voice command pane"),
+        ("workflows", "Workflows", "Open the saved workflow manager"),
+    ] {
+        catalog.push(Hit {
+            title: name.into(),
+            detail: detail.into(),
+            target: Target::Navigate(id.into()),
+        });
+    }
     for (id, name) in workflows {
         catalog.push(Hit {
             title: name,
@@ -393,6 +416,29 @@ mod tests {
             if let Some(phrase) = hit.target.phrase() {
                 assert!(tools::plan_rules(&phrase).is_some(), "{phrase}");
             }
+        }
+    }
+
+    #[test]
+    fn navigation_is_local_and_never_becomes_a_command_or_web_search() {
+        for (query, target) in [
+            ("settings", "settings"),
+            ("formatting", "formatting"),
+            ("history", "history"),
+            ("commands", "commands"),
+            ("workflows", "workflows"),
+        ] {
+            let hits = search(query, std::iter::empty());
+            assert!(
+                hits.iter()
+                    .any(|hit| hit.target == Target::Navigate(target.into()))
+            );
+            assert!(
+                !hits
+                    .iter()
+                    .any(|hit| matches!(hit.target, Target::WebSearch { .. }))
+            );
+            assert_eq!(Target::Navigate(target.into()).phrase(), None);
         }
     }
 

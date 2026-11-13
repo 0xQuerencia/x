@@ -215,8 +215,15 @@ This uses the existing typed Search action and its normal approval gate.
   natural-language date questions are not implemented.
 
 - A HEX or RGB color query (e.g. `color #2563EB` or `rgb(37, 99, 235)`) produces copyable HEX, RGB, HSL, and OKLCH values without a model or screen capture. `Copy` uses the existing Wayland clipboard action, which is not cross-platform yet.
-- This is currently a **native pane tab**, not a globally bound floating
-  launcher or a replacement for Hex's dictation shortcut.
+- X Quick now offers **in-app navigation** to Settings, Formatting (Output),
+  History, Commands and Workflows. Commands and Workflows reuse the existing
+  Agent pane; navigation never goes through Jev or the Actions executor.
+- Inside X's own window, `Ctrl+K` (Linux/Windows) or `Command+K` (macOS)
+  toggles Quick. Escape closes Quick when no other higher-priority action
+  (such as stopping a running agent task) applies. For a system-wide shortcut,
+  continue to bind `hex window show quick` in the desktop's settings.
+- Quick remains a **native pane tab**, not a separately floating launcher,
+  and does not replace Hex's dictation shortcut.
 - The search UI does not run an action automatically on selection; the button
   prepares a plan that can be reviewed in the Commands pane.
 

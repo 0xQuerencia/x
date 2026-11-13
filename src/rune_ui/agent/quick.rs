@@ -106,6 +106,8 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                     &format!("quick-use-{i}"),
                     if is_copy {
                         tr("Copy")
+                    } else if matches!(&target, Target::Navigate(_)) {
+                        tr("Go")
                     } else if matches!(&target, Target::PickColor) {
                         tr("Pick")
                     } else if matches!(&target, Target::OpenFile(_)) {
@@ -120,7 +122,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                         tr("Plan")
                     },
                     ButtonKind::Secondary,
-                    move |ui: &mut Ui, _| {
+                    move |ui: &mut Ui, tx| {
                         if !is_copy
                             && !is_process
                             && !matches!(&target, Target::PreviewFile(_) | Target::HelpText(_))
@@ -128,6 +130,19 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                             ui.agent.show_quick = false;
                         }
                         match &target {
+                            Target::Navigate(section) => {
+                                use crate::rune_ui::{Destination, show};
+                                match section.as_str() {
+                                    "settings" => show(ui, Destination::Settings, tx),
+                                    "formatting" => show(ui, Destination::Modes, tx),
+                                    "history" => show(ui, Destination::History, tx),
+                                    "commands" | "workflows" => {
+                                        ui.agent.show_workflows = section == "workflows";
+                                        show(ui, Destination::Agent, tx);
+                                    }
+                                    _ => {}
+                                }
+                            }
                             Target::EndProcess(info) => {
                                 if !confirming {
                                     ui.agent.pending_process = Some(info.clone());
