@@ -4,6 +4,7 @@ mod call_input;
 #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
 pub(crate) mod hex_microphone;
 pub(crate) mod idle_sleep;
+pub(crate) mod clock_deadline;
 mod input_format;
 pub(crate) mod input_level;
 pub(crate) mod instant;
