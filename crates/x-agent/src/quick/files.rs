@@ -189,11 +189,11 @@ fn read_preview(canonical: &Path) -> Result<String, String> {
     {
         return Err("Only known text-file extensions can be previewed".into());
     }
-    let metadata = fs::metadata(&canonical).map_err(|e| format!("Cannot inspect file: {e}"))?;
+    let metadata = fs::metadata(canonical).map_err(|e| format!("Cannot inspect file: {e}"))?;
     if metadata.len() > LIMIT {
         return Err("File is larger than the 8 KiB preview limit; open it in an editor".into());
     }
-    let mut file = fs::File::open(&canonical).map_err(|e| format!("Cannot read file: {e}"))?;
+    let file = fs::File::open(canonical).map_err(|e| format!("Cannot read file: {e}"))?;
     let mut data = Vec::new();
     file.take(LIMIT + 1)
         .read_to_end(&mut data)
