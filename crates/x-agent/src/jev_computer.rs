@@ -53,8 +53,12 @@ fn label(e: &Element) -> String {
     format!(
         "{} {:?} {:?}",
         e.role,
-        e.name,
-        if e.value.is_empty() { "" } else { &e.value },
+        crate::desktop::prompt_text(&e.name),
+        if e.value.is_empty() {
+            String::new()
+        } else {
+            crate::desktop::prompt_text(&e.value)
+        },
     )
 }
 
@@ -258,8 +262,8 @@ fn request(goal: &str, app: &str, obs: &Observation, history: &[String], o: &Off
         .map(|e| json!({
             "id": e.id,
             "role": e.role,
-            "name": e.name,
-            "value": e.value,
+            "name": crate::desktop::prompt_text(&e.name),
+            "value": crate::desktop::prompt_text(&e.value),
             "can_click": o.clicks.contains_key(&e.id),
             "can_type": o.fields.contains_key(&e.id),
         }))
@@ -269,9 +273,10 @@ fn request(goal: &str, app: &str, obs: &Observation, history: &[String], o: &Off
         "state": {
             "goal": goal,
             "app": app,
-            "window": obs.title,
+            "window": crate::desktop::prompt_text(&obs.title),
             "controls": controls,
-            "visible_text": obs.texts.iter().take(30).collect::<Vec<_>>(),
+            "visible_text": obs.texts.iter().take(30)
+                .map(|t| crate::desktop::prompt_text(t)).collect::<Vec<_>>(),
             "completed": history.iter().rev().take(MAX_RECENT).rev().collect::<Vec<_>>(),
             "untrusted_screen": true,
         },
@@ -295,9 +300,10 @@ fn picked<'a>(reply: &'a Value, question: &str, options: &Choices, threshold: f6
     let probability = probs.get(id).and_then(Value::as_f64)
         .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
         .ok_or_else(|| format!("Jev supplied invalid {question} probability"))?;
-    let runner = probs.values()
-        .filter_map(Value::as_f64)
-        .filter(|v| v.is_finite() && (0.0..=1.0).contains(v) && *v != probability)
+    let runner = probs.iter()
+        .filter(|(name, _)| name.as_str() != id)
+        .filter_map(|(_, value)| value.as_f64())
+        .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
         .fold(0.0_f64, f64::max);
     if probability < threshold || probability - runner < MARGIN {
         return Err(format!("Jev is uncertain about {question}; no action was performed"));
@@ -399,16 +405,24 @@ mod tests {
     }
 
     fn reply(op: &str) -> Value {
+        let mut probabilities = serde_json::Map::new();
+        probabilities.insert(op.into(), json!(0.96));
+        if op != "blocked" {
+            probabilities.insert("blocked".into(), json!(0.04));
+        }
         json!({"answers": { "operation": {
-            "choice":op,
-            "probabilities":{op: 0.96,"blocked":0.04}
+            "choice": op,
+            "probabilities": probabilities,
         }}})
     }
 
     fn attach(base: &mut Value, key: &str, value: &str) {
+        let mut probabilities = serde_json::Map::new();
+        probabilities.insert(value.into(), json!(0.98));
+        probabilities.insert("none".into(), json!(0.02));
         base["answers"][key] = json!({
-            "choice":value,
-            "probabilities":{value:0.98,"none":0.02}
+            "choice": value,
+            "probabilities": probabilities,
         });
     }
 
