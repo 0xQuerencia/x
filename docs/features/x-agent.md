@@ -94,6 +94,28 @@ logind may refuse blocking system sleep and allow only idle inhibition. This
 is an explicit session control, not a calendar-based schedule. Nothing runs
 until the user asks for it.
 
+## Clipboard text snapshots (explicit opt-in)
+
+X Quick can save **one** text clipboard item when you click **Save current text**.
+The item is stored in a bounded owner-only local JSON file with a 24-hour
+retention window, up to 100 items (16 KiB per text item). Search for a saved
+item using `clip <words>` or `clipboard <words>`; use the same explicit
+Copy action as other Quick values. Click **Erase saved snapshots** to remove
+the entire saved store. Saving the same text again moves it to the top.
+
+- This is **not** background clipboard history: X does not poll the clipboard,
+  track unrelated copied items, read clipboard images, or watch password-manager
+  offers. The user must intentionally capture each snapshot.
+- Capture currently needs `wl-paste` on Wayland and text/plain clipboard
+  data. Copying results uses X's existing `wl-copy` support.
+- The JSON store is local to `hex/x-clipboard-snapshots.json` in the user
+  configuration folder; it is not uploaded or given to the AI planner.
+- Retention is enforced when searching and saving; old bytes on disk remain
+  until an updated save or explicit erase. Treat clipboard snapshots as
+  sensitive, even when capture is manual.
+- Future work: privacy-aware background monitoring with source-app filters,
+  permission toggles, image/file types, and session-specific exclusion rules.
+
 ## Explicit local snippets in Quick
 
 The Agent pane's Quick tab includes a small editor for named snippets. Save a
