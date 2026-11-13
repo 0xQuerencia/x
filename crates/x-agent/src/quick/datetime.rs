@@ -28,7 +28,7 @@ fn parse_offset(text: &str) -> Option<i32> {
     }
     let part = text.to_ascii_lowercase();
     let part = part.strip_prefix("utc").unwrap_or(&part);
-    if !part.starts_with(['+', '-']) {
+    if !part.starts_with('+') && !part.starts_with('-') {
         return None;
     }
     let (sign, rest) = if let Some(rest) = part.strip_prefix('+') {
