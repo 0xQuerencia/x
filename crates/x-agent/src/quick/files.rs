@@ -258,7 +258,7 @@ mod tests {
         let binary = tmp.path().join("notes.bin");
         fs::write(&binary, "plain text").unwrap();
         assert!(read_preview(&binary).is_err());
-        fs::write(&file, b"Hello\\0binary").unwrap();
+        fs::write(&file, b"Hello\0binary").unwrap();
         assert!(read_preview(&file).is_err());
     }
 
