@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 pub(crate) mod browser_media;
 mod call_input;
+pub(crate) mod clock_deadline;
 #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
 pub(crate) mod hex_microphone;
 pub(crate) mod idle_sleep;

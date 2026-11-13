@@ -113,6 +113,12 @@ web-search suggestion to avoid accidentally offering private text to a browser.
 hour, while `hex agent awake off` releases it and `hex agent awake status`
 reports the remaining duration. Durations must be 1–480 minutes.
 
+You can also use `hex agent awake until --clock 18:30 --utc-offset +05:30` to
+stop at the next 18:30 in a specified **fixed UTC offset** (not an inferred
+region/timezone). The target must be within eight hours. A minute-level timer
+may release the inhibitor up to 59 seconds after the target. DST changes are
+not inferred; use the correct current offset.
+
 The timer uses Hex's platform-native idle prevention but does **not** set
 its recording-in-progress state or keep the speech model warm. On Linux,
 logind may refuse blocking system sleep and allow only idle inhibition. This
