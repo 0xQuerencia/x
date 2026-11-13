@@ -4,6 +4,7 @@
 use crate::tools;
 
 mod colors;
+pub mod datetime;
 pub mod files;
 mod math;
 pub mod picker;
@@ -189,6 +190,13 @@ fn local_results(query: &str) -> Vec<Hit> {
             title: "Pick a color from the screen".into(),
             detail: "Requires hyprpicker · click to select one pixel".into(),
             target: Target::PickColor,
+        });
+    }
+    if let Some((label, value)) = datetime::now(trimmed) {
+        results.push(Hit {
+            title: format!("{label}: {value}"),
+            detail: "Calculated locally · no timezone/DST database · copy result".into(),
+            target: Target::CopyResult(value),
         });
     }
     let expression = trimmed
