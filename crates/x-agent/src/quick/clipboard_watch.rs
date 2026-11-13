@@ -165,7 +165,7 @@ pub fn start(minutes: u32) -> Result<String, String> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        return Err("Clipboard-change capture is currently available only on Linux Wayland".into());
+        Err("Clipboard-change capture is currently available only on Linux Wayland".into())
     }
     #[cfg(target_os = "linux")]
     {
