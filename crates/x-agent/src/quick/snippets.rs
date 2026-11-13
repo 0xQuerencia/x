@@ -186,13 +186,15 @@ fn validate(trigger: &str, text: &str) -> Result<(), String> {
 
 /// Only explicit `snip <query>` or `snippet <query>` searches
 /// the saved trigger and snippet body. The body never becomes a search URL.
-pub fn matches(query: &str) -> Result<Vec<Snippet>, String> {
+fn snippet_query(query: &str) -> Option<&str> {
     let raw = query.trim_start();
-    let search = raw
-        .strip_prefix("snip ")
+    raw.strip_prefix("snip ")
         .or_else(|| raw.strip_prefix("snippet "))
-        .or_else(|| (raw == "snippets").then_some(""));
-    let Some(search) = search else {
+        .or_else(|| (raw == "snippets").then_some(""))
+}
+
+pub fn matches(query: &str) -> Result<Vec<Snippet>, String> {
+    let Some(search) = snippet_query(query) else {
         return Ok(Vec::new());
     };
     Ok(search_entries(Store::user()?.list()?, search))
@@ -379,7 +381,9 @@ mod tests {
         assert_eq!(search_entries(entries.clone(), "my email").len(), 1);
         assert!(search_entries(entries, "no matching item").is_empty());
         // Query routing remains gated by an explicit snip/snippet prefix.
-        assert!(matches("example.test").unwrap_or_default().is_empty());
+        assert_eq!(snippet_query("example.test"), None);
+        assert_eq!(snippet_query("snip example.test"), Some("example.test"));
+        assert_eq!(snippet_query("snippet my email"), Some("my email"));
     }
 
     #[test]
