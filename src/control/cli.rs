@@ -5,7 +5,7 @@
 //! when Hex refused or failed it, 2 for usage errors (clap), 3 when Hex
 //! isn't running, and 4 when `dictation stop --print` heard no speech. Nothing here launches Hex except `start` and `restart`.
 
-use std::io::Write;
+use std::io::{Read, Write};
 mod human;
 
 use clap::{Args, Subcommand};
@@ -88,6 +88,11 @@ pub enum ControlCli {
     Settings {
         #[command(subcommand)]
         command: SettingsCommand,
+    },
+    /// Manage X Quick's local-only reusable text snippets without launching X.
+    Snippets {
+        #[command(subcommand)]
+        command: SnippetCommand,
     },
     /// List, switch, install, and import transcription models.
     #[command(visible_alias = "models")]
@@ -181,6 +186,31 @@ pub enum ControlCli {
         /// Keep printing new lines until interrupted.
         #[arg(short, long)]
         follow: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SnippetCommand {
+    /// List saved triggers; JSON includes the original text.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create or update a trigger. Use --stdin to avoid putting private text in argv.
+    Set {
+        trigger: String,
+        /// Text to save (visible in process arguments). Prefer --stdin for secrets.
+        #[arg(required_unless_present = "stdin", conflicts_with = "stdin")]
+        text: Option<String>,
+        /// Read UTF-8 content from standard input, limited to 4096 bytes.
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Remove a trigger only with explicit confirmation.
+    Remove {
+        trigger: String,
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -586,6 +616,7 @@ pub fn run(command: ControlCli) -> u8 {
         }
         ControlCli::PasteLast { output } => send(ControlCommand::PasteLast, output),
         ControlCli::Settings { command } => settings(command),
+        ControlCli::Snippets { command } => snippets(command),
         ControlCli::Model { command } => match command {
             ModelCommand::List { output } => send(ControlCommand::ModelList, output),
             ModelCommand::Use {
@@ -1515,6 +1546,63 @@ fn logs(process: bool, lines: usize, follow: bool) -> u8 {
         line.clear();
         let _ = stdout.flush();
     }
+}
+
+/// Offline CLI uses the same validated owner-only store as the X Quick editor.
+fn snippets(command: SnippetCommand) -> u8 {
+    use ::x_agent::quick::snippets::Store;
+    report((|| -> color_eyre::Result<()> {
+        let store = Store::user().map_err(|error| color_eyre::eyre::eyre!(error))?;
+        match command {
+            SnippetCommand::List { json } => {
+                let items = store
+                    .list()
+                    .map_err(|error| color_eyre::eyre::eyre!(error))?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&items)?);
+                } else if items.is_empty() {
+                    println!("No saved snippets");
+                } else {
+                    for item in items {
+                        // One line per item; escaped strings prevent terminal control
+                        // characters inside a saved snippet from changing the display.
+                        println!("{}\t{}", item.trigger, serde_json::to_string(&item.text)?);
+                    }
+                }
+            }
+            SnippetCommand::Set {
+                trigger,
+                text,
+                stdin,
+            } => {
+                let text = if stdin {
+                    let mut input = String::new();
+                    std::io::stdin().take(4_097).read_to_string(&mut input)?;
+                    input
+                } else {
+                    text.ok_or_else(|| color_eyre::eyre::eyre!("Provide text or --stdin"))?
+                };
+                store
+                    .upsert(&trigger, &text)
+                    .map_err(|error| color_eyre::eyre::eyre!(error))?;
+                println!("Saved snippet: {trigger}");
+            }
+            SnippetCommand::Remove { trigger, yes } => {
+                if !yes {
+                    color_eyre::eyre::bail!("Removal requires --yes");
+                }
+                if store
+                    .delete(&trigger)
+                    .map_err(|error| color_eyre::eyre::eyre!(error))?
+                {
+                    println!("Removed snippet: {trigger}");
+                } else {
+                    println!("No snippet found: {trigger}");
+                }
+            }
+        }
+        Ok(())
+    })())
 }
 
 fn fail(message: &str) -> u8 {

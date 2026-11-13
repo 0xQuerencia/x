@@ -357,6 +357,26 @@ on an entry. Removing a trigger deletes its stored text.
 Source: `crates/x-agent/src/quick/snippets.rs` and
 `src/rune_ui/agent/quick.rs`.
 
+## Offline snippets CLI
+
+The command line can now manage the **same** local X Quick snippet store,
+without the app running or an AI model:
+
+```sh
+hex snippets list
+hex snippets list --json
+hex snippets set signature "Best regards"
+printf 'A multiline snippet\n' | hex snippets set signature --stdin
+hex snippets remove signature --yes
+```
+
+The existing 100-snippet and 4096-byte limits, duplicate checking,
+owner-only atomic writes and symlink refusal apply to CLI and UI equally.
+`--stdin` is preferable for private text because positional text appears
+in the system's process argument list. Removal requires `--yes`.
+The CLI intentionally does **not** bypass the system-wide keyboard expansion
+gap: snippets still need explicit selection or spoken insertion.
+
 ## Process inspection (Linux)
 
 Type `processes`, `process <name>`, or `ps <name>` in the Quick tab to see
