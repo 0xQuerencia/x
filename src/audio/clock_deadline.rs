@@ -54,7 +54,8 @@ pub fn minutes_until(clock: &str, offset: &str, now: SystemTime) -> Result<u32, 
     if remaining == 0 {
         return Err("Target time is already now".into());
     }
-    let minutes = u32::try_from(remaining.div_ceil(60)).map_err(|_| "Duration overflow")?;
+    // remaining is always 1..86400; round up without unstable signed div_ceil.
+    let minutes = u32::try_from((remaining + 59) / 60).map_err(|_| "Duration overflow")?;
     if !(1..=480).contains(&minutes) {
         return Err("Target must be within the next 8 hours".into());
     }
