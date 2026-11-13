@@ -242,8 +242,19 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
     }
     // Background capture is disabled by default, and only runs during a user-started
     // bounded session. Regular snapshots still require an explicit click.
+    let clipboard_active = ::x_agent::quick::clipboard_watch::active();
     content = content
         .child(section_label(p, "quick-clipboard-title", tr("Clipboard snapshots")))
+        .child(
+            text(if clipboard_active {
+                tr("SESSION ACTIVE: copied text may be saved locally. Stop capture before copying secrets.")
+            } else {
+                tr("Session off: copied text is not monitored.")
+            })
+            .key("quick-clipboard-watch-status")
+            .font(DESCRIPTION)
+            .color(if clipboard_active { p.warning() } else { p.muted() }),
+        )
         .child(
             text(tr("Manual text snapshots, or opt in to a 10-minute local text-change session. It may capture unmarked secrets: avoid copying passwords while active."))
                 .key("quick-clipboard-note")
