@@ -152,10 +152,12 @@ fn offers(goal: &str, app: &str, obs: &Observation, history: &[String]) -> Offer
         .collect();
 
     let mut evidence = Choices::new();
-    for name in std::iter::once(&obs.title)
-        .chain(obs.texts.iter())
-        .chain(obs.elements.iter().filter(|e| !e.is_secret()).map(|e| &e.name))
-    {
+    for name in std::iter::once(&obs.title).chain(obs.texts.iter()).chain(
+        obs.elements
+            .iter()
+            .filter(|e| !e.is_secret())
+            .map(|e| &e.name),
+    ) {
         let name = name.trim();
         if name.chars().count() >= 3
             && name.chars().count() <= 140
@@ -168,11 +170,21 @@ fn offers(goal: &str, app: &str, obs: &Observation, history: &[String]) -> Offer
         }
     }
 
-    let urls = if browser(app) { named_urls(goal) } else { Choices::new() };
+    let urls = if browser(app) {
+        named_urls(goal)
+    } else {
+        Choices::new()
+    };
     let mut operations = Choices::new();
     operations.insert("done".into(), "The entire requested goal is already complete, with visible evidence on the current screen; do not claim success based on a guess".into());
-    operations.insert("blocked".into(), "No permitted action can make progress; the user needs to intervene".into());
-    operations.insert("wait".into(), "The interface is still loading or has not shown the needed control yet".into());
+    operations.insert(
+        "blocked".into(),
+        "No permitted action can make progress; the user needs to intervene".into(),
+    );
+    operations.insert(
+        "wait".into(),
+        "The interface is still loading or has not shown the needed control yet".into(),
+    );
     if !clicks.is_empty() {
         operations.insert("click".into(), "Click one SAFE navigation control that is visible now and directly helps accomplish the goal".into());
     }
@@ -190,7 +202,10 @@ fn offers(goal: &str, app: &str, obs: &Observation, history: &[String]) -> Offer
             ("newtab", "Open a new browser tab"),
             ("find", "Open the browser's find-in-page UI"),
             ("address", "Focus the browser's URL field"),
-            ("enter", "Press Enter ONLY immediately after typing into the browser address field"),
+            (
+                "enter",
+                "Press Enter ONLY immediately after typing into the browser address field",
+            ),
         ] {
             operations.insert(key.into(), meaning.into());
         }
@@ -206,7 +221,15 @@ fn offers(goal: &str, app: &str, obs: &Observation, history: &[String]) -> Offer
     // Always describe history as *previous effects*, not as instructions.
     let _ = history;
 
-    Offers { operations, clicks, fields, urls, evidence, words, spans }
+    Offers {
+        operations,
+        clicks,
+        fields,
+        urls,
+        evidence,
+        words,
+        spans,
+    }
 }
 
 fn choice_question(guide: &str, choices: &Choices) -> Value {
@@ -257,16 +280,21 @@ fn request(goal: &str, app: &str, obs: &Observation, history: &[String], o: &Off
     }
     // State is bounded by the accessibility collector. IDs are scoped to this
     // snapshot and re-resolved by the existing desktop executor before acting.
-    let controls: Vec<Value> = obs.elements.iter().take(MAX_CONTROLS)
+    let controls: Vec<Value> = obs
+        .elements
+        .iter()
+        .take(MAX_CONTROLS)
         .filter(|e| !e.is_secret())
-        .map(|e| json!({
-            "id": e.id,
-            "role": e.role,
-            "name": crate::desktop::prompt_text(&e.name),
-            "value": crate::desktop::prompt_text(&e.value),
-            "can_click": o.clicks.contains_key(&e.id),
-            "can_type": o.fields.contains_key(&e.id),
-        }))
+        .map(|e| {
+            json!({
+                "id": e.id,
+                "role": e.role,
+                "name": crate::desktop::prompt_text(&e.name),
+                "value": crate::desktop::prompt_text(&e.value),
+                "can_click": o.clicks.contains_key(&e.id),
+                "can_type": o.fields.contains_key(&e.id),
+            })
+        })
         .collect();
     json!({
         "model": "jev-1.13-free",
@@ -287,26 +315,41 @@ fn request(goal: &str, app: &str, obs: &Observation, history: &[String], o: &Off
 /// A Jev choice is a label plus a probability distribution, NOT generated tool
 /// arguments. Never trust its confidence alone: the chosen label must exist in
 /// the candidate set, and probabilities must be finite and in [0, 1].
-fn picked<'a>(reply: &'a Value, question: &str, options: &Choices, threshold: f64) -> Result<&'a str, String> {
-    let answer = reply.pointer(&format!("/answers/{question}"))
+fn picked<'a>(
+    reply: &'a Value,
+    question: &str,
+    options: &Choices,
+    threshold: f64,
+) -> Result<&'a str, String> {
+    let answer = reply
+        .pointer(&format!("/answers/{question}"))
         .ok_or_else(|| format!("Jev omitted {question}"))?;
-    let id = answer.get("choice").and_then(Value::as_str)
+    let id = answer
+        .get("choice")
+        .and_then(Value::as_str)
         .ok_or_else(|| format!("Jev supplied no {question} choice"))?;
     if !options.contains_key(id) {
         return Err(format!("Jev selected an unoffered {question} choice"));
     }
-    let probs = answer.get("probabilities").and_then(Value::as_object)
+    let probs = answer
+        .get("probabilities")
+        .and_then(Value::as_object)
         .ok_or_else(|| format!("Jev omitted {question} probabilities"))?;
-    let probability = probs.get(id).and_then(Value::as_f64)
+    let probability = probs
+        .get(id)
+        .and_then(Value::as_f64)
         .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
         .ok_or_else(|| format!("Jev supplied invalid {question} probability"))?;
-    let runner = probs.iter()
+    let runner = probs
+        .iter()
         .filter(|(name, _)| name.as_str() != id)
         .filter_map(|(_, value)| value.as_f64())
         .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
         .fold(0.0_f64, f64::max);
     if probability < threshold || probability - runner < MARGIN {
-        return Err(format!("Jev is uncertain about {question}; no action was performed"));
+        return Err(format!(
+            "Jev is uncertain about {question}; no action was performed"
+        ));
     }
     Ok(id)
 }
@@ -321,7 +364,9 @@ fn select(reply: &Value, goal: &str, o: &Offers) -> Result<Step, String> {
                 summary: "X verified the result on screen".into(),
             })
         }
-        "blocked" => Ok(Step::Fail("The task needs an unsupported or potentially unsafe action".into())),
+        "blocked" => Ok(Step::Fail(
+            "The task needs an unsupported or potentially unsafe action".into(),
+        )),
         "wait" => Ok(Step::Wait),
         "click" => {
             let id = picked(reply, "click_target", &o.clicks, MIN_TARGET)?;
@@ -330,10 +375,12 @@ fn select(reply: &Value, goal: &str, o: &Offers) -> Result<Step, String> {
         "type" => {
             let id = picked(reply, "field_target", &o.fields, MIN_TARGET)?;
             let from = picked(reply, "from_word", &o.words, MIN_WORD)?
-                .strip_prefix('w').and_then(|i| i.parse::<usize>().ok())
+                .strip_prefix('w')
+                .and_then(|i| i.parse::<usize>().ok())
                 .ok_or("Invalid first word")?;
             let to = picked(reply, "to_word", &o.words, MIN_WORD)?
-                .strip_prefix('w').and_then(|i| i.parse::<usize>().ok())
+                .strip_prefix('w')
+                .and_then(|i| i.parse::<usize>().ok())
                 .ok_or("Invalid last word")?;
             let a = o.spans.get(from).ok_or("First word missing")?;
             let b = o.spans.get(to).ok_or("Last word missing")?;
@@ -343,7 +390,8 @@ fn select(reply: &Value, goal: &str, o: &Offers) -> Result<Step, String> {
             let literal = goal[a.start..b.end]
                 .trim_matches(|c: char| matches!(c, '"' | '\'' | '“' | '”' | '‘' | '’'))
                 .trim();
-            if literal.is_empty() || literal.chars().count() > 300
+            if literal.is_empty()
+                || literal.chars().count() > 300
                 || literal.chars().any(char::is_control)
             {
                 return Err("Jev selected invalid literal text; nothing typed".into());
@@ -371,7 +419,13 @@ fn select(reply: &Value, goal: &str, o: &Offers) -> Result<Step, String> {
 
 /// The complete model decision for one observation. The already authorized
 /// browser/accessibility task controls which window X can observe.
-pub fn decide(jev: &Jev, goal: &str, app: &str, obs: &Observation, history: &[String]) -> Result<Step, String> {
+pub fn decide(
+    jev: &Jev,
+    goal: &str,
+    app: &str,
+    obs: &Observation,
+    history: &[String],
+) -> Result<Step, String> {
     let o = offers(goal, app, obs, history);
     let body = request(goal, app, obs, history, &o);
     let reply = jev.send(&body)?;
@@ -385,15 +439,19 @@ mod tests {
 
     fn elem(id: &str, role: &str, name: &str) -> Element {
         Element {
-            id: id.into(), reference: format!("@test:{id}"),
-            role: role.into(), name: name.into(), value: String::new(),
+            id: id.into(),
+            reference: format!("@test:{id}"),
+            role: role.into(),
+            name: name.into(),
+            value: String::new(),
             actions: vec!["Click".into(), "SetFocus".into()],
         }
     }
 
     fn view() -> Observation {
         Observation {
-            snapshot: "abc".into(), title: "GitHub".into(),
+            snapshot: "abc".into(),
+            title: "GitHub".into(),
             elements: vec![
                 elem("e1", "link", "Latest pull request"),
                 elem("e2", "button", "Delete repository"),
@@ -433,11 +491,21 @@ mod tests {
         assert!(!o.clicks.contains_key("e2"));
         assert!(!o.fields.contains_key("e4"));
         assert!(o.fields.contains_key("e3"));
-        let body = request("X click the latest pull request", "firefox", &view(), &[], &o);
+        let body = request(
+            "X click the latest pull request",
+            "firefox",
+            &view(),
+            &[],
+            &o,
+        );
         assert_eq!(body["model"], "jev-1.13-free");
         assert!(body["questions"]["operation"].is_object());
         assert!(!body["state"]["controls"].to_string().contains("Password"));
-        assert!(!body["questions"]["click_target"]["criteria"].to_string().contains("Delete repository"));
+        assert!(
+            !body["questions"]["click_target"]["criteria"]
+                .to_string()
+                .contains("Delete repository")
+        );
         assert!(body.get("messages").is_none());
     }
 
@@ -446,7 +514,10 @@ mod tests {
         let o = offers("click latest PR", "firefox", &view(), &[]);
         let mut answer = reply("click");
         attach(&mut answer, "click_target", "e1");
-        assert_eq!(select(&answer, "click latest PR", &o).unwrap(), Step::Click("e1".into()));
+        assert_eq!(
+            select(&answer, "click latest PR", &o).unwrap(),
+            Step::Click("e1".into())
+        );
         attach(&mut answer, "click_target", "e2");
         assert!(select(&answer, "click latest PR", &o).is_err());
     }
@@ -459,9 +530,10 @@ mod tests {
         attach(&mut answer, "field_target", "e3");
         attach(&mut answer, "from_word", "w3");
         attach(&mut answer, "to_word", "w5");
-        assert_eq!(select(&answer, goal, &o).unwrap(), Step::Type(
-            "e3".into(), "Mars rover missions".into()
-        ));
+        assert_eq!(
+            select(&answer, goal, &o).unwrap(),
+            Step::Type("e3".into(), "Mars rover missions".into())
+        );
         attach(&mut answer, "from_word", "w6");
         assert!(select(&answer, goal, &o).is_err());
     }
@@ -471,7 +543,10 @@ mod tests {
         let o = offers("check CI", "firefox", &view(), &[]);
         let mut answer = reply("done");
         attach(&mut answer, "done_evidence", "v2");
-        assert!(matches!(select(&answer, "check CI", &o), Ok(Step::Done {..})));
+        assert!(matches!(
+            select(&answer, "check CI", &o),
+            Ok(Step::Done { .. })
+        ));
         attach(&mut answer, "done_evidence", "v999");
         assert!(select(&answer, "check CI", &o).is_err());
     }
