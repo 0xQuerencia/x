@@ -681,9 +681,7 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Trust { state, output } => {
                     (AgentAction::Trust { on: state == "on" }, output)
                 }
-                AgentCommand::Autonomy { mode, output } => {
-                    (AgentAction::Autonomy { mode }, output)
-                }
+                AgentCommand::Autonomy { mode, output } => (AgentAction::Autonomy { mode }, output),
                 AgentCommand::Workspace { path, output } => {
                     let absolute =
                         std::path::absolute(&path).map_or(path, |p| p.display().to_string());
