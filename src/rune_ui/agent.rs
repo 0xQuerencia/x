@@ -237,14 +237,16 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         .key("agent-autonomy-row")
         .gap(8.0)
         .center_y()
-        .child(text(tr("Execution"))
-            .font(DESCRIPTION)
-            .color(p.muted()))
+        .child(text(tr("Execution")).font(DESCRIPTION).color(p.muted()))
         .child(button(
             p,
             "agent-mode-default",
             "Default",
-            if autonomous { ButtonKind::Secondary } else { ButtonKind::Primary },
+            if autonomous {
+                ButtonKind::Secondary
+            } else {
+                ButtonKind::Primary
+            },
             move |_: &mut Ui, _| {
                 agent_host::handle(AgentAction::Autonomy {
                     mode: "default".into(),
@@ -255,7 +257,11 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             p,
             "agent-mode-autonomous",
             "Autonomous",
-            if autonomous { ButtonKind::Primary } else { ButtonKind::Secondary },
+            if autonomous {
+                ButtonKind::Primary
+            } else {
+                ButtonKind::Secondary
+            },
             move |_: &mut Ui, _| {
                 agent_host::handle(AgentAction::Autonomy {
                     mode: "autonomous".into(),
