@@ -4,6 +4,7 @@
 use crate::tools;
 
 pub mod clipboard_history;
+pub mod clipboard_watch;
 mod colors;
 pub mod datetime;
 pub mod files;
