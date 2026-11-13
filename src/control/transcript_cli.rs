@@ -46,6 +46,47 @@ pub struct HistoryArgs {
     pub action: Option<HistoryAction>,
 }
 
+/// On-demand, locally ranked dictation matches for X Quick. This reuses
+/// History's existing retention and BM25 ranking, never rescanning raw audio
+/// or exporting data to a planner. The caller asks explicitly with a query.
+pub(crate) fn quick_history(query: &str) -> Result<Vec<(String, String)>> {
+    let query = query.trim();
+    if !(3..=120).contains(&query.chars().count()) {
+        return Ok(Vec::new());
+    }
+    let root = crate::app_paths::support_dir()?;
+    let entries = crate::history::read_snapshot(&root.join("history.json"))?;
+    let args = HistoryArgs {
+        since: None,
+        until: None,
+        app: None,
+        grep: None,
+        search: Some(query.to_string()),
+        limit: 6,
+        raw: false,
+        json: true,
+        oldest_first: false,
+        action: None,
+    };
+    let output = history_output(
+        &entries,
+        &args,
+        retention(&root)?,
+        crate::desktop::events::now_ms(),
+        &crate::dictation::vocabulary::read_saved(&root),
+    )?;
+    Ok(output
+        .entries
+        .into_iter()
+        .map(|entry| {
+            (
+                entry.final_text.to_string(),
+                entry.application.unwrap_or("Dictation").to_string(),
+            )
+        })
+        .collect())
+}
+
 /// History changes, carried out by the running Hex (`crate::control`).
 #[derive(Subcommand, Debug)]
 pub enum HistoryAction {
