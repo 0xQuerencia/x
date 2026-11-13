@@ -829,7 +829,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
                     _ => ControlReply::error("usage", "Use awake on|until|off|status"),
                 }
             }
-        },
+        }
         AgentAction::Voice { mode } => match VoiceMode::parse(&mode) {
             Some(mode) => set_voice_mode(mode),
             None => ControlReply::error("usage", "mode is dictate, actions, work, auto or smart"),
