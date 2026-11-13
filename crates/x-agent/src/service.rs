@@ -399,10 +399,7 @@ impl Service {
             ctx,
             strict_focus: false,
         });
-        if self.lock().trust_actions
-            && !from_primary
-            && tools::is_low_risk(&self.lock().actions)
-        {
+        if self.lock().trust_actions && !from_primary && tools::is_low_risk(&self.lock().actions) {
             self.emit("info", "Trusted Actions: running without a prompt");
             if let Some(g) = self.lock().guard.as_mut() {
                 g.strict_focus = true; // no prompt in between, so focus must not have moved
