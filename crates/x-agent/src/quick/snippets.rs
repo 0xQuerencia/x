@@ -407,13 +407,16 @@ mod tests {
         let store = Store::at(path.clone());
         for trigger in [
             "",
-            " leading",
-            "trailing ",
             "double  spaces",
+            "invalid!character",
             "too-long-a-trigger-name-that-is-absolutely-invalid-and-very-long",
         ] {
-            assert!(store.upsert(trigger, "Hello").is_err());
+            assert!(store.upsert(trigger, "Hello").is_err(), "{trigger:?}");
         }
+        // The existing editor normalizes surrounding whitespace before validation.
+        store.upsert(" leading ", "Hello").unwrap();
+        assert_eq!(store.list().unwrap()[0].trigger, "leading");
+        store.delete("leading").unwrap();
         assert!(store.upsert("valid", "").is_err());
         assert!(store.upsert("valid", "hi\0no").is_err());
         fs::write(&path, "this is not JSON").unwrap();
