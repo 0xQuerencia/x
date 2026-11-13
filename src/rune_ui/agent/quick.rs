@@ -110,6 +110,8 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                         tr("Pick")
                     } else if matches!(&target, Target::OpenFile(_)) {
                         tr("Open")
+                    } else if matches!(&target, Target::PreviewFile(_)) {
+                        tr("Preview")
                     } else if is_process {
                         if confirming { tr("Confirm SIGTERM") } else { tr("End…") }
                     } else {
@@ -117,7 +119,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                     },
                     ButtonKind::Secondary,
                     move |ui: &mut Ui, _| {
-                        if !is_copy && !is_process {
+                        if !is_copy && !is_process && !matches!(&target, Target::PreviewFile(_)) {
                             ui.agent.show_quick = false;
                         }
                         match &target {
@@ -156,6 +158,12 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                                     }
                                 });
                             }
+                            Target::PreviewFile(path) => {
+                                ui.agent.quick_file_preview = Some(
+                                    ::x_agent::quick::files::preview(path)
+                                        .unwrap_or_else(|error| format!("Preview refused: {error}")),
+                                );
+                            }
                             Target::OpenFile(path) => {
                                 let path = path.clone();
                                 std::thread::spawn(move || {
@@ -193,6 +201,33 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                                 }
                             }
                         }
+                    },
+                )),
+        );
+    }
+    if let Some(preview) = &ui.agent.quick_file_preview {
+        content = content.child(
+            col()
+                .key("quick-file-preview")
+                .gap(6.0)
+                .child(section_label(
+                    p,
+                    "quick-file-preview-title",
+                    tr("Local file preview"),
+                ))
+                .child(
+                    text(preview.clone())
+                        .key("quick-file-preview-text")
+                        .font(DESCRIPTION)
+                        .color(p.text()),
+                )
+                .child(button(
+                    p,
+                    "quick-file-preview-dismiss",
+                    tr("Close preview"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        ui.agent.quick_file_preview = None;
                     },
                 )),
         );
