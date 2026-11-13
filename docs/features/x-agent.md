@@ -254,6 +254,20 @@ history recorder, not a search of discarded audio, and not a background index.
 Typing a local-history/clipboard/snippet query also suppresses the ordinary
 web-search suggestion to avoid accidentally offering private text to a browser.
 
+## Dictation statistics from X Quick
+
+Type `stats`, `dictation stats`, `history stats`, `stats today`,
+`stats 7d` or `stats 30d` to open a read-only summary of retained
+dictations in X Quick. It reuses Hex's `hex history stats` implementation:
+word count, speaking speed when audio timing exists, number of dictations,
+Output changes, day streak and top applications. The values respect the
+existing History retention policy and local day computation. There is no
+new statistics database, telemetry, cloud upload, or language-model call.
+
+The existing **Dictation stats** Labs toggle must be enabled; Quick reports
+that requirement instead of bypassing it. This view is text-only, not yet a
+visual charts dashboard. Stats commands never fall through to web search.
+
 ## Timed Keep Awake
 
 `hex agent awake on --minutes 60` holds an OS idle inhibitor for up to one

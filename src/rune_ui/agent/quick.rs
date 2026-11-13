@@ -45,6 +45,16 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
         matches.splice(0..0, history_hits);
         matches.truncate(8);
     }
+    // No new analytics store: query Hex's retained-history summary explicitly.
+    // This feature observes the existing Labs toggle and retention rules.
+    if let Some(result) = crate::control::transcript_cli::quick_stats(&ui.agent.quick_query.text) {
+        matches.clear();
+        matches.push(quick::Hit {
+            title: "Dictation statistics".into(),
+            detail: "Retained history only · local · open to view".into(),
+            target: Target::HelpText(result.unwrap_or_else(|error| error.to_string())),
+        });
+    }
     let mut content = col()
         .key("x-quick")
         .gap(10.0)

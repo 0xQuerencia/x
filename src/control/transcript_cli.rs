@@ -87,6 +87,53 @@ pub(crate) fn quick_history(query: &str) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
+/// Read-only X Quick statistics. Reuses the existing HistoryStats summary,
+/// retention cutoff, Labs opt-in, and the CLI's exact formatting.
+fn quick_stats_range(query: &str) -> Option<Option<&'static str>> {
+    match query.trim().to_ascii_lowercase().as_str() {
+        "stats" | "dictation stats" | "history stats" => Some(None),
+        "stats today" => Some(Some("today")),
+        "stats 7d" => Some(Some("7d")),
+        "stats 30d" => Some(Some("30d")),
+        _ => None,
+    }
+}
+
+pub(crate) fn quick_stats(query: &str) -> Option<Result<String>> {
+    let since = quick_stats_range(query)?;
+    Some((|| {
+        require_history_stats(crate::labs::history_stats())?;
+        let root = crate::app_paths::support_dir()?;
+        let entries = crate::history::read_snapshot(&root.join("history.json"))?;
+        let output = stats_output(
+            &entries,
+            since,
+            None,
+            retention(&root)?,
+            crate::desktop::events::now_ms(),
+            crate::history::stats::local_day,
+        )?;
+        Ok(stats_text(&output.stats))
+    })())
+}
+
+#[cfg(test)]
+mod quick_stats_tests {
+    use super::*;
+
+    #[test]
+    fn only_explicit_local_stats_queries_are_supported() {
+        assert_eq!(quick_stats_range("stats"), Some(None));
+        assert_eq!(quick_stats_range("dictation stats"), Some(None));
+        assert_eq!(quick_stats_range("STATS 7d"), Some(Some("7d")));
+        assert_eq!(quick_stats_range("stats 30d"), Some(Some("30d")));
+        assert_eq!(quick_stats_range("stats today"), Some(Some("today")));
+        for query in ["stats private text", "stats tomorrow", "analyze my history"] {
+            assert_eq!(quick_stats_range(query), None);
+        }
+    }
+}
+
 /// History changes, carried out by the running Hex (`crate::control`).
 #[derive(Subcommand, Debug)]
 pub enum HistoryAction {
