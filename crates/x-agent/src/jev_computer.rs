@@ -159,6 +159,11 @@ fn offers(goal: &str, app: &str, obs: &Observation, history: &[String]) -> Offer
             .map(|e| &e.name),
     ) {
         let name = name.trim();
+        // Completion evidence also appears in Jev's choice criteria. Never
+        // transmit a raw email, secret token or long numeric identifier there.
+        if crate::desktop::prompt_text(name) != name {
+            continue;
+        }
         if name.chars().count() >= 3
             && name.chars().count() <= 140
             && !evidence.values().any(|v| v == name)
@@ -305,7 +310,9 @@ fn request(goal: &str, app: &str, obs: &Observation, history: &[String], o: &Off
             "controls": controls,
             "visible_text": obs.texts.iter().take(30)
                 .map(|t| crate::desktop::prompt_text(t)).collect::<Vec<_>>(),
-            "completed": history.iter().rev().take(MAX_RECENT).rev().collect::<Vec<_>>(),
+            "completed": history.iter().rev().take(MAX_RECENT).rev()
+                .map(|line| crate::desktop::prompt_text(line))
+                .collect::<Vec<_>>(),
             "untrusted_screen": true,
         },
         "questions": questions,
@@ -560,6 +567,26 @@ mod tests {
         let mut answer = reply("navigate");
         attach(&mut answer, "url_target", "u500");
         assert!(select(&answer, "delete repo", &o).is_err());
+    }
+
+    #[test]
+    fn external_screen_context_redacts_sensitive_evidence_and_history() {
+        let mut obs = view();
+        obs.title = "Private private.user@example.com".into();
+        obs.texts.push("012345678901234567".into());
+        let o = offers("check my PR", "firefox", &obs, &[
+            "clicked private.user@example.com".into()
+        ]);
+        let body = request(
+            "check my PR",
+            "firefox",
+            &obs,
+            &["clicked private.user@example.com".into()],
+            &o,
+        );
+        let outbound = body.to_string();
+        assert!(!outbound.contains("private.user@example.com"));
+        assert!(!outbound.contains("012345678901234567"));
     }
 
     #[test]
