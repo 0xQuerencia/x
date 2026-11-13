@@ -133,6 +133,9 @@ fn web_search(query: &str) -> Option<Hit> {
         return None;
     }
     let lower = raw.to_ascii_lowercase();
+    if ["stats", "dictation stats", "history stats"].contains(&lower.trim()) {
+        return None;
+    }
     if ["settings", "formatting", "history", "commands", "workflows"].contains(&lower.trim()) {
         return None;
     }
@@ -155,6 +158,9 @@ fn web_search(query: &str) -> Option<Hit> {
         "color ",
         "help ",
         "docs ",
+        "stats ",
+        "dictation stats",
+        "history stats",
     ]
     .iter()
     .any(|prefix| lower.starts_with(prefix))
@@ -466,6 +472,20 @@ mod tests {
             "file contract",
             "read private-notes",
             "view sensitive-contract",
+        ] {
+            assert!(web_search(query).is_none(), "{query}");
+        }
+    }
+
+    #[test]
+    fn stats_queries_never_offer_private_history_to_web_search() {
+        for query in [
+            "stats",
+            "stats today",
+            "stats 7d",
+            "stats 30d",
+            "dictation stats",
+            "history stats",
         ] {
             assert!(web_search(query).is_none(), "{query}");
         }
