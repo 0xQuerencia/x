@@ -55,6 +55,11 @@ hex
 ├── commands
 │   ├── init                       create ~/.config/hex (local, no running Hex needed)
 │   └── check                      validate ~/.config/hex/hex.config.ts transformations
+├── snippets
+│   ├── list [--json]            show saved X Quick snippets
+│   ├── set <trigger> <text>     save or replace a snippet
+│   ├── set <trigger> --stdin    read snippet text from standard input
+│   └── remove <trigger> --yes  delete an existing snippet
 ├── window
 │   ├── show [settings|models|modes|history|meetings|agent|quick]
 │   ├── hide                       close the window; Hex stays in the menu bar
