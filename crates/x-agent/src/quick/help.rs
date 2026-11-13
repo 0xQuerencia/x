@@ -8,10 +8,19 @@ pub struct Match {
 }
 
 const SOURCES: &[(&str, &str)] = &[
-    ("X actions", include_str!("../../../../docs/features/x-agent.md")),
+    (
+        "X actions",
+        include_str!("../../../../docs/features/x-agent.md"),
+    ),
     ("CLI", include_str!("../../../../docs/cli.md")),
-    ("Vocabulary", include_str!("../../../../docs/features/vocabulary.md")),
-    ("History", include_str!("../../../../docs/features/transcript-cli.md")),
+    (
+        "Vocabulary",
+        include_str!("../../../../docs/features/vocabulary.md"),
+    ),
+    (
+        "History",
+        include_str!("../../../../docs/features/transcript-cli.md"),
+    ),
 ];
 
 fn section_excerpt(lines: &[&str]) -> String {
@@ -21,9 +30,13 @@ fn section_excerpt(lines: &[&str]) -> String {
         if line.is_empty() || line.starts_with("<!--") || line.starts_with("    ") {
             continue;
         }
-        if !out.is_empty() { out.push(' '); }
+        if !out.is_empty() {
+            out.push(' ');
+        }
         out.push_str(line);
-        if out.chars().count() > 550 { break; }
+        if out.chars().count() > 550 {
+            break;
+        }
     }
     out.chars().take(550).collect()
 }
@@ -48,17 +61,32 @@ pub fn search(query: &str) -> Vec<Match> {
         for i in 0..=lines.len() {
             let heading = if i < lines.len() && lines[i].trim().starts_with('#') {
                 Some(lines[i].trim())
-            } else { None };
-            if heading.is_none() && i != lines.len() { continue; }
+            } else {
+                None
+            };
+            if heading.is_none() && i != lines.len() {
+                continue;
+            }
             if begin < i {
                 let body = section_excerpt(&lines[begin..i]);
                 let title = current_title.to_string();
                 let haystack = format!("{} {}", title.to_lowercase(), body.to_lowercase());
                 if terms.iter().all(|term| haystack.contains(term)) {
-                    let score = if title.eq_ignore_ascii_case(&needle) { 0 }
-                        else if title.to_lowercase().contains(&needle) { 1 }
-                        else { 10 };
-                    matches.push((score, Match { title, source: *source, excerpt: body }));
+                    let score = if title.eq_ignore_ascii_case(&needle) {
+                        0
+                    } else if title.to_lowercase().contains(&needle) {
+                        1
+                    } else {
+                        10
+                    };
+                    matches.push((
+                        score,
+                        Match {
+                            title,
+                            source: *source,
+                            excerpt: body,
+                        },
+                    ));
                 }
             }
             if let Some(heading) = heading {
@@ -89,6 +117,9 @@ mod tests {
         let hits = search("help action");
         assert!(hits.len() <= 5);
         assert!(hits.iter().all(|hit| hit.excerpt.chars().count() <= 550));
-        assert!(hits.iter().all(|hit| SOURCES.iter().any(|(name, _)| name == &hit.source)));
+        assert!(
+            hits.iter()
+                .all(|hit| SOURCES.iter().any(|(name, _)| name == &hit.source))
+        );
     }
 }
