@@ -72,6 +72,12 @@ This uses the existing typed Search action and its normal approval gate.
   Explicitly opening a result revalidates its location and rejects executable
   files. No indexing runs in the background and file contents are never read.
 - A query starting with `=` or `calc ` evaluates bounded arithmetic entirely locally (parentheses, +, -, *, /, %, exponentiation); invalid calculations are refused instead of guessed.
+- Explicit date/time expressions such as `date today`, `date +10`,
+  `date yesterday`, `time utc`, and `time +05:30` calculate dates
+  and fixed-offset clock times locally. Results are UTC-based, not a guess
+  about the user's timezone; named timezones, daylight-saving rules and
+  natural-language date questions are not implemented.
+
 - A HEX or RGB color query (e.g. `color #2563EB` or `rgb(37, 99, 235)`) produces copyable HEX, RGB, HSL, and OKLCH values without a model or screen capture. `Copy` uses the existing Wayland clipboard action, which is not cross-platform yet.
 - This is currently a **native pane tab**, not a globally bound floating
   launcher or a replacement for Hex's dictation shortcut.
