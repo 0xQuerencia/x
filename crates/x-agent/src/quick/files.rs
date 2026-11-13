@@ -176,11 +176,13 @@ pub fn preview(path: &str) -> Result<String, String> {
 
 fn read_preview(canonical: &Path) -> Result<String, String> {
     const LIMIT: u64 = 8 * 1024;
-    let extension = canonical.extension().and_then(|ext| ext.to_str()).unwrap_or_default();
+    let extension = canonical
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default();
     if ![
-        "txt", "md", "rs", "toml", "json", "yaml", "yml", "csv", "log",
-        "py", "js", "jsx", "ts", "tsx", "html", "css", "xml", "go",
-        "lua", "java", "c", "cpp", "h", "hpp", "sql",
+        "txt", "md", "rs", "toml", "json", "yaml", "yml", "csv", "log", "py", "js", "jsx", "ts",
+        "tsx", "html", "css", "xml", "go", "lua", "java", "c", "cpp", "h", "hpp", "sql",
     ]
     .iter()
     .any(|allowed| extension.eq_ignore_ascii_case(allowed))
