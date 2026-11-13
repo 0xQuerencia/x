@@ -82,6 +82,19 @@ Source: `crates/x-agent/src/quick.rs`, `src/rune_ui/agent/quick.rs`,
 `src/rune_ui/agent.rs`. Unit tests cover ranking and typed-action routing;
 real key focus, UI accessibility, layout and desktop latency remain unverified.
 
+## Retained dictation search from X Quick
+
+Type `hist <words>` or `history <words>` in X Quick to search past
+successful dictations already saved by Hex. X uses the existing retained-history
+store, retention rules and local BM25/vocabulary ranking. Up to six results
+show short previews and the source application. Clicking Copy uses X's existing
+explicit copy action; no transcript is sent to a model for ranking.
+
+The command requires at least three query characters. This is not a new
+history recorder, not a search of discarded audio, and not a background index.
+Typing a local-history/clipboard/snippet query also suppresses the ordinary
+web-search suggestion to avoid accidentally offering private text to a browser.
+
 ## Timed Keep Awake
 
 `hex agent awake on --minutes 60` holds an OS idle inhibitor for up to one
