@@ -170,8 +170,12 @@ fn scoped_regular_file(path: &str) -> Result<PathBuf, String> {
 /// the model, clipboard, history store, terminal, or an external application.
 /// Unsupported extensions and oversized files are refused before reading.
 pub fn preview(path: &str) -> Result<String, String> {
-    const LIMIT: u64 = 8 * 1024;
     let canonical = scoped_regular_file(path)?;
+    read_preview(&canonical)
+}
+
+fn read_preview(canonical: &Path) -> Result<String, String> {
+    const LIMIT: u64 = 8 * 1024;
     let extension = canonical.extension().and_then(|ext| ext.to_str()).unwrap_or_default();
     if ![
         "txt", "md", "rs", "toml", "json", "yaml", "yml", "csv", "log",
@@ -241,6 +245,21 @@ mod tests {
         let results = scan(&[root], "project");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "project-report.pdf");
+    }
+
+    #[test]
+    fn text_previews_are_bounded_and_do_not_decode_binaries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("notes.md");
+        fs::write(&file, "A short line").unwrap();
+        assert_eq!(read_preview(&file).unwrap(), "A short line");
+        fs::write(&file, vec![b'x'; 8 * 1024 + 1]).unwrap();
+        assert!(read_preview(&file).is_err());
+        let binary = tmp.path().join("notes.bin");
+        fs::write(&binary, "plain text").unwrap();
+        assert!(read_preview(&binary).is_err());
+        fs::write(&file, b"Hello\\0binary").unwrap();
+        assert!(read_preview(&file).is_err());
     }
 
     #[test]
