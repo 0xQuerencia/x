@@ -73,7 +73,9 @@ fn convert_clock(text: &str) -> Option<(String, String)> {
         return None;
     }
     let (h, m) = clock.split_once(':')?;
-    if h.len() != 2 || m.len() != 2 || !h.bytes().all(|c| c.is_ascii_digit())
+    if h.len() != 2
+        || m.len() != 2
+        || !h.bytes().all(|c| c.is_ascii_digit())
         || !m.bytes().all(|c| c.is_ascii_digit())
     {
         return None;
