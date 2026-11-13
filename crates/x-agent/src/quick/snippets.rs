@@ -211,7 +211,9 @@ fn spoken_name(phrase: &str) -> Option<&str> {
     let prefix = ["insert snippet ", "expand snippet "]
         .into_iter()
         .find(|prefix| lowered.starts_with(prefix))?;
-    let name = trimmed[prefix.len()..].trim().trim_end_matches(['.', '!', '?']);
+    let name = trimmed[prefix.len()..]
+        .trim()
+        .trim_end_matches(['.', '!', '?']);
     let name = name.trim();
     if (2..=32).contains(&name.len())
         && name
@@ -262,7 +264,10 @@ mod tests {
         );
         assert_eq!(spoken_from(&entries, "signature"), None);
         assert_eq!(spoken_from(&entries, "insert snippet missing"), None);
-        assert_eq!(spoken_from(&entries, "insert snippet signature and do stuff"), None);
+        assert_eq!(
+            spoken_from(&entries, "insert snippet signature and do stuff"),
+            None
+        );
     }
 
     #[test]
