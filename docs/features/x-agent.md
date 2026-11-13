@@ -130,6 +130,12 @@ on an entry. Removing a trigger deletes its stored text.
 - Only deliberate Quick searches read snippets; none are sent to a model.
 - Copy uses X's existing Wayland clipboard mechanism. On an unsupported
   platform the copy action reports an error rather than claiming success.
+- A deliberate spoken instruction such as `insert snippet signature` or
+  `expand snippet signature` looks up the saved trigger before any model-based
+  rewriting and inserts the exact saved text. Ordinary dictation is never
+  matched against snippet names and isn't changed by this feature.
+- The spoken lookup is case-insensitive and requires the full trigger; missing
+  snippets are not guessed. This is not yet a global keyboard expansion hook.
 - **Not a keyboard text expander yet.** The editor can enter short strings,
   while the JSON store supports line breaks and tabs. System-wide expansion
   requires a separate opt-in keyboard-hook implementation and native tests.

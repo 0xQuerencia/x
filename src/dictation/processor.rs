@@ -347,6 +347,19 @@ impl Profiles {
         } else {
             transcript
         };
+        // An explicit saved snippet request bypasses rewriting. Snippet text is
+        // user-owned and should be inserted unchanged, without a model call.
+        match ::x_agent::quick::snippets::spoken(transcript) {
+            Ok(Some(inserted)) => {
+                return Processed {
+                    text: inserted,
+                    observation: None,
+                    transformations: Vec::new(),
+                };
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(%error, "could not look up requested snippet"),
+        }
         let corrected = profile
             .replacements
             .replace(&self.global.replace(transcript));
