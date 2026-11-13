@@ -66,6 +66,12 @@ This uses the existing typed Search action and its normal approval gate.
 - The existing window-control API now exposes `hex window show quick`. Bind
   that command to a desktop shortcut to jump straight into the Quick tab
   from another app without adding a new global keyboard interceptor.
+- Prefix `read ` or `view ` to search the same scoped folders for
+  ordinary files that can be previewed in X Quick. Clicking **Preview** reads
+  up to 8 KiB of one allowlisted text file, displays at most 2,000 characters
+  in memory, and offers a Close preview control. It does not send text to
+  an agent, remote model, external editor, or clipboard. Binary files,
+  symlinks, scripts, unsupported extensions, and large files are refused.
 - Prefix a query with `file ` (or `f `) to search filenames only within
   common home folders. The scanner is bounded (6,000 entries, three nested
   directory levels, 70 ms) and skips hidden paths, symlinks and build caches.
