@@ -83,7 +83,7 @@ pub fn search(query: &str) -> Vec<Match> {
                         score,
                         Match {
                             title,
-                            source: *source,
+                            source,
                             excerpt: body,
                         },
                     ));
