@@ -133,9 +133,7 @@ fn web_search(query: &str) -> Option<Hit> {
         return None;
     }
     let lower = raw.to_ascii_lowercase();
-    if ["settings", "formatting", "history", "commands", "workflows"]
-        .contains(&lower.trim())
-    {
+    if ["settings", "formatting", "history", "commands", "workflows"].contains(&lower.trim()) {
         return None;
     }
     // A local utility query must not acquire a tempting accidental web
@@ -312,7 +310,11 @@ pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>
     let mut catalog = Vec::new();
     for (id, name, detail) in [
         ("settings", "Settings", "Open app settings"),
-        ("formatting", "Formatting", "Open the Output formatting pane"),
+        (
+            "formatting",
+            "Formatting",
+            "Open the Output formatting pane",
+        ),
         ("history", "History", "Open saved dictations"),
         ("commands", "Commands", "Return to X's voice command pane"),
         ("workflows", "Workflows", "Open the saved workflow manager"),
@@ -427,8 +429,15 @@ mod tests {
             ("workflows", "workflows"),
         ] {
             let hits = search(query, std::iter::empty());
-            assert!(hits.iter().any(|hit| hit.target == Target::Navigate(target.into())));
-            assert!(!hits.iter().any(|hit| matches!(hit.target, Target::WebSearch { .. })));
+            assert!(
+                hits.iter()
+                    .any(|hit| hit.target == Target::Navigate(target.into()))
+            );
+            assert!(
+                !hits
+                    .iter()
+                    .any(|hit| matches!(hit.target, Target::WebSearch { .. }))
+            );
             assert_eq!(Target::Navigate(target.into()).phrase(), None);
         }
     }
