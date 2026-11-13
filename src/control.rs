@@ -257,6 +257,10 @@ pub enum AgentAction {
     Awake {
         command: String,
         minutes: u32,
+        #[serde(default)]
+        clock: Option<String>,
+        #[serde(default)]
+        utc_offset: Option<String>,
     },
     /// Rerun the last Work goal with one refused command allowed for that run only.
     Allow {
