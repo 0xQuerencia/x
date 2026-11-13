@@ -1130,6 +1130,25 @@ fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         tx.toggle_playground();
         return true;
     }
+    // Command+K (macOS) / Ctrl+K (Linux and Windows) opens X Quick
+    // inside the app. A global shortcut is still configured by the desktop.
+    if event.key == rune::Key::Command('k')
+        && !event.mods.shift
+        && !event.mods.alt
+        && crate::labs::x_agent()
+        && !ui.picker.open
+        && !ui.explainer.open
+        && !ui.sound_sets.open
+        && !ui.vocabulary.open
+        && ui.tour.is_none()
+    {
+        if ui.pane == Pane::Agent && ui.agent.show_quick {
+            ui.agent.show_quick = false;
+        } else {
+            show(ui, Destination::Quick, tx);
+        }
+        return true;
+    }
     // Ctrl+Q quits Hex on Linux, as Quit Hex in the sidebar does (#808).
     // macOS's menu bar owns ⌘Q; Windows quits from its tray.
     #[cfg(target_os = "linux")]
@@ -1176,6 +1195,9 @@ fn on_key(ui: &mut Ui, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         true
     } else if ui.pane == Pane::Agent && ui.agent.is_busy() {
         agent_host::handle(AgentAction::Stop);
+        true
+    } else if ui.pane == Pane::Agent && ui.agent.show_quick {
+        ui.agent.show_quick = false;
         true
     } else {
         false
