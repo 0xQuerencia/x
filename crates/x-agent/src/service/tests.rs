@@ -103,8 +103,14 @@ fn trusted_actions_run_at_once_but_work_and_bad_input_still_wait() {
 
 #[test]
 fn execution_modes_are_explicit_and_backward_compatible() {
-    assert_eq!(AutonomyMode::parse("default").unwrap(), AutonomyMode::Default);
-    assert_eq!(AutonomyMode::parse("autonomous").unwrap(), AutonomyMode::Autonomous);
+    assert_eq!(
+        AutonomyMode::parse("default").unwrap(),
+        AutonomyMode::Default
+    );
+    assert_eq!(
+        AutonomyMode::parse("autonomous").unwrap(),
+        AutonomyMode::Autonomous
+    );
     assert!(AutonomyMode::parse("work").is_err());
     let (s, _, launcher) = rig();
     assert_eq!(s.snapshot(0).autonomy_mode, AutonomyMode::Default);
@@ -132,14 +138,19 @@ fn execution_modes_are_explicit_and_backward_compatible() {
 fn autonomous_computer_still_requires_scoped_screen_and_remote_consent() {
     let s = screen_rig(false);
     s.set_autonomy_mode(AutonomyMode::Autonomous);
-    assert!(s.plan("press the button in chrome", Mode::Actions).is_err(),
-        "remote screen data is off by default");
+    assert!(
+        s.plan("press the button in chrome", Mode::Actions).is_err(),
+        "remote screen data is off by default"
+    );
     assert_eq!(s.snapshot(0).phase, Phase::Idle);
 
     s.set_computer_remote(true);
     s.plan("press the button in chrome", Mode::Actions).unwrap();
-    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval,
-        "no app grant means no autonomous execution");
+    assert_eq!(
+        s.snapshot(0).phase,
+        Phase::AwaitingApproval,
+        "no app grant means no autonomous execution"
+    );
     s.cancel();
 
     s.set_computer_apps(vec!["chrome".into()]);
@@ -154,7 +165,9 @@ fn autonomous_does_not_approve_generated_work_sessions() {
     let (s, _work, _exe) = work_rig("echo test > out.txt");
     s.set_session_root(dir.path().join("sessions"));
     s.set_autonomy_mode(AutonomyMode::Autonomous);
-    let task = s.plan("start a temporary session to write a poem", Mode::Actions).unwrap();
+    let task = s
+        .plan("start a temporary session to write a poem", Mode::Actions)
+        .unwrap();
     assert_eq!(task.mode, Mode::Work);
     assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
     s.cancel();
