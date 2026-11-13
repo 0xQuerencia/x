@@ -359,12 +359,31 @@ fn set_trust(on: bool) -> ControlReply {
         Ok(()) => {
             service().set_trust_actions(on);
             ControlReply::done(if on {
-                "Trusted Actions on"
+                "Autonomous mode: safe Actions and granted computer apps start without repeated approvals; Work and protected actions still need review"
             } else {
-                "Trusted Actions off"
+                "Default mode: X asks approval before each desktop task"
             })
         }
         Err(error) => ControlReply::error("failed", format!("couldn't save the setting: {error}")),
+    }
+}
+
+/// Default and Autonomous are user-controlled execution policies, separate from
+/// the shortcut's "auto" speech-routing mode. They deliberately reuse the
+/// persisted Trusted Actions bit so old settings cannot silently disagree.
+fn set_autonomy(mode: &str) -> ControlReply {
+    match mode {
+        "status" => ControlReply::done(format!(
+            "Execution mode: {}",
+            if service().snapshot(0).trusted_actions {
+                "autonomous"
+            } else {
+                "default"
+            }
+        )),
+        "default" => set_trust(false),
+        "autonomous" => set_trust(true),
+        _ => ControlReply::error("usage", "give default, autonomous or status"),
     }
 }
 
@@ -764,6 +783,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
             ControlReply::done("Stop requested")
         }
         AgentAction::Trust { on } => set_trust(on),
+        AgentAction::Autonomy { mode } => set_autonomy(&mode),
         AgentAction::Planner { model } => set_planner(&model),
         AgentAction::Desktop => {
             let r = x_agent::wm::report();
