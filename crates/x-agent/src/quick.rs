@@ -405,6 +405,8 @@ mod tests {
             "clip secret",
             "snip signature",
             "file contract",
+            "read private-notes",
+            "view sensitive-contract",
         ] {
             assert!(web_search(query).is_none(), "{query}");
         }
