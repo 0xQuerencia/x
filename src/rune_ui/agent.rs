@@ -229,26 +229,37 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             },
         ));
     }
-    let trusted = snapshot.trusted_actions;
-    let trust_control = row()
-        .key("agent-trust-row")
+    // Execution policy is separate from the shortcut's voice-routing Auto
+    // mode. Default asks; Autonomous skips prompts only for permitted safe
+    // desktop Actions. The existing trust bit is the one source of truth.
+    let autonomous = snapshot.trusted_actions;
+    let autonomy_control = row()
+        .key("agent-autonomy-row")
         .gap(8.0)
         .center_y()
+        .child(text(tr("Execution"))
+            .font(DESCRIPTION)
+            .color(p.muted()))
         .child(button(
             p,
-            "agent-trust-toggle",
-            if trusted {
-                "Trusted Actions on"
-            } else {
-                "Trusted Actions off"
-            },
-            if trusted {
-                ButtonKind::Primary
-            } else {
-                ButtonKind::Secondary
-            },
+            "agent-mode-default",
+            "Default",
+            if autonomous { ButtonKind::Secondary } else { ButtonKind::Primary },
             move |_: &mut Ui, _| {
-                agent_host::handle(AgentAction::Trust { on: !trusted });
+                agent_host::handle(AgentAction::Autonomy {
+                    mode: "default".into(),
+                });
+            },
+        ))
+        .child(button(
+            p,
+            "agent-mode-autonomous",
+            "Autonomous",
+            if autonomous { ButtonKind::Primary } else { ButtonKind::Secondary },
+            move |_: &mut Ui, _| {
+                agent_host::handle(AgentAction::Autonomy {
+                    mode: "autonomous".into(),
+                });
             },
         ));
 
@@ -349,7 +360,10 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         .gap(16.0)
         .child(capture)
         .child(voice_row)
-        .child(trust_control);
+        .child(autonomy_control)
+        .child(text(tr("Autonomous: safe Actions and granted apps run without repeated approval. Work and protected actions still ask."))
+            .font(DESCRIPTION)
+            .color(p.muted()));
     body = body.child(access_row(p, snapshot));
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
@@ -362,7 +376,11 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             "agent-empty",
             tr("Nothing planned"),
             Some(tr(
-                "Type a goal or press Speak. You review the plan before anything runs.",
+                if autonomous {
+                    "Type a goal or press Speak. Safe Actions run automatically; protected tasks still ask."
+                } else {
+                    "Type a goal or press Speak. You review the plan before anything runs."
+                },
             )),
         ));
     }
