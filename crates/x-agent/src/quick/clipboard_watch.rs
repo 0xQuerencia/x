@@ -131,8 +131,9 @@ fn run(shared: Shared, generation: u64) {
                 break;
             }
         }
-        if let Some(text) = current_text() {
-            if last != text {
+        if let Some(text) = current_text()
+            && last != text
+        {
                 // Hold the state lock while persisting: once Stop returns,
                 // no later capture from this worker can hit disk.
                 let state = locked(mutex);
@@ -141,12 +142,11 @@ fn run(shared: Shared, generation: u64) {
                 {
                     break;
                 }
-                if let Ok(store) = Store::user() {
-                    if store.save(&text).is_ok() {
-                        last = text;
-                    }
+                if let Ok(store) = Store::user()
+                    && store.save(&text).is_ok()
+                {
+                    last = text;
                 }
-            }
         }
         let guard = locked(mutex);
         let _wait = cv.wait_timeout(guard, CAPTURE_INTERVAL);
