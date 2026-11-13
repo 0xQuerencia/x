@@ -72,7 +72,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
         let title = hit.title;
         let detail = hit.detail;
         let target = hit.target;
-        let is_copy = matches!(&target, Target::CopyResult(_));
+        let is_copy = matches!(&target, Target::CopyResult(_) | Target::CopySnippet(_));
         let is_process = matches!(&target, Target::EndProcess(_));
         let confirming = matches!(&target, Target::EndProcess(info)
             if ui.agent.pending_process.as_ref().is_some_and(|previous|
@@ -135,6 +135,17 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                                             .unwrap_or_else(|error| error),
                                     );
                                 }
+                            }
+                            Target::CopySnippet(trigger) => {
+                                let trigger = trigger.clone();
+                                std::thread::spawn(move || {
+                                    match ::x_agent::quick::snippets::expand(&trigger)
+                                        .and_then(|text| ::x_agent::clipboard::copy(&text))
+                                    {
+                                        Ok(message) => agent_host::service().emit("info", &message),
+                                        Err(error) => agent_host::service().emit("error", &error),
+                                    }
+                                });
                             }
                             Target::CopyResult(value) => {
                                 let value = value.clone();

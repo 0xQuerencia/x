@@ -26,6 +26,8 @@ pub enum Target {
     },
     /// A pure local result explicitly copied by the user, never executed as a command.
     CopyResult(String),
+    /// Render at click time, so dynamic fields are never frozen by search.
+    CopySnippet(String),
     PickColor,
     OpenFile(String),
     EndProcess(processes::ProcessInfo),
@@ -42,6 +44,7 @@ impl Target {
             Self::WebSearch { site, query } => Some(format!("search {site} for {query}")),
             Self::Workflow(_)
             | Self::CopyResult(_)
+            | Self::CopySnippet(_)
             | Self::PickColor
             | Self::OpenFile(_)
             | Self::EndProcess(_) => None,
@@ -342,8 +345,8 @@ pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>
         for snippet in snippets {
             local.push(Hit {
                 title: format!("Snippet: {}", snippet.trigger),
-                detail: "Saved locally · copy text on request".into(),
-                target: Target::CopyResult(snippet.text),
+                detail: "Saved locally · render live fields only on Copy".into(),
+                target: Target::CopySnippet(snippet.trigger),
             });
         }
     }

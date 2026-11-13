@@ -147,6 +147,14 @@ on an entry. Removing a trigger deletes its stored text.
 - The library is bounded to 100 items. Malformed data is reported; it is never
   automatically overwritten during a Save.
 - Only deliberate Quick searches read snippets; none are sent to a model.
+- Snippets may contain `{{utc_date}}` (YYYY-MM-DD), `{{utc_time}}`
+  (HH:MM), or `{{clipboard_snapshot}}` (the newest explicitly saved
+  clipboard text). Values are resolved only when the user copies or inserts
+  the snippet, not when they browse or save it. The latter field does not
+  read the live clipboard and refuses if no stored snapshot exists.
+- Rendered snippets are capped to 8000 characters. Fields inside substituted
+  clipboard text are never evaluated again, and unknown placeholders remain
+  literal. These are UTC fields, not implicit local time-zone guesses.
 - Copy uses X's existing Wayland clipboard mechanism. On an unsupported
   platform the copy action reports an error rather than claiming success.
 - A deliberate spoken instruction such as `insert snippet signature` or
