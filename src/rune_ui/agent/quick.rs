@@ -171,6 +171,50 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                 .color(p.warning()),
         );
     }
+    // No clipboard polling: a capture happens only after an explicit button press.
+    content = content
+        .child(section_label(p, "quick-clipboard-title", tr("Clipboard snapshots")))
+        .child(
+            text(tr("Opt-in text snapshots only; no background capture. Review copied text before saving."))
+                .key("quick-clipboard-note")
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        )
+        .child(
+            row()
+                .gap(8.0)
+                .child(button(
+                    p,
+                    "quick-clipboard-capture",
+                    tr("Save current text"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        ui.agent.quick_notice = Some("Capturing clipboard text on request…".into());
+                        std::thread::spawn(|| {
+                            match ::x_agent::quick::clipboard_history::capture_now() {
+                                Ok(message) => agent_host::service().emit("info", &message),
+                                Err(error) => agent_host::service().emit("error", &error),
+                            }
+                        });
+                    },
+                ))
+                .child(button(
+                    p,
+                    "quick-clipboard-clear",
+                    tr("Erase saved snapshots"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        ui.agent.quick_notice = Some(
+                            match ::x_agent::quick::clipboard_history::Store::user()
+                                .and_then(|store| store.clear())
+                            {
+                                Ok(()) => "Saved clipboard snapshots erased".into(),
+                                Err(error) => error,
+                            },
+                        );
+                    },
+                )),
+        );
     // Snippets are explicit, local-only copy actions. This editor intentionally
     // does not install global keyboard hooks or intercept what other apps type.
     let trigger = TextInput::new(&ui.agent.snippet_trigger)
