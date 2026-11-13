@@ -234,8 +234,7 @@ impl Action {
             }
             Self::Computer { app, goal } => {
                 lookup(APPS, app).ok_or("Unapproved app")?;
-                if !BROWSERS.contains(&app.as_str())
-                    && !matches!(app.as_str(), "vscode" | "files")
+                if !BROWSERS.contains(&app.as_str()) && !matches!(app.as_str(), "vscode" | "files")
                 {
                     return Err(
                         "Screen access supports browsers, VS Code, and file managers".into(),
