@@ -112,6 +112,8 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                         tr("Open")
                     } else if matches!(&target, Target::PreviewFile(_)) {
                         tr("Preview")
+                    } else if matches!(&target, Target::HelpText(_)) {
+                        tr("Read")
                     } else if is_process {
                         if confirming { tr("Confirm SIGTERM") } else { tr("End…") }
                     } else {
@@ -119,7 +121,10 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                     },
                     ButtonKind::Secondary,
                     move |ui: &mut Ui, _| {
-                        if !is_copy && !is_process && !matches!(&target, Target::PreviewFile(_)) {
+                        if !is_copy
+                            && !is_process
+                            && !matches!(&target, Target::PreviewFile(_) | Target::HelpText(_))
+                        {
                             ui.agent.show_quick = false;
                         }
                         match &target {
@@ -157,6 +162,9 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                                         Err(error) => agent_host::service().emit("error", &error),
                                     }
                                 });
+                            }
+                            Target::HelpText(excerpt) => {
+                                ui.agent.quick_notice = Some(excerpt.clone());
                             }
                             Target::PreviewFile(path) => {
                                 ui.agent.quick_file_preview = Some(
