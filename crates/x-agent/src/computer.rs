@@ -322,8 +322,7 @@ pub fn run(
 /// Drive the same desktop verification loop with typed decisions rather than
 /// text-generating chat completions. Jev uses this; all safety guards remain
 /// inside the executor below.
-type DecisionFn<'a> =
-    dyn Fn(&str, &str, &Observation, &[String]) -> Result<Step, String> + 'a;
+type DecisionFn<'a> = dyn Fn(&str, &str, &Observation, &[String]) -> Result<Step, String> + 'a;
 
 pub(crate) fn run_with(
     app: &str,
