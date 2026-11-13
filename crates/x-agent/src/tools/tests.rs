@@ -237,8 +237,8 @@ fn missing_executable_is_reported() {
 }
 
 #[test]
-fn computer_browsers_only() {
-    for app in ["terminal", "vscode", "files"] {
+fn computer_access_is_limited_to_supported_non_terminal_apps() {
+    for app in ["terminal", "bash", "unknown"] {
         assert!(
             Action::Computer {
                 app: app.into(),
@@ -249,12 +249,15 @@ fn computer_browsers_only() {
             "{app}"
         );
     }
-    assert!(
-        Action::Computer {
-            app: "chrome".into(),
-            goal: "x".into()
-        }
-        .validate()
-        .is_ok()
-    );
+    for app in ["chrome", "firefox", "vscode", "files"] {
+        assert!(
+            Action::Computer {
+                app: app.into(),
+                goal: "x".into()
+            }
+            .validate()
+            .is_ok(),
+            "{app}"
+        );
+    }
 }
