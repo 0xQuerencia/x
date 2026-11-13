@@ -94,6 +94,16 @@ Source: `crates/x-agent/src/quick.rs`, `src/rune_ui/agent/quick.rs`,
 `src/rune_ui/agent.rs`. Unit tests cover ranking and typed-action routing;
 real key focus, UI accessibility, layout and desktop latency remain unverified.
 
+## Offline documentation search in X Quick
+
+Type `help <topic>` or `docs <topic>` in the Quick search pane to search
+embedded, version-matched X/Hex help sections. Search results quote up to 550
+characters of the shipped documentation and show an explicit **Read** button.
+Queries and excerpts never leave the device; they do not open a website or call
+an AI model. Only X actions, CLI, vocabulary and history documentation are
+included. If a section is missing, X reports no result rather than making up an
+answer. The `help ` and `docs ` prefixes do not offer web-search fallbacks.
+
 ## Retained dictation search from X Quick
 
 Type `hist <words>` or `history <words>` in X Quick to search past
