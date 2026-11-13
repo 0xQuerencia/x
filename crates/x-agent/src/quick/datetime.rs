@@ -79,21 +79,31 @@ pub fn evaluate(query: &str, when: SystemTime) -> Option<(String, String)> {
             format_date(secs.div_euclid(86_400).checked_sub(1)?),
         ));
     }
-    if let Some(shift) = text.strip_prefix("date +").or_else(|| text.strip_prefix("date -")) {
+    if let Some(shift) = text
+        .strip_prefix("date +")
+        .or_else(|| text.strip_prefix("date -"))
+    {
         let days: i64 = shift.parse().ok()?;
         if days > 36_500 {
             return None;
         }
         let sign = if text.starts_with("date -") { -1 } else { 1 };
         let result = secs.div_euclid(86_400).checked_add(sign * days)?;
-        return Some((format!("UTC date shifted {sign:+} {days} day(s)"), format_date(result)));
+        return Some((
+            format!("UTC date shifted {sign:+} {days} day(s)"),
+            format_date(result),
+        ));
     }
     if let Some(offset_text) = text.strip_prefix("time ") {
         let offset = parse_offset(offset_text)?;
         let seconds = secs.checked_add(i64::from(offset) * 60)?;
         return Some((
             format!("Time at fixed UTC offset {offset:+} minutes (no DST adjustment)"),
-            format!("{} {}", format_date(seconds.div_euclid(86_400)), format_clock(seconds)),
+            format!(
+                "{} {}",
+                format_date(seconds.div_euclid(86_400)),
+                format_clock(seconds)
+            ),
         ));
     }
     if text == "unix timestamp" {
@@ -127,10 +137,7 @@ mod tests {
     #[test]
     fn fixed_offsets_show_day_rollover_without_guessing_dst() {
         // 1970-01-01 00:00:00 UTC
-        assert_eq!(
-            evaluate("time utc", when(0)).unwrap().1,
-            "1970-01-01 00:00"
-        );
+        assert_eq!(evaluate("time utc", when(0)).unwrap().1, "1970-01-01 00:00");
         assert_eq!(
             evaluate("time +05:30", when(0)).unwrap().1,
             "1970-01-01 05:30"
@@ -143,7 +150,14 @@ mod tests {
 
     #[test]
     fn malformed_or_unbounded_queries_do_not_produce_answers() {
-        for query in ["date +9999999", "date +abc", "time PST", "time +25:00", "time +05:60", "tomorrow"] {
+        for query in [
+            "date +9999999",
+            "date +abc",
+            "time PST",
+            "time +25:00",
+            "time +05:60",
+            "tomorrow",
+        ] {
             assert!(evaluate(query, when(0)).is_none(), "{query}");
         }
     }
