@@ -234,8 +234,11 @@ impl Action {
             }
             Self::Computer { app, goal } => {
                 lookup(APPS, app).ok_or("Unapproved app")?;
-                if !BROWSERS.contains(&app.as_str()) {
-                    return Err("Screen access is only available for browsers".into());
+                if !BROWSERS.contains(&app.as_str()) && !matches!(app.as_str(), "vscode" | "files")
+                {
+                    return Err(
+                        "Screen access supports browsers, VS Code, and file managers".into(),
+                    );
                 }
                 if goal.trim().is_empty() || goal.chars().count() > MAX_TRANSCRIPT {
                     return Err("A computer goal must be 1-1000 characters".into());

@@ -136,7 +136,7 @@ impl Observation {
     }
 }
 
-fn prompt_text(text: &str) -> String {
+pub(crate) fn prompt_text(text: &str) -> String {
     clip(text, MAX_NAME)
         .split_whitespace()
         .map(|word| {

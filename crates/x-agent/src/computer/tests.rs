@@ -251,3 +251,84 @@ fn page_box_is_not_omnibox() {
     assert!(matches!(outcome, Outcome::Failed(_)));
     assert!(!acts.contains(&UiAct::Key(Key::Enter)));
 }
+
+#[test]
+fn structured_jev_decisions_reuse_screen_verification() {
+    let desktop = Fake {
+        screens: Mutex::new(vec![
+            screen(
+                "before click",
+                vec![el("e1", "link", "Latest pull request")],
+            ),
+            screen(
+                "All checks passed",
+                vec![el("e1", "link", "Latest pull request")],
+            ),
+        ]),
+        acts: Mutex::new(Vec::new()),
+    };
+    let decision = |_: &str, _: &str, _: &Observation, history: &[String]| {
+        if history.is_empty() {
+            Ok(Step::Click("e1".into()))
+        } else {
+            Ok(Step::Done {
+                evidence: "All checks passed".into(),
+                summary: "Verified CI".into(),
+            })
+        }
+    };
+    let outcome = run_with(
+        "firefox",
+        "Open the latest PR and check whether CI passed",
+        &desktop,
+        &decision,
+        &Quiet,
+        &Limits::default(),
+    );
+    assert!(matches!(outcome, Outcome::Done(_)), "{outcome:?}");
+    assert_eq!(
+        *desktop.acts.lock().unwrap(),
+        vec![UiAct::Click("@s:e1".into())]
+    );
+}
+
+#[test]
+fn real_searchbox_can_submit_but_normal_text_field_cannot() {
+    let box1 = el("e65", "searchbox", "Search this site");
+    let s1 = screen("before", vec![box1.clone()]);
+    let s2 = screen("typed", vec![box1.clone()]);
+    let s3 = screen("Search results loaded", vec![box1]);
+    let (outcome, acts) = drive(
+        vec![s1, s2, s3],
+        &[
+            r#"{"do":"type","id":"e65","text":"Mars rover"}"#,
+            r#"{"do":"key","key":"enter"}"#,
+            r#"{"done":true,"evidence":"Search results loaded"}"#,
+        ],
+    );
+    assert!(matches!(outcome, Outcome::Done(_)), "{outcome:?}");
+    assert!(acts.contains(&UiAct::Key(Key::Enter)));
+}
+
+#[test]
+fn editor_cannot_use_browser_keys() {
+    let desktop = Fake {
+        screens: Mutex::new(vec![screen(
+            "Settings",
+            vec![el("e1", "menuitem", "Themes")],
+        )]),
+        acts: Mutex::new(Vec::new()),
+    };
+    let outcome = run_with(
+        "vscode",
+        "Open the browser address bar",
+        &desktop,
+        &|_, _, _, _| Ok(Step::Key(Key::Address)),
+        &Quiet,
+        &Limits::default(),
+    );
+    assert!(matches!(outcome, Outcome::Failed(msg) if msg.contains("Browser navigation")));
+    assert!(desktop.acts.lock().unwrap().is_empty());
+    assert!(click_allowed("menuitem", "Dark Theme"));
+    assert!(!click_allowed("menuitem", "Delete the project"));
+}

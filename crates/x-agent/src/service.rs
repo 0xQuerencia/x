@@ -114,6 +114,19 @@ pub trait Planner: Send + Sync {
         false
     }
 
+    /// Typed, choice-only computer decisions: Jev can operate the existing
+    /// accessibility loop without returning generative JSON commands.
+    /// Other planners continue using their existing completion path.
+    fn decide_computer(
+        &self,
+        _goal: &str,
+        _app: &str,
+        _observation: &crate::desktop::Observation,
+        _history: &[String],
+    ) -> Option<Result<crate::computer::Step, String>> {
+        None
+    }
+
     fn plan(&self, text: &str, smart: bool) -> Result<tools::Reply, String> {
         crate::planner::reply_from_text(
             &self.complete(&crate::planner::prompt(text, smart))?,
@@ -762,11 +775,20 @@ impl Service {
             .lock()
             .map(|d| d.clone())
             .unwrap_or_else(|p| p.into_inner().clone());
-        let outcome = crate::computer::run(
+        let outcome = crate::computer::run_with(
             app,
             goal,
             desktop.as_ref(),
-            &|prompt| planner.complete(prompt),
+            &|goal, app, observation, history| {
+                if let Some(decision) = planner.decide_computer(goal, app, observation, history) {
+                    decision
+                } else {
+                    let prompt = crate::computer::prompt(goal, app, observation, history);
+                    planner
+                        .complete(&prompt)
+                        .and_then(|response| crate::computer::parse(&response))
+                }
+            },
             &Link(self),
             &crate::computer::Limits::default(),
         );

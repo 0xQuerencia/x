@@ -114,7 +114,7 @@ struct Raw {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-enum Step {
+pub enum Step {
     Click(String),
     Type(String, String),
     Key(Key),
@@ -122,9 +122,10 @@ enum Step {
     Done { evidence: String, summary: String },
     Ask(String),
     Fail(String),
+    Wait,
 }
 
-fn parse(reply: &str) -> Result<Step, String> {
+pub(crate) fn parse(reply: &str) -> Result<Step, String> {
     let object = crate::planner::extract_object(reply).ok_or("The model did not answer in JSON")?;
     let raw: Raw = serde_json::from_str(object).map_err(|e| format!("Unusable reply: {e}"))?;
     let need = |v: Option<String>, what: &str| v.ok_or_else(|| format!("Missing {what}"));
@@ -159,7 +160,7 @@ fn parse(reply: &str) -> Result<Step, String> {
     }
 }
 
-fn prompt(goal: &str, app: &str, obs: &Observation, history: &[String]) -> String {
+pub(crate) fn prompt(goal: &str, app: &str, obs: &Observation, history: &[String]) -> String {
     let history = if history.is_empty() {
         "none yet".to_string()
     } else {
@@ -221,11 +222,13 @@ fn consequential(name: &str) -> bool {
     })
 }
 
-fn click_allowed(role: &str, name: &str) -> bool {
+pub(crate) fn click_allowed(role: &str, name: &str) -> bool {
     if consequential(name) {
         return false;
     }
-    if role == "link" {
+    // Menus, tabs and media playback are navigational UI, not arbitrary
+    // confirmation buttons. The consequential-name filter above still wins.
+    if matches!(role, "link" | "menuitem" | "tab" | "radiobutton") {
         return true;
     }
     let first = name
@@ -236,6 +239,10 @@ fn click_allowed(role: &str, name: &str) -> bool {
     matches!(
         first.as_str(),
         "open"
+            | "play"
+            | "pause"
+            | "settings"
+            | "preferences"
             | "view"
             | "show"
             | "search"
@@ -280,6 +287,7 @@ fn wait_for_window(desktop: &dyn Desktop, app: &str, host: &dyn Host) -> Result<
 }
 
 struct Progress {
+    app: String,
     acts: usize,
     errors: usize,
     unchanged: usize,
@@ -299,12 +307,38 @@ pub fn run(
     host: &dyn Host,
     limits: &Limits,
 ) -> Outcome {
+    run_with(
+        app,
+        goal,
+        desktop,
+        &|goal, app, obs, history| {
+            model(&prompt(goal, app, obs, history)).and_then(|answer| parse(&answer))
+        },
+        host,
+        limits,
+    )
+}
+
+/// Drive the same desktop verification loop with typed decisions rather than
+/// text-generating chat completions. Jev uses this; all safety guards remain
+/// inside the executor below.
+type DecisionFn<'a> = dyn Fn(&str, &str, &Observation, &[String]) -> Result<Step, String> + 'a;
+
+pub(crate) fn run_with(
+    app: &str,
+    goal: &str,
+    desktop: &dyn Desktop,
+    decide: &DecisionFn<'_>,
+    host: &dyn Host,
+    limits: &Limits,
+) -> Outcome {
     let start = Instant::now();
     let mut win = match wait_for_window(desktop, app, host) {
         Ok(win) => win,
         Err(e) => return Outcome::Failed(e),
     };
     let mut p = Progress {
+        app: app.into(),
         acts: 0,
         errors: 0,
         unchanged: 0,
@@ -356,7 +390,7 @@ pub fn run(
             return Outcome::Failed("Stopped: two steps in a row changed nothing".into());
         }
         p.acted_last = false;
-        let step = model(&prompt(goal, app, &obs, &p.history)).and_then(|r| parse(&r));
+        let step = decide(goal, app, &obs, &p.history);
         if host.stopped() {
             return Outcome::Cancelled;
         }
@@ -378,6 +412,11 @@ pub fn run(
         match step {
             Step::Ask(q) => return Outcome::Failed(format!("X needs an answer: {q}")),
             Step::Fail(why) => return Outcome::Failed(format!("Cannot be done: {why}")),
+            Step::Wait => {
+                p.history.push("(waited for the interface to load)".into());
+                std::thread::sleep(Duration::from_millis(750));
+                continue;
+            }
             Step::Done { evidence, summary } => {
                 if !obs.shows(&evidence) {
                     p.errors += 1;
@@ -468,6 +507,28 @@ fn act(
     goal: &str,
 ) -> Result<(), Refusal> {
     let retry = |e: String| Refusal::Retry(e);
+    // Browser navigation shortcuts (including Enter in an address/search
+    // bar) are not applicable to file managers or editors. The model cannot
+    // turn a supposed browser UI command into a terminal/editor hotkey.
+    if !matches!(p.app.as_str(), "firefox" | "chrome" | "chromium" | "brave")
+        && matches!(
+            step,
+            Step::Navigate(_)
+                | Step::Key(
+                    Key::Address
+                        | Key::Find
+                        | Key::Back
+                        | Key::Forward
+                        | Key::Reload
+                        | Key::NewTab
+                        | Key::Enter
+                )
+        )
+    {
+        return Err(Refusal::Stop(
+            "Browser navigation keys are unavailable in this app".into(),
+        ));
+    }
     let find = |id: &str| {
         obs.element(id)
             .ok_or_else(|| Refusal::Retry(format!("No control {id:?} on screen now")))
@@ -510,7 +571,9 @@ fn act(
             desktop
                 .act(win, &UiAct::Type(text.clone()))
                 .map_err(retry)?;
-            typed_nav = e.is_omnibox();
+            // Search boxes can safely submit their search with Enter;
+            // unrelated text fields cannot send/submit by key.
+            typed_nav = e.is_omnibox() || e.role == "searchbox";
             format!("typed into {:?}", e.name)
         }
         Step::Key(Key::Enter) if !p.typed_into_navigation => {
@@ -544,7 +607,7 @@ fn act(
             std::thread::sleep(PAGE_LOAD);
             format!("went to {url}")
         }
-        Step::Done { .. } | Step::Ask(_) | Step::Fail(_) => return Ok(()),
+        Step::Done { .. } | Step::Ask(_) | Step::Fail(_) | Step::Wait => return Ok(()),
     };
     p.typed_into_navigation = typed_nav || matches!(step, Step::Key(Key::Address));
     p.history.push(described);
