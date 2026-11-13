@@ -226,7 +226,9 @@ pub(crate) fn click_allowed(role: &str, name: &str) -> bool {
     if consequential(name) {
         return false;
     }
-    if role == "link" {
+    // Menus, tabs and media playback are navigational UI, not arbitrary
+    // confirmation buttons. The consequential-name filter above still wins.
+    if matches!(role, "link" | "menuitem" | "tab" | "radiobutton") {
         return true;
     }
     let first = name
@@ -237,6 +239,10 @@ pub(crate) fn click_allowed(role: &str, name: &str) -> bool {
     matches!(
         first.as_str(),
         "open"
+            | "play"
+            | "pause"
+            | "settings"
+            | "preferences"
             | "view"
             | "show"
             | "search"
@@ -562,7 +568,9 @@ fn act(
             desktop
                 .act(win, &UiAct::Type(text.clone()))
                 .map_err(retry)?;
-            typed_nav = e.is_omnibox();
+            // Search boxes can safely submit their search with Enter;
+            // unrelated text fields cannot send/submit by key.
+            typed_nav = e.is_omnibox() || e.role == "searchbox";
             format!("typed into {:?}", e.name)
         }
         Step::Key(Key::Enter) if !p.typed_into_navigation => {
