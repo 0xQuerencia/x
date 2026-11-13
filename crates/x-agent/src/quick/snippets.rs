@@ -229,10 +229,12 @@ pub fn render_live(text: &str) -> Result<String, String> {
     if !text.contains("{{") {
         return Ok(text.to_string());
     }
-    let date = crate::quick::datetime::now("date today")
+    // One clock read prevents date/time fields disagreeing at UTC midnight.
+    let instant = std::time::SystemTime::now();
+    let date = crate::quick::datetime::evaluate("date today", instant)
         .ok_or("UTC clock unavailable")?
         .1;
-    let time = crate::quick::datetime::now("time utc")
+    let time = crate::quick::datetime::evaluate("time utc", instant)
         .ok_or("UTC clock unavailable")?
         .1;
     let clock = time
