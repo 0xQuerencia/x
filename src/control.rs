@@ -245,6 +245,12 @@ pub enum AgentAction {
     Trust {
         on: bool,
     },
+    /// Explicit execution policy: default asks for each task; autonomous
+    /// auto-runs low-risk Actions and permitted computer sessions. Status reads
+    /// the same persisted state as the legacy Trust toggle.
+    Autonomy {
+        mode: String,
+    },
     /// What the dictation shortcut's transcript becomes: dictate, actions, work or auto.
     Voice {
         mode: String,
