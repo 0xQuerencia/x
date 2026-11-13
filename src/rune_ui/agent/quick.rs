@@ -52,7 +52,10 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
         let is_copy = matches!(&target, Target::CopyResult(_));
         let is_process = matches!(&target, Target::EndProcess(_));
         let confirming = matches!(&target, Target::EndProcess(info)
-            if ui.agent.pending_process.as_ref() == Some(info));
+            if ui.agent.pending_process.as_ref().is_some_and(|previous|
+                previous.pid == info.pid
+                    && previous.start_ticks == info.start_ticks
+                    && previous.name == info.name));
         content = content.child(
             row()
                 .key(format!("quick-row-{i}"))
