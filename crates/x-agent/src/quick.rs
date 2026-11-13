@@ -119,6 +119,27 @@ fn web_search(query: &str) -> Option<Hit> {
         return None;
     }
     let lower = raw.to_ascii_lowercase();
+    // A local utility query must not acquire a tempting accidental web
+    // fallback. Clipboard/history/snippet terms may contain private data.
+    if [
+        "history ",
+        "hist ",
+        "clipboard ",
+        "clip ",
+        "snip ",
+        "snippet ",
+        "file ",
+        "f ",
+        "process ",
+        "ps ",
+        "calc ",
+        "color ",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+    {
+        return None;
+    }
     let (site, terms) = [
         ("gh ", "github"),
         ("yt ", "youtube"),
@@ -358,6 +379,18 @@ mod tests {
         assert_eq!(hits[0].target, Target::OpenApp("firefox".into()));
         assert!(hits.len() <= MAX_RESULTS);
         assert!(search("", std::iter::empty()).len() <= MAX_RESULTS);
+    }
+
+    #[test]
+    fn private_local_queries_do_not_offer_web_search_fallback() {
+        for query in [
+            "hist private conversation",
+            "clip secret",
+            "snip signature",
+            "file contract",
+        ] {
+            assert!(web_search(query).is_none(), "{query}");
+        }
     }
 
     #[test]
