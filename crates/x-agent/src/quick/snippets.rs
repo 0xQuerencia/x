@@ -202,6 +202,59 @@ pub fn matches(query: &str) -> Result<Vec<Snippet>, String> {
     Ok(matches)
 }
 
+/// Resolve only explicitly named placeholders. Every source value is inserted
+/// once; placeholders inside a copied snapshot are never recursively expanded.
+fn render_fields(text: &str, utc_date: &str, utc_time: &str, clipboard: Option<&str>) -> Result<String, String> {
+    let mut output = text
+        .replace("{{utc_date}}", utc_date)
+        .replace("{{utc_time}}", utc_time);
+    if output.contains("{{clipboard_snapshot}}") {
+        let saved = clipboard.ok_or("There is no explicitly saved clipboard snapshot")?;
+        output = output.replace("{{clipboard_snapshot}}", saved);
+    }
+    if output.chars().count() > crate::clipboard::MAX_COPY {
+        return Err("Expanded snippet exceeds the clipboard's 8000-character limit".into());
+    }
+    Ok(output)
+}
+
+/// Render dynamic fields only when the user chooses to copy or insert a snippet.
+/// This never reads the live system clipboard or sends snippet text to a model.
+pub fn render_live(text: &str) -> Result<String, String> {
+    if !text.contains("{{") {
+        return Ok(text.to_string());
+    }
+    let date = crate::quick::datetime::now("date today")
+        .ok_or("UTC clock unavailable")?
+        .1;
+    let time = crate::quick::datetime::now("time utc")
+        .ok_or("UTC clock unavailable")?
+        .1;
+    let clock = time.split_whitespace().last().ok_or("UTC time unavailable")?;
+    let clip = if text.contains("{{clipboard_snapshot}}") {
+        Some(
+            crate::quick::clipboard_history::Store::user()?
+                .search("")?
+                .first()
+                .map(|item| item.text.clone())
+                .ok_or("No saved clipboard snapshot found")?,
+        )
+    } else {
+        None
+    };
+    render_fields(text, &date, clock, clip.as_deref())
+}
+
+/// Resolve a saved snippet by its unique trigger and expand dynamic fields.
+pub fn expand(trigger: &str) -> Result<String, String> {
+    let entries = Store::user()?.list()?;
+    let text = entries
+        .iter()
+        .find(|item| item.trigger.eq_ignore_ascii_case(trigger))
+        .ok_or("No saved snippet has that trigger")?;
+    render_live(&text.text)
+}
+
 /// Insert saved text only when the user deliberately says "insert snippet NAME"
 /// or "expand snippet NAME". Ordinary prose is never matched against triggers.
 /// The transcript is not passed to a model or saved by this lookup.
@@ -241,12 +294,22 @@ pub fn spoken(phrase: &str) -> Result<Option<String>, String> {
         return Ok(None);
     }
     let entries = Store::user()?.list()?;
-    Ok(spoken_from(&entries, phrase))
+    spoken_from(&entries, phrase).map(|text| render_live(&text)).transpose()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_fields_are_bounded_and_never_recursive() {
+        let text = "Today {{utc_date}} at {{utc_time}}: {{clipboard_snapshot}}";
+        let output = render_fields(text, "2026-11-13", "18:30", Some("{{utc_date}}")).unwrap();
+        assert_eq!(output, "Today 2026-11-13 at 18:30: {{utc_date}}");
+        assert!(render_fields(text, "2026-11-13", "18:30", None).is_err());
+        assert_eq!(render_fields("{{unknown}}", "a", "b", None).unwrap(), "{{unknown}}");
+        assert!(render_fields("{{clipboard_snapshot}}", "a", "b", Some(&"x".repeat(9000))).is_err());
+    }
 
     #[test]
     fn spoken_snippets_are_explicit_and_case_insensitive() {
