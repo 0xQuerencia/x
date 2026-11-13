@@ -30,6 +30,44 @@ pub enum Mode {
     Work,
 }
 
+/// Approval behavior is separate from the speech mode (Dictate, Auto, Smart)
+/// and separate from the Action/Work task type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutonomyMode {
+    /// Each desktop task awaits approval unless another legacy trust setting
+    /// was explicitly enabled. Selecting Default turns that trust setting off.
+    Default,
+    /// Approved low-risk Actions and explicitly granted computer-app sessions
+    /// run automatically. Work and consequential operations remain gated.
+    Autonomous,
+}
+
+impl AutonomyMode {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "default" => Ok(Self::Default),
+            "autonomous" => Ok(Self::Autonomous),
+            _ => Err("Mode must be default or autonomous".into()),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Autonomous => "autonomous",
+        }
+    }
+
+    pub fn from_trust(trusted: bool) -> Self {
+        if trusted {
+            Self::Autonomous
+        } else {
+            Self::Default
+        }
+    }
+}
+
 impl Mode {
     pub fn parse(s: &str) -> Result<Self, String> {
         match s {
@@ -86,6 +124,7 @@ pub struct Snapshot {
     pub opencode_found: bool,
     #[serde(default)]
     pub trusted_actions: bool,
+    pub autonomy_mode: AutonomyMode,
     pub computer_apps: Vec<String>,
     pub computer_remote: bool,
 }
@@ -257,6 +296,7 @@ impl Service {
             events: s.events.iter().filter(|e| e.n > since).cloned().collect(),
             workspace: s.workspace.as_ref().map(|p| p.display().to_string()),
             trusted_actions: s.trust_actions,
+            autonomy_mode: AutonomyMode::from_trust(s.trust_actions),
             computer_apps: s.computer_apps.clone(),
             computer_remote: s.computer_remote,
             opencode_found: self
@@ -283,18 +323,25 @@ impl Service {
 
     /// Opted-in Actions run as soon as they are planned: the registry holds only
     /// validated launches. Work and anything unplanned always wait for approval.
-    pub fn set_trust_actions(&self, on: bool) {
+    pub fn set_autonomy_mode(&self, mode: AutonomyMode) {
         let mut s = self.lock();
-        s.trust_actions = on;
+        s.trust_actions = mode == AutonomyMode::Autonomous;
         emit(
             &mut s,
             "info",
-            if on {
-                "Trusted Actions on"
-            } else {
-                "Trusted Actions off"
+            match mode {
+                AutonomyMode::Default => "Default mode: approval before each task",
+                AutonomyMode::Autonomous => {
+                    "Autonomous mode: safe Actions and granted computer apps run without a prompt"
+                }
             },
         );
+    }
+
+    /// Backward-compatible name for the existing 'agent trust on|off' switch.
+    /// Both commands manipulate the same state; there are no conflicting toggles.
+    pub fn set_trust_actions(&self, on: bool) {
+        self.set_autonomy_mode(AutonomyMode::from_trust(on));
     }
 
     pub fn set_session_root(&self, root: PathBuf) {
@@ -352,7 +399,7 @@ impl Service {
             ctx,
             strict_focus: false,
         });
-        if self.lock().trust_actions && !from_primary {
+        if self.lock().trust_actions && !from_primary && tools::is_low_risk(&self.lock().actions) {
             self.emit("info", "Trusted Actions: running without a prompt");
             if let Some(g) = self.lock().guard.as_mut() {
                 g.strict_focus = true; // no prompt in between, so focus must not have moved
@@ -520,15 +567,9 @@ impl Service {
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
         self.set_workspace(&dir.display().to_string())?;
-        let task = self.plan_task(goal, Mode::Work, None)?;
-        if self.lock().trust_actions {
-            self.emit(
-                "info",
-                "Trusted Actions: starting the session without a prompt",
-            );
-            self.approve(task.id)?;
-        }
-        Ok(task)
+        // Autonomous mode is for local desktop Actions, not for generated
+        // OpenCode edits. Even a fresh workspace still needs Work approval.
+        self.plan_task(goal, Mode::Work, None)
     }
 
     fn plan_task(

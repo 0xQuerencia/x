@@ -326,8 +326,9 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
-    /// Start listening, or stop listening and plan what was said. Nothing runs until
-    /// you `approve` the plan. The transcript never pastes into the focused app.
+    /// Start listening, or stop listening and plan what was said. Default mode
+    /// asks for approval; Autonomous mode can start safe Actions immediately.
+    /// The transcript never pastes into the focused app.
     Toggle {
         /// `actions` (open apps and sites) or `work` (hand a goal to OpenCode).
         #[arg(long, default_value = "actions")]
@@ -360,6 +361,16 @@ pub enum AgentCommand {
     Trust {
         #[arg(value_parser = ["on", "off"])]
         state: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// How X runs desktop commands: `default` asks each time, `autonomous`
+    /// auto-starts safe Actions and explicitly granted screen sessions without
+    /// a separate prompt. Work, destructive actions and missing grants still ask.
+    /// `status` reports the active policy. This reuses the legacy trust setting.
+    Autonomy {
+        #[arg(value_parser = ["default", "autonomous", "status"])]
+        mode: String,
         #[command(flatten)]
         output: Output,
     },
@@ -670,6 +681,7 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Trust { state, output } => {
                     (AgentAction::Trust { on: state == "on" }, output)
                 }
+                AgentCommand::Autonomy { mode, output } => (AgentAction::Autonomy { mode }, output),
                 AgentCommand::Workspace { path, output } => {
                     let absolute =
                         std::path::absolute(&path).map_or(path, |p| p.display().to_string());

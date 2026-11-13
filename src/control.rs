@@ -217,7 +217,7 @@ impl ControlRequest {
     }
 }
 
-/// What `hex agent` asks X to do. Nothing runs until `Approve` names the planned task.
+/// What `hex agent` asks X to do. Default requires approval; Autonomous may run safe Actions directly.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case")]
 pub enum AgentAction {
@@ -244,6 +244,12 @@ pub enum AgentAction {
     /// Run validated Actions as soon as they are planned (`on`), or ask first (`off`).
     Trust {
         on: bool,
+    },
+    /// Explicit execution policy: default asks for each task; autonomous
+    /// auto-runs low-risk Actions and permitted computer sessions. Status reads
+    /// the same persisted state as the legacy Trust toggle.
+    Autonomy {
+        mode: String,
     },
     /// What the dictation shortcut's transcript becomes: dictate, actions, work or auto.
     Voice {
