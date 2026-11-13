@@ -112,8 +112,10 @@ fn score(query: &str, hit: &Hit) -> Option<usize> {
 /// requests. Prefixes are deliberately explicit; ordinary queries search
 /// Google. Never invoke an LLM or construct a URL directly from a query.
 fn web_search(query: &str) -> Option<Hit> {
-    let raw = query.trim();
-    if raw.is_empty() {
+    // Preserve trailing whitespace until a provider prefix is parsed:
+    // "g " is an incomplete search, not a Google search for the letter g.
+    let raw = query.trim_start();
+    if raw.trim().is_empty() {
         return None;
     }
     let lower = raw.to_ascii_lowercase();
