@@ -114,7 +114,7 @@ struct Raw {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-enum Step {
+pub(crate) enum Step {
     Click(String),
     Type(String, String),
     Key(Key),
@@ -122,9 +122,10 @@ enum Step {
     Done { evidence: String, summary: String },
     Ask(String),
     Fail(String),
+    Wait,
 }
 
-fn parse(reply: &str) -> Result<Step, String> {
+pub(crate) fn parse(reply: &str) -> Result<Step, String> {
     let object = crate::planner::extract_object(reply).ok_or("The model did not answer in JSON")?;
     let raw: Raw = serde_json::from_str(object).map_err(|e| format!("Unusable reply: {e}"))?;
     let need = |v: Option<String>, what: &str| v.ok_or_else(|| format!("Missing {what}"));
@@ -159,7 +160,7 @@ fn parse(reply: &str) -> Result<Step, String> {
     }
 }
 
-fn prompt(goal: &str, app: &str, obs: &Observation, history: &[String]) -> String {
+pub(crate) fn prompt(goal: &str, app: &str, obs: &Observation, history: &[String]) -> String {
     let history = if history.is_empty() {
         "none yet".to_string()
     } else {
@@ -221,7 +222,7 @@ fn consequential(name: &str) -> bool {
     })
 }
 
-fn click_allowed(role: &str, name: &str) -> bool {
+pub(crate) fn click_allowed(role: &str, name: &str) -> bool {
     if consequential(name) {
         return false;
     }
@@ -299,6 +300,29 @@ pub fn run(
     host: &dyn Host,
     limits: &Limits,
 ) -> Outcome {
+    run_with(
+        app,
+        goal,
+        desktop,
+        &|goal, app, obs, history| {
+            model(&prompt(goal, app, obs, history)).and_then(|answer| parse(&answer))
+        },
+        host,
+        limits,
+    )
+}
+
+/// Drive the same desktop verification loop with typed decisions rather than
+/// text-generating chat completions. Jev uses this; all safety guards remain
+/// inside the executor below.
+pub(crate) fn run_with(
+    app: &str,
+    goal: &str,
+    desktop: &dyn Desktop,
+    decide: &dyn Fn(&str, &str, &Observation, &[String]) -> Result<Step, String>,
+    host: &dyn Host,
+    limits: &Limits,
+) -> Outcome {
     let start = Instant::now();
     let mut win = match wait_for_window(desktop, app, host) {
         Ok(win) => win,
@@ -356,7 +380,7 @@ pub fn run(
             return Outcome::Failed("Stopped: two steps in a row changed nothing".into());
         }
         p.acted_last = false;
-        let step = model(&prompt(goal, app, &obs, &p.history)).and_then(|r| parse(&r));
+        let step = decide(goal, app, &obs, &p.history);
         if host.stopped() {
             return Outcome::Cancelled;
         }
@@ -378,6 +402,11 @@ pub fn run(
         match step {
             Step::Ask(q) => return Outcome::Failed(format!("X needs an answer: {q}")),
             Step::Fail(why) => return Outcome::Failed(format!("Cannot be done: {why}")),
+            Step::Wait => {
+                p.history.push("(waited for the interface to load)".into());
+                std::thread::sleep(Duration::from_millis(750));
+                continue;
+            }
             Step::Done { evidence, summary } => {
                 if !obs.shows(&evidence) {
                     p.errors += 1;
@@ -544,7 +573,7 @@ fn act(
             std::thread::sleep(PAGE_LOAD);
             format!("went to {url}")
         }
-        Step::Done { .. } | Step::Ask(_) | Step::Fail(_) => return Ok(()),
+        Step::Done { .. } | Step::Ask(_) | Step::Fail(_) | Step::Wait => return Ok(()),
     };
     p.typed_into_navigation = typed_nav || matches!(step, Step::Key(Key::Address));
     p.history.push(described);
