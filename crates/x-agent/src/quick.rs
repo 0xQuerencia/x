@@ -7,6 +7,7 @@ mod colors;
 pub mod files;
 mod math;
 pub mod picker;
+pub mod processes;
 pub mod snippets;
 
 const MAX_RESULTS: usize = 8;
@@ -25,6 +26,7 @@ pub enum Target {
     CopyResult(String),
     PickColor,
     OpenFile(String),
+    EndProcess(processes::ProcessInfo),
 }
 
 impl Target {
@@ -36,7 +38,11 @@ impl Target {
             Self::FocusApp(app) => Some(format!("focus {app}")),
             Self::Workspace(n) => Some(format!("switch to workspace {n}")),
             Self::WebSearch { site, query } => Some(format!("search {site} for {query}")),
-            Self::Workflow(_) | Self::CopyResult(_) | Self::PickColor | Self::OpenFile(_) => None,
+            Self::Workflow(_)
+            | Self::CopyResult(_)
+            | Self::PickColor
+            | Self::OpenFile(_)
+            | Self::EndProcess(_) => None,
         }
     }
 }
@@ -196,6 +202,24 @@ fn local_results(query: &str) -> Vec<Hit> {
             detail: "Calculated locally · copy result".into(),
             target: Target::CopyResult(value),
         });
+    }
+    let process_filter = trimmed
+        .strip_prefix("process ")
+        .or_else(|| trimmed.strip_prefix("ps "))
+        .or_else(|| {
+            (trimmed == "processes" || trimmed == "process" || trimmed == "ps").then_some("")
+        });
+    if let Some(filter) = process_filter {
+        for process in processes::list(filter) {
+            results.push(Hit {
+                title: format!("{} (PID {})", process.name, process.pid),
+                detail: format!(
+                    "{} MiB resident · end only after confirmation",
+                    process.resident_kib / 1024
+                ),
+                target: Target::EndProcess(process),
+            });
+        }
     }
     if let Some(formats) = colors::convert(trimmed) {
         for (name, value) in [
