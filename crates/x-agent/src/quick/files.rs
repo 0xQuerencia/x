@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -105,7 +106,9 @@ pub fn search(query: &str) -> Vec<FileHit> {
     let text = query.trim();
     let prefix = text
         .strip_prefix("file ")
-        .or_else(|| text.strip_prefix("f "));
+        .or_else(|| text.strip_prefix("f "))
+        .or_else(|| text.strip_prefix("read "))
+        .or_else(|| text.strip_prefix("view "));
     let Some(needle) = prefix else {
         return Vec::new();
     };
@@ -127,9 +130,9 @@ fn refused_extension(path: &Path) -> bool {
     .any(|blocked| suffix.eq_ignore_ascii_case(blocked))
 }
 
-/// Open only a regular nonexecutable file in one of X Quick's scoped user roots.
-/// The path is re-canonicalized before use; no shell or text interpolation occurs.
-pub fn open(path: &str) -> Result<String, String> {
+/// Verify a search result against currently approved roots, not just the
+/// filename captured earlier. Never trust a stale Quick result path.
+fn scoped_regular_file(path: &str) -> Result<PathBuf, String> {
     if path.len() > 4096 || path.contains('\0') {
         return Err("Invalid file path".into());
     }
@@ -138,7 +141,7 @@ pub fn open(path: &str) -> Result<String, String> {
     let selected = Path::new(path);
     let metadata = fs::symlink_metadata(selected).map_err(|e| format!("File disappeared: {e}"))?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err("This action opens ordinary local files only".into());
+        return Err("This action accepts ordinary local files only".into());
     }
     let canonical = selected
         .canonicalize()
@@ -151,15 +154,58 @@ pub fn open(path: &str) -> Result<String, String> {
         return Err("The file is outside the configured Quick search folders".into());
     }
     if refused_extension(&canonical) {
-        return Err("X refuses to launch an executable file through search".into());
+        return Err("X refuses executable files through Quick".into());
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if metadata.permissions().mode() & 0o111 != 0 {
-            return Err("X refuses to launch an executable file through search".into());
+            return Err("X refuses executable files through Quick".into());
         }
     }
+    Ok(canonical)
+}
+
+/// Explicitly preview a small ordinary UTF-8 text file. Never send content to
+/// the model, clipboard, history store, terminal, or an external application.
+/// Unsupported extensions and oversized files are refused before reading.
+pub fn preview(path: &str) -> Result<String, String> {
+    const LIMIT: u64 = 8 * 1024;
+    let canonical = scoped_regular_file(path)?;
+    let extension = canonical.extension().and_then(|ext| ext.to_str()).unwrap_or_default();
+    if ![
+        "txt", "md", "rs", "toml", "json", "yaml", "yml", "csv", "log",
+        "py", "js", "jsx", "ts", "tsx", "html", "css", "xml", "go",
+        "lua", "java", "c", "cpp", "h", "hpp", "sql",
+    ]
+    .iter()
+    .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+    {
+        return Err("Only known text-file extensions can be previewed".into());
+    }
+    let metadata = fs::metadata(&canonical).map_err(|e| format!("Cannot inspect file: {e}"))?;
+    if metadata.len() > LIMIT {
+        return Err("File is larger than the 8 KiB preview limit; open it in an editor".into());
+    }
+    let mut file = fs::File::open(&canonical).map_err(|e| format!("Cannot read file: {e}"))?;
+    let mut data = Vec::new();
+    file.take(LIMIT + 1)
+        .read_to_end(&mut data)
+        .map_err(|e| format!("Cannot read file: {e}"))?;
+    if data.len() as u64 > LIMIT {
+        return Err("File changed or exceeds the 8 KiB preview limit".into());
+    }
+    let text = String::from_utf8(data).map_err(|_| "File is not UTF-8 text")?;
+    if text.contains('\0') {
+        return Err("Binary-looking file cannot be previewed".into());
+    }
+    Ok(text.chars().take(2_000).collect())
+}
+
+/// Open only a regular nonexecutable file in one of X Quick's scoped user roots.
+/// Opening is explicit, with no shell or text interpolation.
+pub fn open(path: &str) -> Result<String, String> {
+    let canonical = scoped_regular_file(path)?;
     #[cfg(target_os = "windows")]
     let opener = "explorer.exe";
     #[cfg(target_os = "macos")]
@@ -195,6 +241,16 @@ mod tests {
         let results = scan(&[root], "project");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "project-report.pdf");
+    }
+
+    #[test]
+    fn file_search_requires_an_explicit_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Documents");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("sample-notes.txt"), "safe").unwrap();
+        assert_eq!(scan(&[root], "notes").len(), 1);
+        assert!(search("example").is_empty());
     }
 
     #[test]
