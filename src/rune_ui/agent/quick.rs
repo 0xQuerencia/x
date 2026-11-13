@@ -157,39 +157,68 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
     let mut editor = col()
         .key("quick-snippet-editor")
         .gap(8.0)
-        .child(section_label(p, "quick-snippet-title", tr("Saved snippets")))
-        .child(text(tr("Save or remove snippets here. Search 'snip name' to copy one."))
+        .child(section_label(
+            p,
+            "quick-snippet-title",
+            tr("Saved snippets"),
+        ))
+        .child(
+            text(tr(
+                "Save or remove snippets here. Search 'snip name' to copy one.",
+            ))
             .key("quick-snippet-help")
             .font(DESCRIPTION)
-            .color(p.muted()))
+            .color(p.muted()),
+        )
         .child(trigger)
         .child(value)
-        .child(row().gap(8.0)
-            .child(button(p, "quick-snippet-save", tr("Save snippet"), ButtonKind::Secondary,
-                |ui: &mut Ui, _| {
-                    let trigger = ui.agent.snippet_trigger.text.clone();
-                    let value = ui.agent.snippet_value.text.clone();
-                    ui.agent.snippet_note = Some(match ::x_agent::quick::snippets::Store::user()
-                        .and_then(|store| store.upsert(&trigger, &value)) {
-                        Ok(()) => "Snippet saved locally".into(),
-                        Err(error) => error,
-                    });
-                }))
-            .child(button(p, "quick-snippet-delete", tr("Delete snippet"), ButtonKind::Secondary,
-                |ui: &mut Ui, _| {
-                    let trigger = ui.agent.snippet_trigger.text.clone();
-                    ui.agent.snippet_note = Some(match ::x_agent::quick::snippets::Store::user()
-                        .and_then(|store| store.delete(&trigger)) {
-                        Ok(true) => "Snippet removed".into(),
-                        Ok(false) => "No snippet has that trigger".into(),
-                        Err(error) => error,
-                    });
-                })));
+        .child(
+            row()
+                .gap(8.0)
+                .child(button(
+                    p,
+                    "quick-snippet-save",
+                    tr("Save snippet"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        let trigger = ui.agent.snippet_trigger.text.clone();
+                        let value = ui.agent.snippet_value.text.clone();
+                        ui.agent.snippet_note = Some(
+                            match ::x_agent::quick::snippets::Store::user()
+                                .and_then(|store| store.upsert(&trigger, &value))
+                            {
+                                Ok(()) => "Snippet saved locally".into(),
+                                Err(error) => error,
+                            },
+                        );
+                    },
+                ))
+                .child(button(
+                    p,
+                    "quick-snippet-delete",
+                    tr("Delete snippet"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        let trigger = ui.agent.snippet_trigger.text.clone();
+                        ui.agent.snippet_note = Some(
+                            match ::x_agent::quick::snippets::Store::user()
+                                .and_then(|store| store.delete(&trigger))
+                            {
+                                Ok(true) => "Snippet removed".into(),
+                                Ok(false) => "No snippet has that trigger".into(),
+                                Err(error) => error,
+                            },
+                        );
+                    },
+                )),
+        );
     if let Some(note) = &ui.agent.snippet_note {
-        editor = editor.child(text(note.clone())
-            .key("quick-snippet-note")
-            .font(DESCRIPTION)
-            .color(p.muted()));
+        editor = editor.child(
+            text(note.clone())
+                .key("quick-snippet-note")
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
     }
     content.child(editor)
 }
