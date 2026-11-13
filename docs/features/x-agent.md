@@ -325,7 +325,8 @@ the entire saved store. Saving the same text again moves it to the top.
 ## Explicit local snippets in Quick
 
 The Agent pane's Quick tab includes a small editor for named snippets. Save a
-trigger (ASCII letters, numbers, `-`, `_`; max 32) and up to 4096 characters of
+trigger (ASCII letters, numbers, `-`, `_` and single spaces between words;
+max 48 characters) and up to 4096 characters of
 text. Search `snip <trigger>`, `snippet <trigger>`, or `snippets` and press Copy
 on an entry. Removing a trigger deletes its stored text.
 
@@ -333,6 +334,11 @@ on an entry. Removing a trigger deletes its stored text.
   JSON file. Updates use temporary files and refuse symlinked storage.
 - The library is bounded to 100 items. Malformed data is reported; it is never
   automatically overwritten during a Save.
+- Explicit `snip`/`snippet` searches match both the trigger and the saved
+  body; ordinary Quick input never searches the private snippet library.
+- Multiword triggers such as `my email` work with explicit spoken
+  `insert snippet my email` and Quick copy. Automatic expansion while typing
+  in arbitrary applications is still not implemented.
 - Only deliberate Quick searches read snippets; none are sent to a model.
 - Snippets may contain `{{utc_date}}` (YYYY-MM-DD), `{{utc_time}}`
   (HH:MM), or `{{clipboard_snapshot}}` (the newest explicitly saved
