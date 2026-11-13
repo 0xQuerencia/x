@@ -23,6 +23,9 @@ const SHOWN_EVENTS: usize = 40;
 pub(super) struct AgentPane {
     input: TextEdit,
     quick_query: TextEdit,
+    snippet_trigger: TextEdit,
+    snippet_value: TextEdit,
+    snippet_note: Option<String>,
     workspace: TextEdit,
     mode: Mode,
     snapshot: Option<Snapshot>,
@@ -39,6 +42,9 @@ impl Default for AgentPane {
         Self {
             input: TextEdit::default(),
             quick_query: TextEdit::default(),
+            snippet_trigger: TextEdit::default(),
+            snippet_value: TextEdit::default(),
+            snippet_note: None,
             workspace: TextEdit::default(),
             mode: Mode::Actions,
             snapshot: None,
