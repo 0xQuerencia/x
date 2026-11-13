@@ -7,6 +7,7 @@ mod colors;
 pub mod files;
 mod math;
 pub mod picker;
+pub mod snippets;
 
 const MAX_RESULTS: usize = 8;
 
@@ -269,6 +270,15 @@ pub fn search(query: &str, workflows: impl IntoIterator<Item = (String, String)>
         results.push(web);
     }
     let mut local = local_results(query);
+    if let Ok(snippets) = snippets::matches(query) {
+        for snippet in snippets {
+            local.push(Hit {
+                title: format!("Snippet: {}", snippet.trigger),
+                detail: "Saved locally · copy text on request".into(),
+                target: Target::CopyResult(snippet.text),
+            });
+        }
+    }
     local.extend(results);
     local.truncate(MAX_RESULTS);
     local
