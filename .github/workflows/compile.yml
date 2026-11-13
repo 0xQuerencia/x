@@ -60,6 +60,9 @@ jobs:
             libxrandr-dev libopenblas-dev libvulkan-dev glslc libshaderc-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --bin hex -- -D warnings
+      # Run X's deterministic agent and utility tests on every PR.
+      # Real-compositor and microphone integration tests remain ignored.
+      - run: cargo test --locked -p x-agent --all-targets
 
   macos:
     name: macOS
