@@ -7,6 +7,7 @@ pub mod clipboard_history;
 mod colors;
 pub mod datetime;
 pub mod files;
+pub mod help;
 mod math;
 pub mod picker;
 pub mod processes;
@@ -31,6 +32,7 @@ pub enum Target {
     PickColor,
     OpenFile(String),
     PreviewFile(String),
+    HelpText(String),
     EndProcess(processes::ProcessInfo),
 }
 
@@ -49,6 +51,7 @@ impl Target {
             | Self::PickColor
             | Self::OpenFile(_)
             | Self::PreviewFile(_)
+            | Self::HelpText(_)
             | Self::EndProcess(_) => None,
         }
     }
@@ -143,6 +146,8 @@ fn web_search(query: &str) -> Option<Hit> {
         "ps ",
         "calc ",
         "color ",
+        "help ",
+        "docs ",
     ]
     .iter()
     .any(|prefix| lower.starts_with(prefix))
@@ -207,6 +212,13 @@ fn web_search(query: &str) -> Option<Hit> {
 fn local_results(query: &str) -> Vec<Hit> {
     let trimmed = query.trim();
     let mut results = Vec::new();
+    for section in help::search(trimmed) {
+        results.push(Hit {
+            title: format!("Help: {}", section.title),
+            detail: format!("Embedded X documentation · {}", section.source),
+            target: Target::HelpText(section.excerpt),
+        });
+    }
     let preview_request = trimmed.starts_with("read ") || trimmed.starts_with("view ");
     for file in files::search(trimmed) {
         let target = if preview_request {
