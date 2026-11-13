@@ -60,7 +60,8 @@ hex
 │   ├── hide                       close the window; Hex stays in the menu bar
 │   └── story <story> [--variant V] [--play]  the playground (Labs): open a story
 ├── onboarding reset (alias restart)  replay the first run now; every OS (below)
-├── agent awake on --minutes 60 | off | status   explicit timed OS idle inhibitor (requires X Labs)
+├── agent awake on --minutes 60 | until --clock 18:30 --utc-offset +05:30 | off | status
+│                                           explicit bounded OS idle inhibitor (requires X Labs)
 ├── history clear --yes            delete every retained dictation
 ├── vocabulary                     the shared vocabulary (features/vocabulary.md)
 │   ├── list [--json]              every term and its "sounds like" spellings
