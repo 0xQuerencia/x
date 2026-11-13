@@ -202,6 +202,52 @@ fn candidates(utterance: &str) -> Vec<Action> {
     let lower = text.to_lowercase();
     let mut options = Vec::new();
 
+    // Open-ended multi-step desktop requests go through the *existing*
+    // observe/act/verify loop. Jev picks each current UI element there; it
+    // does not invent a JSON script, shell command, or model-generated text.
+    // A caller must separately grant this app's screen and remote context.
+    let interactive = [
+        "click", "choose", "select", "play", "scroll", "check", "read",
+        "latest", "first result", "next result", "fill", "on the page",
+        "settings", "theme", "change", "summarize", "show me",
+        "find", "search",
+    ]
+    .iter()
+    .any(|term| lower.contains(term));
+    if interactive {
+        let app = [
+            ("vs code", "vscode"), ("vscode", "vscode"),
+            ("visual studio code", "vscode"),
+            ("file manager", "files"), ("files", "files"),
+            ("firefox", "firefox"), ("chrome", "chrome"),
+            ("chromium", "chromium"), ("brave", "brave"),
+        ]
+        .iter()
+        .find(|(name, _)| mentions(&lower, name))
+        .map(|(_, app)| *app);
+        // An explicitly named website plus interactive steps means browser
+        // use. When no browser is named, take the person's default browser
+        // if it is one of X's supported browsers, or Firefox.
+        let web_goal = ["github", "youtube", "wikipedia", "reddit",
+            "website", "browser", "web page", "stackoverflow"]
+            .iter()
+            .any(|name| mentions(&lower, name))
+            || lower.contains("https://");
+        let app = app.or_else(|| web_goal.then(|| {
+            match std::env::var("BROWSER").unwrap_or_default().as_str() {
+                "chrome" | "google-chrome" => "chrome",
+                "brave" => "brave",
+                "chromium" => "chromium",
+                _ => "firefox",
+            }
+        }));
+        if let Some(app) = app {
+            push(&mut options, Action::Computer {
+                app: app.into(), goal: text.clone(),
+            });
+        }
+    }
+
     // These are aliases of the existing X registry, not a second app registry.
     for alias in [
         "visual studio code",
@@ -454,6 +500,22 @@ mod tests {
             ]
         );
         assert!(candidates("Do the forbidden shell thing").is_empty());
+    }
+
+    #[test]
+    fn natural_desktop_goals_offer_an_observe_act_verify_task() {
+        let goal = "Open GitHub, find my latest PR and check whether tests passed";
+        let found = candidates(goal);
+        assert!(found.contains(&Action::Computer {
+            app: "firefox".into(), goal: goal.into(),
+        }));
+        let vscode_goal = "In VS Code change the selected theme";
+        assert!(candidates(vscode_goal).contains(&Action::Computer {
+            app: "vscode".into(), goal: vscode_goal.into(),
+        }));
+        assert!(!candidates("hello there").iter().any(
+            |a| matches!(a, Action::Computer { .. })
+        ));
     }
 
     #[test]
