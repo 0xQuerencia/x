@@ -329,23 +329,25 @@ fn picked<'a>(
 ) -> Result<&'a str, String> {
     let answer = reply
         .pointer(&format!("/answers/{question}"))
-        .ok_or_else(|| format!("Jev omitted {question}"))?;
+        .ok_or_else(|| format!("The decision model omitted {question}"))?;
     let id = answer
         .get("choice")
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("Jev supplied no {question} choice"))?;
+        .ok_or_else(|| format!("The decision model supplied no {question} choice"))?;
     if !options.contains_key(id) {
-        return Err(format!("Jev selected an unoffered {question} choice"));
+        return Err(format!(
+            "The decision model selected an unoffered {question} choice"
+        ));
     }
     let probs = answer
         .get("probabilities")
         .and_then(Value::as_object)
-        .ok_or_else(|| format!("Jev omitted {question} probabilities"))?;
+        .ok_or_else(|| format!("The decision model omitted {question} probabilities"))?;
     let probability = probs
         .get(id)
         .and_then(Value::as_f64)
         .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
-        .ok_or_else(|| format!("Jev supplied invalid {question} probability"))?;
+        .ok_or_else(|| format!("The decision model supplied invalid {question} probability"))?;
     let runner = probs
         .iter()
         .filter(|(name, _)| name.as_str() != id)
@@ -354,7 +356,7 @@ fn picked<'a>(
         .fold(0.0_f64, f64::max);
     if probability < threshold || probability - runner < MARGIN {
         return Err(format!(
-            "Jev is uncertain about {question}; no action was performed"
+            "The decision model is uncertain about {question}; no action was performed"
         ));
     }
     Ok(id)
@@ -391,7 +393,7 @@ fn select(reply: &Value, goal: &str, o: &Offers) -> Result<Step, String> {
             let a = o.spans.get(from).ok_or("First word missing")?;
             let b = o.spans.get(to).ok_or("Last word missing")?;
             if a.start > b.start {
-                return Err("Jev selected words out of order; nothing typed".into());
+                return Err("The decision model selected words out of order; nothing typed".into());
             }
             let literal = goal[a.start..b.end]
                 .trim_matches(|c: char| matches!(c, '"' | '\'' | '“' | '”' | '‘' | '’'))
@@ -400,7 +402,9 @@ fn select(reply: &Value, goal: &str, o: &Offers) -> Result<Step, String> {
                 || literal.chars().count() > 300
                 || literal.chars().any(char::is_control)
             {
-                return Err("Jev selected invalid literal text; nothing typed".into());
+                return Err(
+                    "The decision model selected invalid literal text; nothing typed".into(),
+                );
             }
             Ok(Step::Type(id.into(), literal.into()))
         }
@@ -419,7 +423,7 @@ fn select(reply: &Value, goal: &str, o: &Offers) -> Result<Step, String> {
         "pageup" => Ok(Step::Key(crate::desktop::Key::PageUp)),
         "tab" => Ok(Step::Key(crate::desktop::Key::Tab)),
         "escape" => Ok(Step::Key(crate::desktop::Key::Escape)),
-        _ => Err("Unknown Jev operation; nothing performed".into()),
+        _ => Err("Unknown decision operation; nothing performed".into()),
     }
 }
 
