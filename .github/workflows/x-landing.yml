@@ -1,0 +1,39 @@
+name: X landing React + TypeScript
+
+on:
+  pull_request:
+    paths:
+      - "landing/**"
+      - ".github/workflows/x-landing.yml"
+  push:
+    branches: [main]
+    paths:
+      - "landing/**"
+      - ".github/workflows/x-landing.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: landing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: TypeScript and production build
+        run: npm run check
+      - name: Verify required image assets are copied
+        run: |
+          test -f dist/index.html
+          test -f dist/img/win-dictation.webp
+          test -f dist/img/win-models.webp
+          test -f dist/img/win-agent.webp
+          test -f dist/img/win-result.webp
+          test -f dist/img/og.png
