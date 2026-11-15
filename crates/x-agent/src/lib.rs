@@ -21,6 +21,7 @@ pub mod opencode;
 pub mod phase;
 pub mod planner;
 pub mod quick;
+pub mod screenshots;
 pub mod service;
 pub mod tools;
 pub mod wm;

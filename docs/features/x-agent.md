@@ -466,3 +466,51 @@ hex agent planner jev  # restore legacy Jev
 This integration uses text and the accessibility tree for decision context.
 Screenshot support is a separate opt-in capability; it is never collected
 automatically by basic command routing.
+
+
+### On-demand screenshots and private visual decisions (Hyprland)
+
+Manual local screenshot capture requires `grim` and, for the region
+selector, `slurp`. Capture output never goes to an API:
+
+```sh
+sudo pacman -S --needed grim slurp
+hex agent screenshot screen
+hex agent screenshot window
+hex agent screenshot region
+hex agent screenshot window --output "$HOME/Pictures/my-window.png"
+```
+
+These capture a single screen (full compositor), the **focused window's
+rectangle**, or an explicitly dragged region. Images are written only on
+request, defaulting to unique PNG filenames in Pictures with mode 0600;
+existing files are never overwritten.
+
+**Decider image context is a separate opt-in:** only after app-grant and
+remote-screen permission are already enabled, also run:
+
+```sh
+hex agent planner decider-flash  # or: decider
+hex agent computer grant firefox
+hex agent computer remote on
+hex agent computer vision on
+hex agent computer list
+hex agent say --mode actions "In Firefox, click that button on screen"
+hex agent computer vision off  # immediately disables future visual sends
+```
+
+The computer agent captures only the presently focused, granted app window,
+and only on the first decision of a task where the user refers to visual
+elements or the accessibility tree is empty. No capture is made for basic
+native Actions, typed dictation, or every computer step. The PNG stays in
+memory, is base64-encoded directly in the explicit Decisions API request,
+and is discarded when that request completes. X does not persist a remote
+vision screenshot in /tmp or retain screenshot history.
+
+**Privacy and limitations:** screenshot pixels can contain private content
+that AT-SPI text redaction cannot protect. Vision opt-in is independent of
+remote accessibility-text consent and is disabled by default. Only turn it
+on when comfortable sharing visible pixels with OpenRouter/Perplexity.
+Images are supporting context for **existing allowlisted accessible UI
+targets**; X cannot use ungrounded coordinates to click inaccessible
+buttons, and screen text never grants new permissions. Model quotas apply.
