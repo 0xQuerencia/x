@@ -139,3 +139,6 @@ footer a::after{left:0;right:0}
 ::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
 ::view-transition-group(xwin){animation-duration:.7s;animation-timing-function:cubic-bezier(.65,0,.25,1);border-radius:14px;overflow:hidden}
 ::view-transition-old(xwin),::view-transition-new(xwin){height:100%;width:100%;object-fit:cover;object-position:top left}
+
+/* Let Lenis drive scroll position; keep native smooth scrolling as the no-JS fallback. */
+html.lenis.lenis-smooth{scroll-behavior:auto!important}
