@@ -262,7 +262,6 @@ fn computer_access_is_limited_to_supported_non_terminal_apps() {
     }
 }
 
-
 #[test]
 fn window_descriptions_are_human_readable_and_preserve_the_target() {
     use crate::wm::{Op, Target, Ws};
@@ -289,10 +288,7 @@ fn window_descriptions_are_human_readable_and_preserve_the_target() {
         show(Op::Workspace, Target::default(), Some(Ws::N(10))),
         "Switch to workspace 10"
     );
-    assert_eq!(
-        show(Op::List, Target::default(), None),
-        "List open windows"
-    );
+    assert_eq!(show(Op::List, Target::default(), None), "List open windows");
     assert_eq!(
         show(Op::Back, Target::default(), None),
         "Focus the previous window"
@@ -313,8 +309,5 @@ fn window_descriptions_are_human_readable_and_preserve_the_target() {
         show(Op::Minimize, named.clone(), None),
         "Minimize firefox window #2"
     );
-    assert_eq!(
-        show(Op::Close, named, None),
-        "Close firefox window #2"
-    );
+    assert_eq!(show(Op::Close, named, None), "Close firefox window #2");
 }
