@@ -38,7 +38,7 @@ try {
     await page.locator('.codetabs button[data-c="aur"]').click();
     assert.ok((await page.locator('.code:not([hidden]) pre').textContent()).includes("makepkg -si"));
     await page.locator(".code:not([hidden]) .copy").click();
-    assert.equal((await page.locator(".code:not([hidden]) .copy").textContent()), "copied");
+    await page.waitForFunction(() => document.querySelector(".code:not([hidden]) .copy")?.textContent === "copied");
     assert.ok((await page.evaluate(() => navigator.clipboard.readText())).includes("makepkg -si"));
 
     await page.locator("#next").click();
