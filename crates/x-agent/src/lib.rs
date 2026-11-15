@@ -12,6 +12,7 @@ pub mod clipboard;
 pub mod computer;
 pub mod context;
 pub mod desktop;
+pub mod decider;
 pub mod edit;
 pub mod hexcli;
 pub mod jev;

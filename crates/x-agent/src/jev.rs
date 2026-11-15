@@ -39,7 +39,8 @@ impl Planner for Jev {
         history: &[String],
     ) -> Option<Result<crate::computer::Step, String>> {
         Some(crate::jev_computer::decide(
-            self,
+            &|body| self.send(body),
+            MODEL,
             goal,
             app,
             observation,
@@ -48,19 +49,30 @@ impl Planner for Jev {
     }
 
     fn plan(&self, text: &str, smart: bool) -> Result<Reply, String> {
-        let options = candidates(text);
-        if options.is_empty() {
-            return if smart {
-                Ok(Reply::Dictation)
-            } else {
-                Err("No supported X action could be extracted. Nothing was run.".into())
-            };
-        }
-
-        let request = request(text, &options);
-        let answer = self.send(&request)?;
-        select(&answer, &options, smart)
+        plan_with(&|body| self.send(body), MODEL, text, smart)
     }
+}
+
+/// Shared, non-generative choice router used by Jev and the free Decider models.
+pub(crate) fn plan_with(
+    send: &dyn Fn(&Value) -> Result<Value, String>,
+    model: &str,
+    text: &str,
+    smart: bool,
+) -> Result<Reply, String> {
+    let options = candidates(text);
+    if options.is_empty() {
+        return if smart {
+            Ok(Reply::Dictation)
+        } else {
+            Err("No supported X action could be extracted. Nothing was run.".into())
+        };
+    }
+
+    let mut request = request(text, &options);
+    request["model"] = json!(model);
+    let answer = send(&request)?;
+    select(&answer, &options, smart)
 }
 
 impl Jev {
@@ -88,14 +100,20 @@ impl Jev {
     }
 
     pub(crate) fn send(&self, request: &Value) -> Result<Value, String> {
+        send_with(ENDPOINT, &self.key()?, request)
+    }
+}
+
+/// Fixed-endpoint Decisions API transport; credentials and payload never reach argv.
+pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Value, String> {
         // Curl configuration (including bearer credential and the payload) is
         // handed over stdin rather than command-line args. Only the fixed
         // OpenCode HTTPS endpoint is reachable from this integration.
         let config = format!(
-            "url = \"{ENDPOINT}\"\nheader = \"Authorization: Bearer {}\"\n\
+            "url = \"{endpoint}\"\nheader = \"Authorization: Bearer {}\"\n\
              header = \"Content-Type: application/json\"\n\
              data-binary = {}\n",
-            self.key()?,
+            key,
             quote(&request.to_string()),
         );
         let mut child = Command::new("curl")
@@ -145,8 +163,7 @@ impl Jev {
                 status.trim()
             ));
         }
-        serde_json::from_str(body).map_err(|_| "Jev response was not JSON".into())
-    }
+        serde_json::from_str(body).map_err(|_| "Decision response was not JSON".into())
 }
 
 fn quote(value: &str) -> String {
