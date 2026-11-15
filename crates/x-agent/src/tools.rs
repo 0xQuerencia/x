@@ -179,13 +179,33 @@ impl Action {
             Self::Workspace { number } => format!("Go to workspace {number}"),
             Self::Window { op, target, ws } => {
                 let who = if target.app.is_empty() {
-                    "this window"
+                    "the focused window".to_string()
+                } else if let Some(pick) = target.pick {
+                    format!("{} window #{pick}", target.app)
                 } else {
-                    &target.app
+                    format!("the {} window", target.app)
                 };
-                match ws {
-                    Some(ws) => format!("{op:?} {who} ({ws:?})"),
-                    None => format!("{op:?} {who}"),
+                let destination = |ws: &crate::wm::Ws| match ws {
+                    crate::wm::Ws::N(number) => format!("workspace {number}"),
+                    crate::wm::Ws::Next => "the next workspace".to_string(),
+                    crate::wm::Ws::Prev => "the previous workspace".to_string(),
+                };
+                match op {
+                    crate::wm::Op::Focus => format!("Focus {who}"),
+                    crate::wm::Op::Back => "Focus the previous window".to_string(),
+                    crate::wm::Op::Move => match ws {
+                        Some(ws) => format!("Move {who} to {}", destination(ws)),
+                        None => format!("Move {who} (destination missing)"),
+                    },
+                    crate::wm::Op::Workspace => match ws {
+                        Some(ws) => format!("Switch to {}", destination(ws)),
+                        None => "Switch workspace (destination missing)".to_string(),
+                    },
+                    crate::wm::Op::Maximize => format!("Maximize {who}"),
+                    crate::wm::Op::Minimize => format!("Minimize {who}"),
+                    crate::wm::Op::Close => format!("Close {who}"),
+                    crate::wm::Op::List => "List open windows".to_string(),
+                    crate::wm::Op::Undo => "Undo the previous window change".to_string(),
                 }
             }
             Self::Session { goal } => format!("Start a temporary OpenCode session: {goal}"),
