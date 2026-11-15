@@ -239,8 +239,9 @@ impl Action {
                 }
             }
             Self::Window { op, target, ws } => {
-                if !target.app.is_empty() {
-                    lookup(APPS, &target.app).ok_or("Unapproved app")?;
+                // A name or role such as "browser", matched only against open windows.
+                if target.app.chars().count() > 64 || target.app.chars().any(char::is_control) {
+                    return Err("That window name is not valid".into());
                 }
                 if matches!(op, crate::wm::Op::Move | crate::wm::Op::Workspace) {
                     match ws {
