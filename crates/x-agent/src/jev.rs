@@ -137,7 +137,7 @@ pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Va
     let sent = child
         .stdin
         .take()
-        .ok_or("Could not open Jev request input")?
+        .ok_or("Could not open decision request input")?
         .write_all(config.as_bytes());
     if sent.is_err() {
         let _ = child.kill();
@@ -467,20 +467,20 @@ fn request(utterance: &str, actions: &[Action]) -> Value {
 fn select(answer: &Value, actions: &[Action], smart: bool) -> Result<Reply, String> {
     let route = answer
         .pointer("/answers/route")
-        .ok_or("Jev supplied no route decision")?;
+        .ok_or("The decision model supplied no route decision")?;
     let label = route
         .get("choice")
         .and_then(Value::as_str)
-        .ok_or("Jev supplied no route label")?;
+        .ok_or("The decision model supplied no route label")?;
     let probabilities = route
         .get("probabilities")
         .and_then(Value::as_object)
-        .ok_or("Jev supplied no choice probabilities")?;
+        .ok_or("The decision model supplied no choice probabilities")?;
     let confidence = probabilities
         .get(label)
         .and_then(Value::as_f64)
         .filter(|p| p.is_finite() && (0.0..=1.0).contains(p))
-        .ok_or("Jev returned an invalid choice probability")?;
+        .ok_or("The decision model returned an invalid choice probability")?;
     let runner_up = probabilities
         .iter()
         .filter(|(name, _)| name.as_str() != label)
@@ -491,29 +491,31 @@ fn select(answer: &Value, actions: &[Action], smart: bool) -> Result<Reply, Stri
         .pointer("/answers/is_command/noul")
         .and_then(Value::as_f64)
         .filter(|p| p.is_finite() && (0.0..=1.0).contains(p))
-        .ok_or("Jev supplied no valid command probability")?;
+        .ok_or("The decision model supplied no valid command probability")?;
 
     if label == "dictation" && smart {
         return Ok(Reply::Dictation);
     }
     if label == "unsupported" || label == "dictation" {
-        return Err("Jev did not find a supported X command. Nothing was run.".into());
+        return Err(
+            "The decision model did not find a supported X command. Nothing was run.".into(),
+        );
     }
 
     if confidence < MIN_CONFIDENCE || confidence - runner_up < MIN_MARGIN || intent < MIN_INTENT {
         return if smart {
             Ok(Reply::Dictation)
         } else {
-            Err("Jev was unsure which action you meant. Nothing was run.".into())
+            Err("The decision model was unsure which action you meant. Nothing was run.".into())
         };
     }
     let i = label
         .strip_prefix('a')
         .and_then(|s| s.parse::<usize>().ok())
-        .ok_or("Jev returned an unrecognized action label")?;
+        .ok_or("The decision model returned an unrecognized action label")?;
     let action = actions
         .get(i)
-        .ok_or("Jev returned an action that was never offered")?
+        .ok_or("The decision model returned an action that was never offered")?
         .clone()
         .validate()?;
     Ok(Reply::Steps(vec![action]))
