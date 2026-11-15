@@ -133,7 +133,7 @@ pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Va
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|_| "curl is required to reach Jev".to_string())?;
+        .map_err(|_| "curl is required to reach the decision provider".to_string())?;
     let sent = child
         .stdin
         .take()
@@ -142,24 +142,24 @@ pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Va
     if sent.is_err() {
         let _ = child.kill();
         let _ = child.wait();
-        return Err("Could not send the Jev request".into());
+        return Err("Could not send the decision request".into());
     }
     let output = child
         .wait_with_output()
-        .map_err(|_| "Could not finish the Jev request")?;
+        .map_err(|_| "Could not finish the decision request")?;
     if !output.status.success() {
-        return Err("Jev request failed or timed out. Nothing was run.".into());
+        return Err("Decision request failed or timed out. Nothing was run.".into());
     }
     if output.stdout.len() > 64 * 1024 {
-        return Err("Jev response exceeded the size limit".into());
+        return Err("Decision response exceeded the size limit".into());
     }
-    let wire = std::str::from_utf8(&output.stdout).map_err(|_| "Jev response was not UTF-8")?;
+    let wire = std::str::from_utf8(&output.stdout).map_err(|_| "Decision response was not UTF-8")?;
     let (body, status) = wire
         .rsplit_once('\n')
-        .ok_or("Jev response had no HTTP status")?;
+        .ok_or("Decision response had no HTTP status")?;
     if status.trim() != "200" {
         return Err(format!(
-            "Jev returned HTTP {}. No fallback model was called and nothing was run.",
+            "Decision provider returned HTTP {}. No fallback model was called and nothing was run.",
             status.trim()
         ));
     }
@@ -454,6 +454,10 @@ fn request(utterance: &str, actions: &[Action]) -> Value {
                 "type": "noul",
                 "instructions": "Is the speaker explicitly instructing a desktop assistant \
                  to perform a computer action now, rather than speaking plain dictation?",
+                "criteria": {
+                    "true": "An explicit instruction to perform a supported computer action now",
+                    "false": "Plain dictation, a question, or another unsupported goal",
+                },
             },
         },
     })
