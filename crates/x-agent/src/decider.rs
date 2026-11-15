@@ -101,7 +101,7 @@ impl Decider {
         let mut body = request.clone();
         let state = std::mem::take(&mut body["state"]);
         body["state"] = serde_json::json!([
-            state,
+            state.to_string(),
             { "type": "image_url", "image_url": { "url": uri } }
         ]);
         self.send(&body)
