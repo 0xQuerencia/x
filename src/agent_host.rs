@@ -111,6 +111,7 @@ fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
             key_file: crate::app_paths::support_dir()
                 .ok()
                 .map(|dir| dir.join("openrouter-key")),
+            vision_file: computer_vision_file(),
         });
     }
     if let Some(name) = model
@@ -281,6 +282,12 @@ fn computer_remote_file() -> Option<PathBuf> {
         .map(|dir| dir.join("x-computer-remote"))
 }
 
+fn computer_vision_file() -> Option<PathBuf> {
+    crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("x-computer-vision"))
+}
+
 fn approval_audit_file() -> Option<PathBuf> {
     crate::app_paths::support_dir()
         .ok()
@@ -300,14 +307,20 @@ fn load_computer_apps() -> Vec<String> {
 
 fn computer_summary(apps: &[String]) -> String {
     let remote = computer_remote_file().is_some_and(|path| path.is_file());
+    let vision = computer_vision_file().is_some_and(|path| path.is_file());
     format!(
-        "Screen access: {}. On-screen text may go to remote models: {}",
+        "Screen access: {}. Remote text: {}. Remote screenshot pixels: {}",
         if apps.is_empty() {
             "none granted".to_string()
         } else {
             apps.join(", ")
         },
-        if remote { "yes" } else { "no" }
+        if remote { "yes" } else { "no" },
+        if remote && vision {
+            "yes (opted in)"
+        } else {
+            "off"
+        }
     )
 }
 
@@ -330,6 +343,16 @@ fn computer_access(command: &str, value: &str) -> ControlReply {
             service().set_computer_remote(value == "on");
             saved
         }
+        "vision" if matches!(value, "on" | "off") => {
+            let Some(path) = computer_vision_file() else {
+                return ControlReply::error("failed", "the data folder is unavailable");
+            };
+            if value == "on" {
+                write_private(&path, b"1")
+            } else {
+                std::fs::remove_file(&path).or_else(ignore_missing)
+            }
+        }
         "grant" | "revoke" => {
             if !x_agent::tools::APPS.iter().any(|(name, _)| *name == value) {
                 return ControlReply::error("usage", "give an app such as chrome or firefox");
@@ -341,7 +364,12 @@ fn computer_access(command: &str, value: &str) -> ControlReply {
             service().set_computer_apps(apps.clone());
             write_private(&apps_path, apps.join("\n").as_bytes())
         }
-        _ => return ControlReply::error("usage", "grant|revoke <app>, list, or remote on|off"),
+        _ => {
+            return ControlReply::error(
+                "usage",
+                "grant|revoke <app>, list, remote on|off, or vision on|off",
+            );
+        }
     };
     match result {
         Ok(()) => ControlReply::done(computer_summary(&load_computer_apps())),

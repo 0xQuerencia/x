@@ -484,7 +484,7 @@ pub enum AgentCommand {
     /// and click and type in them; `revoke` takes it back; `list` shows both; `remote on`
     /// allows on-screen text to be sent to a model that is not on this machine (default off).
     Computer {
-        #[arg(value_parser = ["grant", "revoke", "list", "remote"])]
+        #[arg(value_parser = ["grant", "revoke", "list", "remote", "vision"])]
         command: String,
         /// An app name for grant and revoke, `on` or `off` for remote.
         #[arg(default_value = "")]
@@ -499,6 +499,15 @@ pub enum AgentCommand {
         model: String,
         #[command(flatten)]
         output: Output,
+    },
+    /// Locally capture a Wayland screen, focused window or selected region.
+    /// Captures are never uploaded. Existing output files are never overwritten.
+    Screenshot {
+        #[arg(default_value = "screen", value_parser = ["screen", "window", "region"])]
+        mode: String,
+        /// Optional destination PNG path (default: a new file in Pictures).
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
     },
     /// The project folder Work runs in (never `/` or your home directory).
     Workspace {
@@ -662,6 +671,25 @@ pub fn run(command: ControlCli) -> u8 {
             command => offline_model(command),
         },
         ControlCli::Agent { command } => {
+            if let AgentCommand::Screenshot { mode, output } = &command {
+                let mode = match x_agent::screenshots::Mode::parse(mode) {
+                    Ok(mode) => mode,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        return EXIT_REFUSED;
+                    }
+                };
+                return match x_agent::screenshots::save(mode, output.as_deref()) {
+                    Ok(path) => {
+                        println!("{}", path.display());
+                        0
+                    }
+                    Err(error) => {
+                        eprintln!("{error}");
+                        EXIT_REFUSED
+                    }
+                };
+            }
             let (action, output) = match command {
                 AgentCommand::Status { since, output } => (AgentAction::Status { since }, output),
                 AgentCommand::Toggle { mode, output } => (AgentAction::Toggle { mode }, output),
@@ -692,6 +720,7 @@ pub fn run(command: ControlCli) -> u8 {
                     output,
                 } => (AgentAction::Computer { command, value }, output),
                 AgentCommand::Planner { model, output } => (AgentAction::Planner { model }, output),
+                AgentCommand::Screenshot { .. } => unreachable!("handled locally above"),
                 AgentCommand::Allow { index, output } => (AgentAction::Allow { index }, output),
                 AgentCommand::Voice { mode, output } => (AgentAction::Voice { mode }, output),
                 AgentCommand::Listen { mode, output } => (AgentAction::Listen { mode }, output),

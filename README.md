@@ -84,6 +84,8 @@ x agent stop                       # Stop the current task
 
 Basic launches don't need a model provider. **Work** needs an installed and configured [OpenCode](https://opencode.ai). Chrome and Chromium need `--force-renderer-accessibility` for browser control.
 
+For local Wayland screenshots, install `grim` and `slurp`, then run `x agent screenshot screen`, `x agent screenshot window`, or `x agent screenshot region`. Remote screenshot reasoning additionally requires `x agent computer remote on` and `x agent computer vision on`; both are separate opt-ins.
+
 For the familiar keyboard flow, bind `x dictation toggle` in your desktop's shortcut settings. **Ctrl+Space** works if nothing else has claimed it.
 
 ## Context, voice editing and workflows
