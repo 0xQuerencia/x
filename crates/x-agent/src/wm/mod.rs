@@ -6,6 +6,7 @@
 pub mod apps;
 mod hypr;
 mod i3;
+pub mod keys;
 pub mod parse;
 mod report;
 
@@ -151,6 +152,8 @@ pub enum Op {
     Close,
     List,
     Undo,
+    /// Questions about the person's own keyboard shortcuts; the question is in `target.app`.
+    Keys,
 }
 
 /// A workspace by number, or relative to the current one.
@@ -219,6 +222,7 @@ impl Undo {
 pub struct Controller {
     backend: Box<dyn Backend>,
     catalog: fn() -> Vec<apps::Entry>,
+    binds: fn() -> Vec<keys::Bind>,
     history: VecDeque<(Instant, Undo)>,
     seen: Option<WinInfo>,
     previous: Option<WinInfo>,
@@ -229,6 +233,7 @@ impl Controller {
         Self {
             backend,
             catalog: apps::load,
+            binds: keys::load,
             history: VecDeque::new(),
             seen: None,
             previous: None,
@@ -239,6 +244,12 @@ impl Controller {
     #[cfg(test)]
     fn with_catalog(mut self, catalog: fn() -> Vec<apps::Entry>) -> Self {
         self.catalog = catalog;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_binds(mut self, binds: fn() -> Vec<keys::Bind>) -> Self {
+        self.binds = binds;
         self
     }
 
@@ -304,6 +315,10 @@ impl Controller {
         self.note_focus(focused.as_ref());
         match req.op {
             Op::List => Ok(list(&all)),
+            Op::Keys => Ok(Outcome {
+                message: keys::answer(&(self.binds)(), &req.target.app),
+                undoable: false,
+            }),
             Op::Undo => self.undo(&all),
             Op::Workspace => {
                 let ws = self.target_ws(req.ws.as_ref())?;
@@ -332,7 +347,9 @@ impl Controller {
             }
             Op::Close => {
                 let win = self.resolve(&req.target, &all, focused.as_ref())?;
-                self.close(&win)
+                let mut out = self.close(&win)?;
+                out.message.push_str(&keys::hint("close", &(self.binds)()));
+                Ok(out)
             }
         }
     }

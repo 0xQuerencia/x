@@ -49,6 +49,13 @@ fn catalog() -> Vec<apps::Entry> {
     .collect()
 }
 
+fn binds() -> Vec<keys::Bind> {
+    vec![keys::Bind {
+        combo: "SUPER+Q".into(),
+        action: "window kill".into(),
+    }]
+}
+
 fn p(text: &str) -> Option<Request> {
     parse::parse_with(text, &catalog())
 }
@@ -132,7 +139,9 @@ fn setup() -> (Controller, Fake) {
         win("0x3", "firefox", "Mail", 2),
     ]);
     (
-        Controller::new(Box::new(fake.clone())).with_catalog(catalog),
+        Controller::new(Box::new(fake.clone()))
+            .with_catalog(catalog)
+            .with_binds(binds),
         fake,
     )
 }
@@ -446,4 +455,36 @@ fn the_app_means_the_focused_window() {
 fn a_name_nothing_answers_to_is_left_to_other_planners() {
     assert!(p("focus spotify").is_none());
     assert!(p("close the universe").is_none());
+}
+
+#[test]
+fn closing_names_the_persons_own_shortcut() {
+    let (mut c, _fake) = setup();
+    let out = ask(&mut c, "close the app").unwrap();
+    assert!(
+        out.message.ends_with("(your shortcut: SUPER + Q)"),
+        "{}",
+        out.message
+    );
+}
+
+#[test]
+fn shortcut_questions_are_answered_from_the_persons_config() {
+    let (mut c, fake) = setup();
+    let out = ask(&mut c, "what does super plus q do").unwrap();
+    assert!(out.message.contains("SUPER + Q") && out.message.contains("window kill"));
+    let out = ask(&mut c, "which key closes a window").unwrap();
+    assert!(out.message.contains("SUPER + Q"));
+    assert!(!out.undoable);
+    assert!(
+        ask(&mut c, "show my shortcuts")
+            .unwrap()
+            .message
+            .contains("1 shortcuts")
+    );
+    assert!(
+        fake.0.lock().unwrap().log.is_empty(),
+        "questions never touch a window"
+    );
+    assert!(p("what does this do").is_none());
 }

@@ -205,6 +205,7 @@ impl Action {
                     crate::wm::Op::Minimize => format!("Minimize {who}"),
                     crate::wm::Op::Close => format!("Close {who}"),
                     crate::wm::Op::List => "List open windows".to_string(),
+                    crate::wm::Op::Keys => "Look up your keyboard shortcuts".to_string(),
                     crate::wm::Op::Undo => "Undo the previous window change".to_string(),
                 }
             }

@@ -53,6 +53,51 @@ fn workspace(words: &str) -> Option<Ws> {
     }
 }
 
+/// A question about the person's shortcuts, as the words to look up (empty lists them).
+fn keys_question(text: &str) -> Option<String> {
+    const LIST: [&str; 8] = [
+        "what are my keybinds",
+        "what are my shortcuts",
+        "what are my keyboard shortcuts",
+        "list my keybinds",
+        "list my shortcuts",
+        "show my keybinds",
+        "show my shortcuts",
+        "show my keyboard shortcuts",
+    ];
+    if LIST.contains(&text) {
+        return Some(String::new());
+    }
+    for lead in [
+        "what is the shortcut for",
+        "what's the shortcut for",
+        "what is the keybind for",
+        "what's the keybind for",
+        "what is the shortcut to",
+        "what key",
+        "which key",
+        "which shortcut",
+        "what shortcut",
+    ] {
+        if let Some(rest) = text
+            .strip_prefix(lead)
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+        {
+            return Some(rest.to_string());
+        }
+    }
+    // "what does super plus q do": only when the words really are a key combination.
+    let rest = text.strip_prefix("what does ")?;
+    let rest = rest
+        .strip_suffix(" do")
+        .unwrap_or(rest)
+        .replace(" plus ", "+");
+    super::keys::canonical(&rest)
+        .filter(|c| c.contains('+'))
+        .map(|_| rest)
+}
+
 fn prefixed<'a>(text: &'a str, prefixes: &[&str]) -> Option<&'a str> {
     prefixes
         .iter()
@@ -99,6 +144,16 @@ pub fn parse_with(text: &str, entries: &[Entry]) -> Option<Request> {
         | "previous window"
         | "last window" => return req(Op::Back, Target::default(), None),
         _ => {}
+    }
+    if let Some(query) = keys_question(text) {
+        return req(
+            Op::Keys,
+            Target {
+                app: query,
+                pick: None,
+            },
+            None,
+        );
     }
     if let Some(rest) = prefixed(text, &["move", "send"]) {
         let (who, to) = rest.split_once(" to ")?;
