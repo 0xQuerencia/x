@@ -320,7 +320,7 @@ pub fn run(
 }
 
 /// Drive the same desktop verification loop with typed decisions rather than
-/// text-generating chat completions. Jev uses this; all safety guards remain
+/// text-generating chat completions. The Decider uses this; all safety guards remain
 /// inside the executor below.
 type DecisionFn<'a> = dyn Fn(&str, &str, &Observation, &[String]) -> Result<Step, String> + 'a;
 

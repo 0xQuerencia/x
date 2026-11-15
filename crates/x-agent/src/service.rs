@@ -153,7 +153,7 @@ pub trait Planner: Send + Sync {
         false
     }
 
-    /// Typed, choice-only computer decisions: Jev can operate the existing
+    /// Typed, choice-only computer decisions: the Decider can operate the existing
     /// accessibility loop without returning generative JSON commands.
     /// Other planners continue using their existing completion path.
     fn decide_computer(

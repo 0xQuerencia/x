@@ -60,7 +60,7 @@ impl Decider {
     }
 
     fn send(&self, request: &Value) -> Result<Value, String> {
-        crate::jev::send_with(ENDPOINT, &self.key()?, request)
+        crate::decision::send_with(ENDPOINT, &self.key()?, request)
     }
 
     fn wants_image(
@@ -114,7 +114,7 @@ impl Planner for Decider {
     }
 
     fn plan(&self, text: &str, smart: bool) -> Result<Reply, String> {
-        crate::jev::plan_with(&|body| self.send(body), self.model.id(), text, smart)
+        crate::decision::plan_with(&|body| self.send(body), self.model.id(), text, smart)
     }
 
     fn decide_computer(
@@ -125,7 +125,7 @@ impl Planner for Decider {
         history: &[String],
     ) -> Option<Result<crate::computer::Step, String>> {
         let image = self.wants_image(goal, observation, history);
-        Some(crate::jev_computer::decide(
+        Some(crate::decision_computer::decide(
             &|body| {
                 if image {
                     self.send_visual(body, app, &observation.title)
