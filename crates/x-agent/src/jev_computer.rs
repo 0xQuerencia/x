@@ -15,7 +15,6 @@ use serde_json::{Value, json};
 
 use crate::computer::Step;
 use crate::desktop::{Element, Observation};
-use crate::jev::Jev;
 use crate::tools;
 
 const MAX_CONTROLS: usize = 90;
@@ -427,15 +426,17 @@ fn select(reply: &Value, goal: &str, o: &Offers) -> Result<Step, String> {
 /// The complete model decision for one observation. The already authorized
 /// browser/accessibility task controls which window X can observe.
 pub fn decide(
-    jev: &Jev,
+    send: &dyn Fn(&Value) -> Result<Value, String>,
+    model: &str,
     goal: &str,
     app: &str,
     obs: &Observation,
     history: &[String],
 ) -> Result<Step, String> {
     let o = offers(goal, app, obs, history);
-    let body = request(goal, app, obs, history, &o);
-    let reply = jev.send(&body)?;
+    let mut body = request(goal, app, obs, history, &o);
+    body["model"] = json!(model);
+    let reply = send(&body)?;
     select(&reply, goal, &o)
 }
 

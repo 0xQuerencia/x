@@ -439,3 +439,30 @@ Native Linux process-control tests should run only on an isolated test session.
 
 Code: `crates/x-agent` (logic and tests), `src/x_agent.rs` (Hex glue),
 `src/rune_ui/agent.rs` (pane), `hex agent` in `src/control/cli.rs`.
+
+
+### Free Perplexity Decider provider (OpenRouter)
+
+Select `hex agent planner decider-flash` for Perplexity Decider Flash V1.3
+(`perplexity/pplx-decider-flash-v1.3:free`), or `hex agent planner decider`
+for full Decider V1.3 (`perplexity/pplx-decider-v1.3:free`).
+Both use **OpenRouter's Decisions API**, not chat completions, and make
+choice-only decisions over X's same locally validated action candidates.
+Existing deterministic commands bypass remote models.
+
+Set `OPENROUTER_API_KEY` in the **running X service environment**, or save
+the key in the private `openrouter-key` file in X's application data folder.
+Do not commit or print the key. Free endpoints have rate limits; on 401, 429,
+or model failure, X refuses the remote step without a paid-model fallback.
+
+```sh
+hex agent planner decider-flash
+hex agent say --mode actions "Bring Firefox to the front"
+hex agent planner decider
+hex agent say --mode actions "Bring Firefox to the front"
+hex agent planner jev  # restore legacy Jev
+```
+
+This integration uses text and the accessibility tree for decision context.
+Screenshot support is a separate opt-in capability; it is never collected
+automatically by basic command routing.
