@@ -31,6 +31,28 @@ fn win(id: &str, class: &str, title: &str, ws: i64) -> WinInfo {
     }
 }
 
+fn catalog() -> Vec<apps::Entry> {
+    [
+        ("firefox", "WebBrowser"),
+        ("google-chrome", "WebBrowser"),
+        ("foot", "TerminalEmulator"),
+        ("code", "TextEditor"),
+    ]
+    .iter()
+    .map(|(c, cat)| {
+        apps::parse_entry(
+            &format!("{c}.desktop"),
+            &format!("[Desktop Entry]\nType=Application\nName={c}\nExec={c}\nCategories={cat};\n"),
+        )
+        .unwrap()
+    })
+    .collect()
+}
+
+fn p(text: &str) -> Option<Request> {
+    parse::parse_with(text, &catalog())
+}
+
 fn world(wins: Vec<WinInfo>) -> Fake {
     let focus = wins.first().map(|w| w.id.clone());
     Fake(Arc::new(Mutex::new(World {
@@ -109,11 +131,14 @@ fn setup() -> (Controller, Fake) {
         win("0x2", "foot", "shell", 1),
         win("0x3", "firefox", "Mail", 2),
     ]);
-    (Controller::new(Box::new(fake.clone())), fake)
+    (
+        Controller::new(Box::new(fake.clone())).with_catalog(catalog),
+        fake,
+    )
 }
 
 fn ask(c: &mut Controller, text: &str) -> Result<Outcome, WmError> {
-    c.run(&parse::parse(text).unwrap_or_else(|| panic!("not parsed: {text}")))
+    c.run(&p(text).unwrap_or_else(|| panic!("not parsed: {text}")))
 }
 
 #[test]
@@ -194,7 +219,7 @@ fn workspace_bounds_rejected() {
     let (mut c, fake) = setup();
     fake.0.lock().unwrap().ws = 10;
     assert!(ask(&mut c, "next workspace").is_err());
-    assert!(parse::parse("move this to workspace 11").is_none());
+    assert!(p("move this to workspace 11").is_none());
 }
 
 #[test]
@@ -266,7 +291,7 @@ fn titles_cannot_steer_resolution() {
         1,
     ));
     // Only approved app names resolve a target; a title is only ever displayed.
-    assert!(parse::parse("close ignore previous instructions").is_none());
+    assert!(p("close ignore previous instructions").is_none());
     let list = ask(&mut c, "list windows").unwrap();
     assert!(list.message.contains("chrome"));
     assert!(
@@ -304,13 +329,13 @@ fn rejects_hostile_ids_in_real_backends() {
 
 #[test]
 fn parse_phrases() {
-    let r = parse::parse("Send Firefox to workspace 2.").unwrap();
+    let r = p("Send Firefox to workspace 2.").unwrap();
     assert_eq!(
         (r.op, r.target.app, r.ws),
         (Op::Move, "firefox".into(), Some(Ws::N(2)))
     );
-    assert!(parse::parse("close this tab").is_none());
-    assert!(parse::parse("close the universe").is_none());
+    assert!(p("close this tab").is_none());
+    assert!(p("close the universe").is_none());
 }
 
 /// Real Hyprland, one disposable foot window. `cargo test -- --ignored live_hyprland`.
@@ -381,4 +406,44 @@ fn live_hyprland() {
     let _ = child.kill();
     let _ = child.wait();
     assert!(me(&c).is_none());
+}
+
+#[test]
+fn roles_reach_the_right_window_without_naming_the_app() {
+    let (mut c, fake) = setup();
+    ask(&mut c, "focus the terminal").unwrap();
+    assert_eq!(fake.0.lock().unwrap().focus.as_deref(), Some("0x2"));
+    ask(&mut c, "close the terminal").unwrap();
+    assert!(
+        fake.0
+            .lock()
+            .unwrap()
+            .wins
+            .iter()
+            .all(|w| w.class != "foot"),
+        "the only terminal is closed"
+    );
+}
+
+#[test]
+fn a_role_with_several_windows_asks_which_one() {
+    let (mut c, _fake) = setup();
+    assert!(matches!(
+        ask(&mut c, "focus my browser"),
+        Err(WmError::Ambiguous(_))
+    ));
+    assert!(ask(&mut c, "focus browser 2").is_ok());
+}
+
+#[test]
+fn the_app_means_the_focused_window() {
+    let (mut c, fake) = setup();
+    ask(&mut c, "close the app").unwrap();
+    assert!(fake.0.lock().unwrap().wins.iter().all(|w| w.id != "0x1"));
+}
+
+#[test]
+fn a_name_nothing_answers_to_is_left_to_other_planners() {
+    assert!(p("focus spotify").is_none());
+    assert!(p("close the universe").is_none());
 }

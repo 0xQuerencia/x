@@ -12,7 +12,7 @@ use crate::wm::{self, Cap, WinInfo};
 
 fn windows_of(host: &dyn Host, app: &str) -> Result<Vec<WinInfo>, String> {
     let all = host.windows()?;
-    let mut found = wm::matching(app, &all).map_err(|e| e.to_string())?;
+    let mut found = wm::matching(app, &all, &wm::apps::load()).map_err(|e| e.to_string())?;
     found.sort_by(|a, b| (a.workspace, &a.id).cmp(&(b.workspace, &b.id)));
     Ok(found)
 }

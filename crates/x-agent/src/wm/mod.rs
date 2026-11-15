@@ -3,6 +3,7 @@
 //! remembers a short, bounded undo history. Window titles are untrusted data and never
 //! become commands: backends only ever receive ids that came from their own window list.
 
+pub mod apps;
 mod hypr;
 mod i3;
 pub mod parse;
@@ -217,6 +218,7 @@ impl Undo {
 
 pub struct Controller {
     backend: Box<dyn Backend>,
+    catalog: fn() -> Vec<apps::Entry>,
     history: VecDeque<(Instant, Undo)>,
     seen: Option<WinInfo>,
     previous: Option<WinInfo>,
@@ -226,10 +228,18 @@ impl Controller {
     pub fn new(backend: Box<dyn Backend>) -> Self {
         Self {
             backend,
+            catalog: apps::load,
             history: VecDeque::new(),
             seen: None,
             previous: None,
         }
+    }
+
+    /// Replaces where installed apps come from, so tests need no real desktop.
+    #[cfg(test)]
+    fn with_catalog(mut self, catalog: fn() -> Vec<apps::Entry>) -> Self {
+        self.catalog = catalog;
+        self
     }
 
     pub fn backend_name(&self) -> &'static str {
@@ -382,10 +392,13 @@ impl Controller {
                 .cloned()
                 .ok_or_else(|| WmError::NotFound("No window has focus".into()));
         }
-        let mut found = matching(&target.app, all)?;
+        let mut found = matching(&target.app, all, &(self.catalog)())?;
         found.sort_by(|a, b| (a.workspace, &a.id).cmp(&(b.workspace, &b.id)));
         match (found.len(), target.pick) {
-            (0, _) => Err(WmError::NotFound(format!("No open {} window", target.app))),
+            (0, _) => Err(WmError::NotFound(format!(
+                "No open window matches \"{}\"",
+                label_text(&target.app)
+            ))),
             (1, _) => Ok(found.remove(0)),
             (n, Some(p)) if (1..=n).contains(&usize::from(p)) => {
                 Ok(found.remove(usize::from(p) - 1))
@@ -637,6 +650,11 @@ fn done(message: String, undoable: bool) -> Outcome {
 }
 
 /// App name plus a clipped, control-free title: safe to show, never parsed.
+/// Words a person said, safe to show: no control characters, clipped.
+fn label_text(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(40).collect()
+}
+
 pub fn label(w: &WinInfo) -> String {
     let title: String = w
         .title
@@ -660,18 +678,17 @@ fn list(all: &[WinInfo]) -> Outcome {
     done(lines.join("; "), false)
 }
 
-/// Windows whose class belongs to an approved app alias.
-pub(crate) fn matching(app: &str, all: &[WinInfo]) -> Result<Vec<WinInfo>, WmError> {
-    let names = crate::tools::app_classes(app)
-        .ok_or_else(|| WmError::NotFound(format!("{app} is not an approved app")))?;
+/// Windows whose class belongs to what `app` names: an installed app, a role such as
+/// "browser", or a class that is open right now.
+pub(crate) fn matching(
+    app: &str,
+    all: &[WinInfo],
+    entries: &[apps::Entry],
+) -> Result<Vec<WinInfo>, WmError> {
+    let classes = apps::evidence(app, entries);
     Ok(all
         .iter()
-        .filter(|w| {
-            let class = w.class.to_ascii_lowercase();
-            names
-                .iter()
-                .any(|n| class.contains(&n.to_ascii_lowercase()))
-        })
+        .filter(|w| apps::class_matches(&w.class, app, &classes))
         .cloned()
         .collect())
 }

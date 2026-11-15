@@ -1,37 +1,39 @@
 //! Deterministic phrases for window commands. Anything not matched here falls through to
 //! the other planners; nothing is guessed.
 
+use super::apps::{self, Entry};
 use super::{Op, Request, Target, Ws};
-use crate::tools::resolve_app;
 
-const THIS: [&str; 5] = [
+const THIS: [&str; 10] = [
     "this",
+    "app",
+    "window",
+    "application",
+    "this app",
+    "this application",
     "this window",
     "it",
     "current window",
     "the current window",
 ];
 
-fn target(words: &str) -> Option<Target> {
-    let words = words
-        .trim()
-        .trim_start_matches("the ")
-        .trim_start_matches("my ")
-        .trim();
-    if THIS.contains(&words) {
+fn target(words: &str, entries: &[Entry]) -> Option<Target> {
+    let words = words.trim();
+    if THIS.contains(&words.trim_start_matches("the ").trim()) {
         return Some(Target::default());
     }
-    if let Some(app) = resolve_app(words) {
+    let named = apps::normalize(words);
+    if apps::known(&named, entries) {
         return Some(Target {
-            app: app.into(),
+            app: named,
             pick: None,
         });
     }
     // "firefox 2": the second Firefox window.
-    let (name, n) = words.rsplit_once(' ')?;
+    let (name, n) = named.rsplit_once(' ')?;
     let pick = n.parse::<u8>().ok().filter(|n| *n >= 1)?;
-    Some(Target {
-        app: resolve_app(name.trim())?.into(),
+    apps::known(name, entries).then(|| Target {
+        app: name.trim().to_string(),
         pick: Some(pick),
     })
 }
@@ -62,6 +64,11 @@ fn req(op: Op, target: Target, ws: Option<Ws>) -> Option<Request> {
 }
 
 pub fn parse(text: &str) -> Option<Request> {
+    parse_with(text, &apps::load())
+}
+
+/// [`parse`] against a given set of installed apps.
+pub fn parse_with(text: &str, entries: &[Entry]) -> Option<Request> {
     let text = text
         .trim()
         .trim_end_matches(['.', '!', '?', ' '])
@@ -95,13 +102,16 @@ pub fn parse(text: &str) -> Option<Request> {
     }
     if let Some(rest) = prefixed(text, &["move", "send"]) {
         let (who, to) = rest.split_once(" to ")?;
-        return req(Op::Move, target(who)?, Some(workspace(to)?));
+        return req(Op::Move, target(who, entries)?, Some(workspace(to)?));
     }
     if let Some(rest) = prefixed(text, &["switch to", "go to", "focus"]) {
         if let Some(ws) = workspace(rest).filter(|_| rest.starts_with("workspace")) {
             return req(Op::Workspace, Target::default(), Some(ws));
         }
-        return req(Op::Focus, target(rest)?, None);
+        if rest.starts_with("workspace") {
+            return None; // a bad workspace number is never an app called "workspace"
+        }
+        return req(Op::Focus, target(rest, entries)?, None);
     }
     for (verb, op) in [
         ("minimize", Op::Minimize),
@@ -109,7 +119,7 @@ pub fn parse(text: &str) -> Option<Request> {
         ("close", Op::Close),
     ] {
         if let Some(rest) = prefixed(text, &[verb]) {
-            return req(op, target(rest)?, None);
+            return req(op, target(rest, entries)?, None);
         }
     }
     None
