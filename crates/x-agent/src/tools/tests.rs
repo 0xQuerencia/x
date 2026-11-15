@@ -261,3 +261,53 @@ fn computer_access_is_limited_to_supported_non_terminal_apps() {
         );
     }
 }
+
+#[test]
+fn window_descriptions_are_human_readable_and_preserve_the_target() {
+    use crate::wm::{Op, Target, Ws};
+
+    let named = Target {
+        app: "firefox".to_string(),
+        pick: Some(2),
+    };
+    let show = |op, target, ws| Action::Window { op, target, ws }.describe();
+
+    assert_eq!(
+        show(Op::Move, named.clone(), Some(Ws::N(2))),
+        "Move firefox window #2 to workspace 2"
+    );
+    assert_eq!(
+        show(Op::Move, Target::default(), Some(Ws::Next)),
+        "Move the focused window to the next workspace"
+    );
+    assert_eq!(
+        show(Op::Workspace, Target::default(), Some(Ws::Prev)),
+        "Switch to the previous workspace"
+    );
+    assert_eq!(
+        show(Op::Workspace, Target::default(), Some(Ws::N(10))),
+        "Switch to workspace 10"
+    );
+    assert_eq!(show(Op::List, Target::default(), None), "List open windows");
+    assert_eq!(
+        show(Op::Back, Target::default(), None),
+        "Focus the previous window"
+    );
+    assert_eq!(
+        show(Op::Undo, Target::default(), None),
+        "Undo the previous window change"
+    );
+    assert_eq!(
+        show(Op::Focus, named.clone(), None),
+        "Focus firefox window #2"
+    );
+    assert_eq!(
+        show(Op::Maximize, named.clone(), None),
+        "Maximize firefox window #2"
+    );
+    assert_eq!(
+        show(Op::Minimize, named.clone(), None),
+        "Minimize firefox window #2"
+    );
+    assert_eq!(show(Op::Close, named, None), "Close firefox window #2");
+}

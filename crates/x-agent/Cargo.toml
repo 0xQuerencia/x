@@ -6,7 +6,6 @@ license = "MIT"
 description = "X: voice-driven safe Actions and supervised OpenCode Work runs for Hex"
 
 [dependencies]
-anyhow = "1.0.104"
 libc = "0.2.189"
 dirs = "7.0.0"
 serde = { version = "1.0.229", features = ["derive"] }
