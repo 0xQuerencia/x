@@ -153,7 +153,8 @@ pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Va
     if output.stdout.len() > 64 * 1024 {
         return Err("Decision response exceeded the size limit".into());
     }
-    let wire = std::str::from_utf8(&output.stdout).map_err(|_| "Decision response was not UTF-8")?;
+    let wire =
+        std::str::from_utf8(&output.stdout).map_err(|_| "Decision response was not UTF-8")?;
     let (body, status) = wire
         .rsplit_once('\n')
         .ok_or("Decision response had no HTTP status")?;
