@@ -54,12 +54,30 @@ try {
     await page.reload({ waitUntil: "networkidle" });
     assert.equal(await page.locator("html").getAttribute("data-theme"), "light");
 
+    assert.ok(await page.locator("html").evaluate(el => el.classList.contains("lenis")), "Lenis initializes in reduced-motion mode");
     const css = await page.locator("body").evaluate(el => getComputedStyle(el).fontFamily);
     assert.match(css.toLowerCase(), /figtree/);
     assert.deepEqual(jsErrors, []);
     await context.close();
   }
-  console.log("X landing smoke checks passed (desktop + mobile)");
+  // Smooth scrolling remains enabled when motion is allowed and supports the existing anchor navigation.
+  const smoothContext = await browser.newContext({ viewport: { width: 1366, height: 768 }, reducedMotion: "no-preference" });
+  const smoothPage = await smoothContext.newPage();
+  const smoothErrors = [];
+  smoothPage.on("pageerror", error => smoothErrors.push(error.message));
+  await smoothPage.goto(origin, { waitUntil: "networkidle" });
+  assert.ok(await smoothPage.locator("html").evaluate(el => el.classList.contains("lenis")), "Lenis initializes");
+  assert.equal(await smoothPage.locator("html").evaluate(el => getComputedStyle(el).scrollBehavior), "auto", "Lenis owns smooth scrolling instead of native CSS");
+  await smoothPage.locator('.pill a[href="#dictation"]').click();
+  await smoothPage.waitForFunction(() => {
+    const section = document.querySelector("#dictation");
+    return section && Math.abs(section.getBoundingClientRect().top - 90) < 20;
+  }, undefined, { timeout: 10000 });
+  assert.equal(new URL(smoothPage.url()).hash, "#dictation");
+  assert.ok(await smoothPage.evaluate(() => window.scrollY > 100));
+  assert.deepEqual(smoothErrors, []);
+  await smoothContext.close();
+  console.log("X landing smoke checks passed (desktop + mobile + Lenis smooth anchors)");
 } finally {
   await browser?.close();
   server.kill("SIGTERM");
