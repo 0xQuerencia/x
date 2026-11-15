@@ -27,6 +27,12 @@ jobs:
           node-version: "22"
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Export generated lockfile for committed reproducibility
+        run: |
+          echo "BEGIN_X_LANDING_LOCK"
+          base64 -w0 package-lock.json
+          echo ""
+          echo "END_X_LANDING_LOCK"
       - name: TypeScript and production build
         run: npm run check
       - name: Verify required image assets are copied
@@ -37,3 +43,7 @@ jobs:
           test -f dist/img/win-agent.webp
           test -f dist/img/win-result.webp
           test -f dist/img/og.png
+      - name: Install browser for interaction smoke tests
+        run: npx playwright install --with-deps chromium
+      - name: Desktop and mobile browser smoke tests
+        run: npm run test:e2e
