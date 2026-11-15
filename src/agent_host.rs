@@ -91,16 +91,15 @@ fn gemini_key_file() -> Option<PathBuf> {
         .map(|dir| dir.join("gemini-key"))
 }
 
-/// `jev` uses OpenCode\'s free System One decision endpoint. Gemini and OpenAI-compatible
+/// `decider-flash` and `decider` use OpenRouter's free Perplexity Decider models. A saved
+/// legacy `jev` setting now means `decider-flash`. Gemini and OpenAI-compatible
 /// planners remain optional; all other names select a local Ollama model.
 fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
-    if model == "jev" {
-        return Arc::new(x_agent::jev::Jev {
-            key_file: crate::app_paths::support_dir()
-                .ok()
-                .map(|dir| dir.join("jev-key")),
-        });
-    }
+    let model = if model == "jev" {
+        "decider-flash".to_string()
+    } else {
+        model
+    };
     if matches!(model.as_str(), "decider-flash" | "decider") {
         return Arc::new(x_agent::decider::Decider {
             model: if model == "decider" {
@@ -141,11 +140,14 @@ fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
 }
 
 fn set_planner(model: &str) -> ControlReply {
-    let model = model.trim();
+    let model = match model.trim() {
+        "jev" => "decider-flash",
+        other => other,
+    };
     if model.is_empty() || model.len() > 100 || model.contains(char::is_whitespace) {
         return ControlReply::error(
             "usage",
-            "give decider-flash, decider, jev, gemini, openai:<model>, an Ollama model, or off",
+            "give decider-flash, decider, gemini, openai:<model>, an Ollama model, or off",
         );
     }
     let Some(path) = planner_file() else {
@@ -164,9 +166,7 @@ fn set_planner(model: &str) -> ControlReply {
     if off {
         return ControlReply::done("Planner off");
     }
-    let note = if model == "jev" {
-        ". Jev makes decisions only, not prose. X sends the spoken command to OpenCode Console; set JEV_API_KEY or OPENCODE_API_KEY in X\'s environment, or save the Console key in the jev-key file in X\'s data folder. No other model is called on Jev failure.".to_string()
-    } else if matches!(model, "decider-flash" | "decider") {
+    let note = if matches!(model, "decider-flash" | "decider") {
         ". Free Perplexity Decider on OpenRouter: set OPENROUTER_API_KEY in X's running service or save its private openrouter-key file. Choice-only, no paid fallback.".to_string()
     } else if model.starts_with("openai:") {
         ". What you say is sent to the endpoint saved in X's openai-base file for planning."

@@ -1,59 +1,22 @@
-//! Jev's System One decision API as an opt-in X Actions planner.
-//! Jev returns choices, not text or generated actions. X builds each candidate locally,
+//! Shared choice router for X's Perplexity Decider planners.
+//! The model returns choices, not text or generated actions. X builds each candidate locally,
 //! validates it against the existing action registry, and treats the model's reply as a
 //! label selecting one candidate. No shell command or arbitrary tool payload is accepted.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use serde_json::{Value, json};
 
-use crate::service::Planner;
 use crate::tools::{self, Action, Reply};
 
-const ENDPOINT: &str = "https://opencode.ai/inference/systemone/v1/systemone";
-const MODEL: &str = "jev-1.13-free";
 const MAX_CANDIDATES: usize = 12;
 const MIN_CONFIDENCE: f64 = 0.85;
 const MIN_MARGIN: f64 = 0.25;
 const MIN_INTENT: f64 = 0.90;
 
-/// OpenCode Console key, supplied explicitly. Never read a credential database
-/// or try a paid model on a free-model failure.
-pub struct Jev {
-    pub key_file: Option<PathBuf>,
-}
-
-impl Planner for Jev {
-    fn name(&self) -> String {
-        "Jev 1.13 Free (decisions)".into()
-    }
-
-    fn decide_computer(
-        &self,
-        goal: &str,
-        app: &str,
-        observation: &crate::desktop::Observation,
-        history: &[String],
-    ) -> Option<Result<crate::computer::Step, String>> {
-        Some(crate::jev_computer::decide(
-            &|body| self.send(body),
-            MODEL,
-            goal,
-            app,
-            observation,
-            history,
-        ))
-    }
-
-    fn plan(&self, text: &str, smart: bool) -> Result<Reply, String> {
-        plan_with(&|body| self.send(body), MODEL, text, smart)
-    }
-}
-
-/// Shared, non-generative choice router used by Jev and the free Decider models.
+/// Shared, non-generative choice router used by the free Decider models.
 pub(crate) fn plan_with(
     send: &dyn Fn(&Value) -> Result<Value, String>,
     model: &str,
@@ -73,35 +36,6 @@ pub(crate) fn plan_with(
     request["model"] = json!(model);
     let answer = send(&request)?;
     select(&answer, &options, smart)
-}
-
-impl Jev {
-    fn key(&self) -> Result<String, String> {
-        let env = std::env::var("JEV_API_KEY")
-            .or_else(|_| std::env::var("OPENCODE_API_KEY"))
-            .ok();
-        let file = self
-            .key_file
-            .as_ref()
-            .and_then(|path| std::fs::read_to_string(path).ok());
-        let key = env.or(file).unwrap_or_default().trim().to_string();
-        if key.is_empty()
-            || key.len() > 4096
-            || !key
-                .chars()
-                .all(|c| c.is_ascii_graphic() && !matches!(c, '"' | '\'' | '\\'))
-        {
-            return Err(
-                "Jev needs a Console API key: set JEV_API_KEY or save the key in X's jev-key file"
-                    .into(),
-            );
-        }
-        Ok(key)
-    }
-
-    pub(crate) fn send(&self, request: &Value) -> Result<Value, String> {
-        send_with(ENDPOINT, &self.key()?, request)
-    }
 }
 
 /// Fixed-endpoint Decisions API transport; credentials and payload never reach argv.
@@ -191,7 +125,7 @@ fn push(options: &mut Vec<Action>, action: Action) {
 }
 
 fn search_terms(text: &str, lower: &str) -> Option<String> {
-    // Search terms come from actual spoken words; Jev can never invent a query.
+    // Search terms come from actual spoken words; the model can never invent a query.
     // Only explicit markers or "google <phrase>" are accepted.
     for marker in [" about ", " for ", " regarding ", " on "] {
         if let Some((index, _)) = lower.match_indices(marker).last() {
@@ -227,7 +161,7 @@ fn candidates(utterance: &str) -> Vec<Action> {
     let mut options = Vec::new();
 
     // Open-ended multi-step desktop requests go through the *existing*
-    // observe/act/verify loop. Jev picks each current UI element there; it
+    // observe/act/verify loop. the model picks each current UI element there; it
     // does not invent a JSON script, shell command, or model-generated text.
     // A caller must separately grant this app's screen and remote context.
     let interactive = [
@@ -441,7 +375,7 @@ fn request(utterance: &str, actions: &[Action]) -> Value {
             .into(),
     );
     json!({
-        "model": MODEL,
+        "model": crate::decider::Model::Flash.id(),
         "state": { "utterance": utterance },
         "questions": {
             "route": {
@@ -603,10 +537,10 @@ mod tests {
     }
 
     #[test]
-    fn request_uses_systemone_contract_not_chat() {
+    fn request_uses_decisions_contract_not_chat() {
         let actions = candidates("bring Firefox forward");
         let body = request("bring Firefox forward", &actions);
-        assert_eq!(body["model"], MODEL);
+        assert_eq!(body["model"], crate::decider::Model::Flash.id());
         assert_eq!(body["questions"]["route"]["type"], "choice");
         assert_eq!(body["questions"]["is_command"]["type"], "noul");
         assert!(body["questions"]["route"]["criteria"]["a0"].is_string());

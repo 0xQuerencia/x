@@ -1,7 +1,7 @@
-//! Jev-powered *dynamic* computer decisions for X's existing observe/act/verify loop.
+//! Decider-powered *dynamic* computer decisions for X's existing observe/act/verify loop.
 //!
 //! Instead of asking a chat model for JSON tool calls, this presents the current
-//! accessibility snapshot as a bounded set of choices. Jev can select an operation,
+//! accessibility snapshot as a bounded set of choices. the model can select an operation,
 //! the current control, and (for typing) the exact words in the person's goal.
 //! Each choice is checked against the offered candidates before the desktop
 //! executor applies its existing permission and safety policy.
@@ -158,7 +158,7 @@ fn offers(goal: &str, app: &str, obs: &Observation, history: &[String]) -> Offer
             .map(|e| &e.name),
     ) {
         let name = name.trim();
-        // Completion evidence also appears in Jev's choice criteria. Never
+        // Completion evidence also appears in the choice criteria. Never
         // transmit a raw email, secret token or long numeric identifier there.
         if crate::desktop::prompt_text(name) != name {
             continue;
@@ -301,7 +301,7 @@ fn request(goal: &str, app: &str, obs: &Observation, history: &[String], o: &Off
         })
         .collect();
     json!({
-        "model": "jev-1.13-free",
+        "model": crate::decider::Model::Flash.id(),
         "state": {
             "goal": goal,
             "app": app,
@@ -318,7 +318,7 @@ fn request(goal: &str, app: &str, obs: &Observation, history: &[String], o: &Off
     })
 }
 
-/// A Jev choice is a label plus a probability distribution, NOT generated tool
+/// A Decider choice is a label plus a probability distribution, NOT generated tool
 /// arguments. Never trust its confidence alone: the chosen label must exist in
 /// the candidate set, and probabilities must be finite and in [0, 1].
 fn picked<'a>(
@@ -510,7 +510,7 @@ mod tests {
             &[],
             &o,
         );
-        assert_eq!(body["model"], "jev-1.13-free");
+        assert_eq!(body["model"], crate::decider::Model::Flash.id());
         assert!(body["questions"]["operation"].is_object());
         assert!(!body["state"]["controls"].to_string().contains("Password"));
         assert!(

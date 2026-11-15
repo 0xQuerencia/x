@@ -253,7 +253,7 @@ fn page_box_is_not_omnibox() {
 }
 
 #[test]
-fn structured_jev_decisions_reuse_screen_verification() {
+fn structured_decider_decisions_reuse_screen_verification() {
     let desktop = Fake {
         screens: Mutex::new(vec![
             screen(
