@@ -1,0 +1,22 @@
+name: One-time Rustfmt (Decider follow-up)
+on:
+  push:
+    branches:
+      - feat/x-free-openrouter-decider-20261116
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: |
+          cargo fmt --all
+          git rm .github/workflows/x-once-rustfmt.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || (git commit -m "style: final Rustfmt for decider integration" && git push)
