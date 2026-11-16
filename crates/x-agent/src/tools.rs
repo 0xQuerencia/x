@@ -206,7 +206,10 @@ impl Action {
             | Self::Copy { .. }
             | Self::Terminal { .. }
             | Self::Folder { .. } => Risk::Reversible,
-            Self::Screenshot { .. } | Self::Type { .. } | Self::Session { .. } | Self::Computer { .. } => Risk::Consequential,
+            Self::Screenshot { .. }
+            | Self::Type { .. }
+            | Self::Session { .. }
+            | Self::Computer { .. } => Risk::Consequential,
         }
     }
 
@@ -382,7 +385,9 @@ impl Action {
                 number.to_string(),
             ]),
             Self::Window { .. } => Err("Window commands run through the window controller".into()),
-            Self::Screenshot { .. } => Err("Screenshots are handled locally, never launched as a command".into()),
+            Self::Screenshot { .. } => {
+                Err("Screenshots are handled locally, never launched as a command".into())
+            }
             Self::Copy { .. } => Err("Copy runs through the clipboard helper".into()),
             Self::Terminal { directory } => {
                 terminal_argv(std::path::Path::new(directory), None, resolve)
@@ -849,10 +854,7 @@ fn strip_prefix_ci<'a>(s: &'a str, prefixes: &[&str]) -> Option<&'a str> {
 fn screenshot_request(utterance: &str) -> Option<Action> {
     let text = utterance.trim().to_ascii_lowercase();
     let mode = match text.as_str() {
-        "screenshot"
-        | "take screenshot"
-        | "take a screenshot"
-        | "capture screenshot"
+        "screenshot" | "take screenshot" | "take a screenshot" | "capture screenshot"
         | "capture the screen" => "screen",
         "screenshot this window"
         | "screenshot of this window"
