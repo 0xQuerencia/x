@@ -128,7 +128,7 @@ impl StepAction {
             Self::WaitForWindow { app } => format!("Wait for {app} to appear"),
             Self::CloseOpenedWindow { opened_by } => {
                 format!("Close the window opened by step {opened_by}")
-            },
+            }
             Self::RunAction { phrase } => format!("Run: {phrase}"),
             Self::OpencodeTask { goal, directory } => {
                 format!("OpenCode in {directory}: {goal}")
@@ -267,9 +267,10 @@ impl Workflow {
             if let StepAction::CloseOpenedWindow { opened_by } = &step.action
                 && !opening_steps.contains(opened_by.as_str())
             {
-                note(sid, format!(
-                    "Step {opened_by:?} must be an earlier OpenApp or OpenTerminal step"
-                ));
+                note(
+                    sid,
+                    format!("Step {opened_by:?} must be an earlier OpenApp or OpenTerminal step"),
+                );
             }
             if matches!(
                 step.action,
@@ -348,7 +349,7 @@ fn check_action(action: &StepAction, home: &Path) -> Result<(), String> {
             } else {
                 Err("The opening step id is invalid".into())
             }
-        },
+        }
         StepAction::RunAction { phrase } => {
             check_text("The action phrase", phrase)?;
             let actions = tools::plan_rules(phrase)
