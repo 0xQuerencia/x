@@ -128,14 +128,15 @@ impl StepEd {
 
     fn from(step: &Step) -> Self {
         let mut ed = Self::new(step.id.clone());
-        let app_index = |ed: &mut Self, app: &str| {
-            match ::x_agent::tools::APPS.iter().position(|(n, _)| *n == app) {
-                Some(index) => {
-                    ed.app = index;
-                    ed.app_custom = None;
-                }
-                None => ed.app_custom = Some(app.to_string()),
+        let app_index = |ed: &mut Self, app: &str| match ::x_agent::tools::APPS
+            .iter()
+            .position(|(n, _)| *n == app)
+        {
+            Some(index) => {
+                ed.app = index;
+                ed.app_custom = None;
             }
+            None => ed.app_custom = Some(app.to_string()),
         };
         match &step.action {
             StepAction::OpenApp { app, workspace } => {
