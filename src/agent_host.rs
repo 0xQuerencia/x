@@ -591,7 +591,7 @@ pub fn intercept(text: &str) -> bool {
 /// (the caller then types it as dictation, or drops it when it was heard hands-free).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn plan_spoken(mode: Mode, command: &str) -> bool {
-    match service().plan(command, mode) {
+    match service().plan_spoken(command, mode) {
         Ok(_) => true,
         Err(error) if error.starts_with("Not understood") && mode == Mode::Actions => {
             service().emit(
