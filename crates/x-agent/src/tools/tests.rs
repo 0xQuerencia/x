@@ -118,11 +118,18 @@ fn screenshot_phrases_create_local_only_approval_gated_actions() {
         let actions = plan_rules(said).unwrap();
         assert_eq!(actions, [Action::Screenshot { mode: mode.into() }]);
         assert!(!is_low_risk(&actions), "private capture must not auto-run");
-        assert!(actions[0].argv(&fake_path).is_err(), "no screenshot subprocess");
+        assert!(
+            actions[0].argv(&fake_path).is_err(),
+            "no screenshot subprocess"
+        );
     }
-    assert!(Action::Screenshot { mode: "invalid".into() }
+    assert!(
+        Action::Screenshot {
+            mode: "invalid".into()
+        }
         .validate()
-        .is_err());
+        .is_err()
+    );
     for said in [
         "I took a screenshot yesterday",
         "she said take a screenshot",
