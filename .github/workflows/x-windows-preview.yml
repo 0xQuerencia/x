@@ -1,7 +1,8 @@
 name: X Windows 11 preview (unsigned)
 
-# A disposable source build for testing. Never publishes a GitHub Release,
-# installer, tag, signature, or updater feed; never contacts a deployment.
+# Windows 11 preview: produce an unsigned X-branded binary, verify its checksum,
+# then attach it to a clearly labeled GitHub *prerelease*. No installer, signed
+# production release or updater feed is published.
 on:
   workflow_dispatch:
   push:
@@ -77,3 +78,55 @@ jobs:
           path: dist/
           retention-days: 14
           if-no-files-found: error
+
+  prerelease:
+    name: Upload verified Windows preview to Releases
+    if: github.ref == 'refs/heads/main'
+    needs: windows-x64
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: x-win11-preview-${{ github.sha }}
+          path: dist
+      - name: Verify downloaded preview checksum
+        shell: bash
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS
+          test -s x.exe
+      - name: Publish experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          short=${GITHUB_SHA:0:12}
+          tag="x-win11-preview-$short"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::Preview for $short already exists; leaving it unchanged"
+            exit 0
+          fi
+          cat > notes.md <<EOF
+          **Experimental Windows x64 preview. NOT a stable or fully tested Windows 11 release.**
+
+          This unsigned `x.exe` was built from X source commit `$GITHUB_SHA`
+          after formatting and x-agent unit tests on a Windows CI runner.
+          The attached `SHA256SUMS` is verified before publication.
+
+          This build has **not** passed a real Windows 11 microphone, desktop,
+          accessibility, workflows, system-control or installer smoke test.
+          Windows virtual-desktop switching is not supported. It may fail
+          with SmartScreen or at runtime. Avoid using it for important work.
+
+          See [Windows QA](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/docs/x-win11.md).
+          This is a portable preview binary, **not an installer**.
+          EOF
+          gh release create "$tag" dist/x.exe dist/SHA256SUMS dist/README-preview.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "X Windows 11 experimental preview ($short)" \
+            --prerelease \
+            --notes-file notes.md
