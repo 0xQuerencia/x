@@ -74,13 +74,17 @@ fn write(path: &std::path::Path, store: &Store) -> Result<(), String> {
     if content.len() as u64 > MAX_SIZE {
         return Err("Correction history reached its size limit".into());
     }
-    if path.exists() {
-        let _ = read(path)?; // refuse symlinks, unsafe permissions and oversized files
+    if std::fs::symlink_metadata(path).is_ok() {
+        let _ = read(path)?; // reject even dangling symlinks before writing
     }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
+    let mut opts = OpenOptions::new();
+    opts.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts
         .open(path)
         .map_err(|_| "Cannot open private correction history")?;
     #[cfg(unix)]
@@ -255,6 +259,23 @@ mod tests {
         assert_eq!(store.apply("please opne fire fox"), "please opne fire fox");
         store.enabled = false;
         assert_eq!(store.apply("opne fire fox"), "opne fire fox");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_symlinks_and_world_readable_logs() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target.json");
+        let link = tmp.path().join("link.json");
+        symlink(&target, &link).unwrap();
+        assert!(read(&link).is_err());
+        assert!(write(&link, &Store::default()).is_err());
+        let file = tmp.path().join("private.json");
+        write(&file, &Store::default()).unwrap();
+        assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o077, 0);
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read(&file).is_err());
     }
 
     #[test]
