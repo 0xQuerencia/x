@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -520,6 +520,7 @@ impl Service {
         smart: bool,
         source: InputSource,
     ) -> Result<Task, String> {
+        let planning_started = Instant::now();
         if mode == Mode::Actions {
             if let Some(cmd) = context::commands::parse_utterance(text) {
                 if cmd == context::commands::Command::Explain {
@@ -583,6 +584,10 @@ impl Service {
             self.check_screen_may_leave()?;
         }
         let task = self.plan_task(text, mode, preset)?;
+        self.emit(
+            "timing",
+            &format!("phase=plan elapsed_ms={}", planning_started.elapsed().as_millis()),
+        );
         {
             let mut state = self.lock();
             state.origin = origin;
@@ -838,6 +843,7 @@ impl Service {
             if let Action::Computer { app, goal } = action {
                 return self.run_computer(app, goal);
             }
+            let execution_started = Instant::now();
             let result = match action {
                 Action::Type { .. } => {
                     let waited = match actions.get(i.wrapping_sub(1)) {
@@ -850,6 +856,21 @@ impl Service {
                 }
                 _ => self.launcher.launch(action),
             };
+            // Window Controller already waits for compositor verification;
+            // ordinary launches are timed as execution, not verification.
+            let phase = if matches!(action, Action::Window { .. }) {
+                "act_verify"
+            } else {
+                "act"
+            };
+            self.emit(
+                "timing",
+                &format!(
+                    "phase={phase} step={} elapsed_ms={}",
+                    i + 1,
+                    execution_started.elapsed().as_millis()
+                ),
+            );
             match result {
                 Ok(msg) if matches!(action, Action::Copy { .. }) => {
                     self.emit("result", &format!("{msg} (confirmed)"));
