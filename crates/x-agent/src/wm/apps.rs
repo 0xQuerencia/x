@@ -57,11 +57,44 @@ pub fn normalize(words: &str) -> String {
 }
 
 fn program(exec: &str) -> Option<String> {
-    let first = exec
-        .split_whitespace()
-        .find(|t| !t.contains('=') && *t != "env")?;
-    let base = first.rsplit('/').next()?.trim_matches('"');
-    (!base.is_empty()).then(|| base.to_ascii_lowercase())
+    // Desktop entry Exec values are not shell scripts. Only use the actual
+    // first program as a class hint; wrapper names are never app identities.
+    for token in exec.split_whitespace() {
+        if token.contains('=') {
+            continue; // e.g. env MOZ_ENABLE_WAYLAND=1
+        }
+        let base = token
+            .rsplit('/')
+            .next()?
+            .trim_matches('"')
+            .to_ascii_lowercase();
+        if base == "env" {
+            continue;
+        }
+        if [
+            "flatpak",
+            "snap",
+            "gtk-launch",
+            "xdg-open",
+            "dbus-run-session",
+            "sh",
+            "bash",
+            "zsh",
+            "fish",
+            "python",
+            "python3",
+            "node",
+            "ruby",
+            "perl",
+            "java",
+        ]
+        .contains(&base.as_str())
+        {
+            return None;
+        }
+        return (!base.is_empty()).then_some(base);
+    }
+    None
 }
 
 /// One desktop entry file. Only unlocalized keys of the main section are read.
@@ -84,7 +117,7 @@ pub fn parse_entry(id: &str, text: &str) -> Option<Entry> {
         let value = value.trim();
         match key.trim() {
             "Type" => is_app = value == "Application",
-            "Hidden" if value == "true" => return None,
+            "Hidden" | "NoDisplay" if value.eq_ignore_ascii_case("true") => return None,
             "Name" | "GenericName" => entry.names.push(value.to_ascii_lowercase()),
             "Keywords" => entry.names.extend(
                 value
@@ -133,32 +166,55 @@ fn dirs() -> Vec<PathBuf> {
         .ok()
         .filter(|d| !d.is_empty())
         .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    home.into_iter()
-        .chain(system.split(':').map(PathBuf::from))
+    let mut dirs: Vec<PathBuf> = home
+        .into_iter()
+        .chain(
+            system
+                .split(':')
+                .filter(|d| !d.is_empty())
+                .map(PathBuf::from),
+        )
         .map(|d| d.join("applications"))
-        .collect()
+        .collect();
+
+    // Some systemd user services start with a restricted XDG_DATA_DIRS, hiding
+    // exported Flatpak apps. Their entries are usually symlinks.
+    if let Some(home) = dirs::home_dir() {
+        dirs.push(home.join(".local/share/flatpak/exports/share/applications"));
+    }
+    dirs.push(PathBuf::from("/var/lib/flatpak/exports/share/applications"));
+    let mut unique = Vec::new();
+    for path in dirs {
+        if !unique.contains(&path) {
+            unique.push(path);
+        }
+    }
+    unique
 }
 
-fn scan() -> Vec<Entry> {
-    let mut out = Vec::new();
-    let mut seen = 0;
-    for dir in dirs() {
+/// Scan paths with a global cap, including one level of real subdirectories.
+/// Follow desktop-entry *file* symlinks, but never recursively follow directories.
+fn scan_paths(paths: &[PathBuf]) -> Vec<Entry> {
+    fn walk(dir: &std::path::Path, depth: u8, out: &mut Vec<Entry>, seen: &mut usize) {
         let Ok(read) = std::fs::read_dir(dir) else {
-            continue;
+            return;
         };
         for file in read.flatten() {
+            if *seen >= MAX_FILES {
+                return;
+            }
             let path = file.path();
+            if depth == 0 && file.file_type().is_ok_and(|ty| ty.is_dir()) {
+                walk(&path, 1, out, seen);
+                continue;
+            }
             if path.extension().is_none_or(|e| e != "desktop") {
                 continue;
             }
-            seen += 1;
-            if seen > MAX_FILES {
-                return out;
-            }
-            let ok = file
-                .metadata()
-                .is_ok_and(|m| m.is_file() && m.len() <= MAX_FILE);
-            let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            *seen += 1;
+            // fs::metadata follows a file symlink; DirEntry::metadata does not.
+            let ok = std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= MAX_FILE);
+            let id = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
             if let Some(entry) = ok
                 .then(|| std::fs::read_to_string(&path).ok())
                 .flatten()
@@ -168,7 +224,20 @@ fn scan() -> Vec<Entry> {
             }
         }
     }
+
+    let mut out = Vec::new();
+    let mut seen = 0;
+    for dir in paths {
+        walk(dir, 0, &mut out, &mut seen);
+        if seen >= MAX_FILES {
+            break;
+        }
+    }
     out
+}
+
+fn scan() -> Vec<Entry> {
+    scan_paths(&dirs())
 }
 
 static CACHE: Mutex<Option<(Instant, Vec<Entry>)>> = Mutex::new(None);
@@ -293,6 +362,65 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn wrappers_never_become_application_identities() {
+        assert_eq!(
+            program("env MOZ_ENABLE_WAYLAND=1 /usr/lib/firefox/firefox %u"),
+            Some("firefox".into())
+        );
+        for line in [
+            "flatpak run --branch=stable com.spotify.Client",
+            "snap run spotify",
+            "bash -lc spotify",
+            "gtk-launch spotify.desktop",
+            "python3 /opt/app.py",
+        ] {
+            assert_eq!(program(line), None, "{line}");
+        }
+        let entry = parse_entry(
+            "com.spotify.Client.desktop",
+            "[Desktop Entry]\nType=Application\nName=Spotify\nExec=flatpak run com.spotify.Client\nStartupWMClass=spotify\n",
+        )
+        .unwrap();
+        assert!(!entry.names.contains(&"flatpak".to_string()));
+        assert!(!entry.classes.contains(&"flatpak".to_string()));
+        assert!(entry.names.contains(&"spotify".to_string()));
+        assert!(
+            parse_entry(
+                "hidden.desktop",
+                "[Desktop Entry]\nType=Application\nName=Private\nNoDisplay=true\n"
+            )
+            .is_none()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn catalog_follows_flatpak_file_symlinks_and_one_nested_directory() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let appdir = temp.path().join("applications");
+        let nested = appdir.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let exported = temp.path().join("exported.desktop");
+        std::fs::write(
+            &exported,
+            "[Desktop Entry]\nType=Application\nName=Spotify\nExec=flatpak run com.spotify.Client\nStartupWMClass=spotify\n",
+        )
+        .unwrap();
+        symlink(&exported, appdir.join("com.spotify.Client.desktop")).unwrap();
+        std::fs::write(
+            nested.join("org.example.Editor.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Nested Editor\nExec=/usr/bin/editor %F\n",
+        )
+        .unwrap();
+        let entries = scan_paths(&[appdir]);
+        assert_eq!(entries.len(), 2);
+        assert!(known("spotify", &entries));
+        assert!(known("nested editor", &entries));
+        assert!(!entries.iter().any(|e| e.names.contains(&"flatpak".into())));
     }
 
     #[test]
