@@ -905,11 +905,13 @@ mod tests {
 
     #[test]
     fn spoken_workspace_number_is_bounded() {
-        assert!(candidates("take me to desktop three").contains(&Action::Window {
-            op: crate::wm::Op::Workspace,
-            target: crate::wm::Target::default(),
-            ws: Some(crate::wm::Ws::N(3)),
-        }));
+        assert!(
+            candidates("take me to desktop three").contains(&Action::Window {
+                op: crate::wm::Op::Workspace,
+                target: crate::wm::Target::default(),
+                ws: Some(crate::wm::Ws::N(3)),
+            })
+        );
         assert!(candidates("take me to workspace 11").is_empty());
     }
 
