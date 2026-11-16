@@ -62,7 +62,7 @@ pub(crate) fn browser_hotkey(op: crate::browser_tab::Op, expected_hwnd: usize) -
     // The caller validated the foreground window against an installed
     // browser and re-observed its exact identity. Recheck immediately before
     // input is injected; no arbitrary key strings can reach this function.
-    if unsafe { GetForegroundWindow() } as usize != expected_hwnd || expected_hwnd == 0 {
+    if (unsafe { GetForegroundWindow() } as usize) != expected_hwnd || expected_hwnd == 0 {
         return Err("Focus changed before the browser shortcut".into());
     }
     let events = match op {
