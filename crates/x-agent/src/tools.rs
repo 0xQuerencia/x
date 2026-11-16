@@ -1123,8 +1123,9 @@ pub fn parse_plan_json(raw: &str) -> Result<Vec<Action>, String> {
                         ws: Some(Ws::N(number)),
                     }
                 }
-                _ => serde_json::from_value(step)
-                    .map_err(|e| format!("Unsupported action: {e}"))?,
+                _ => {
+                    serde_json::from_value(step).map_err(|e| format!("Unsupported action: {e}"))?
+                }
             };
             action.validate()
         })
