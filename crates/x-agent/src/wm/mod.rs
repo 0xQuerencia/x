@@ -14,6 +14,8 @@ mod speech;
 mod x11;
 #[cfg(windows)]
 mod win11;
+#[cfg(windows)]
+mod windows_apps;
 
 use std::collections::VecDeque;
 use std::fmt;
