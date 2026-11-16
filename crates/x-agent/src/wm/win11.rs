@@ -62,7 +62,7 @@ fn window_id(window: Hwnd, pid: u32) -> String {
 
 /// Strictly parse only handles previously observed in the form win:HWND:PID.
 /// The PID is checked again immediately before each mutating action.
-fn parse_id(id: &str) -> Option<(usize, u32)> {
+pub(super) fn parse_id(id: &str) -> Option<(usize, u32)> {
     let parts: Vec<&str> = id.split(':').collect();
     if parts.len() != 3 || parts[0] != "win" {
         return None;
