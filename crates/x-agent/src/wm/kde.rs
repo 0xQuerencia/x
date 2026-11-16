@@ -148,7 +148,9 @@ fn request(cmd: &Cmd) -> Result<String, WmError> {
     };
     // A no-op or an absent window must never be reported as success.
     if prefix.is_empty() {
-        Ok(format!("{operation}\noutput_result(JSON.stringify({{ok:true}}));"))
+        Ok(format!(
+            "{operation}\noutput_result(JSON.stringify({{ok:true}}));"
+        ))
     } else {
         // Never claim success after an invalid/stale KWin window target.
         Ok(format!(
