@@ -116,9 +116,9 @@ jobs:
           cat > notes.md <<EOF
           **Experimental Windows x64 preview. NOT a stable or fully tested Windows 11 release.**
 
-          This unsigned `x.exe` was built from X source commit `$GITHUB_SHA`
+          This unsigned x.exe was built from X source commit $GITHUB_SHA
           after formatting and x-agent unit tests on a Windows CI runner.
-          The attached `SHA256SUMS` is verified before publication.
+          The attached SHA256SUMS is verified before publication.
 
           This build has **not** passed a real Windows 11 microphone, desktop,
           accessibility, workflows, system-control or installer smoke test.
