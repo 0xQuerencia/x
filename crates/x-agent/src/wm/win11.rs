@@ -170,7 +170,9 @@ unsafe extern "system" fn enumerate(window: Hwnd, data: isize) -> i32 {
     // SAFETY: EnumWindows invokes this synchronously while the caller's
     // Vec remains in scope; no user-controlled pointer enters this callback.
     let windows = unsafe { &mut *(data as *mut Vec<WinInfo>) };
-    if windows.len() < MAX_WINDOWS && let Some(win) = inspect(window) {
+    if windows.len() < MAX_WINDOWS
+        && let Some(win) = inspect(window)
+    {
         windows.push(win);
     }
     1
