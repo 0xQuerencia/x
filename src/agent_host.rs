@@ -438,6 +438,7 @@ pub fn voice_mode() -> VoiceMode {
 
 /// Read the initialized voice policy without causing agent initialization from
 /// a transcription thread. This is used only for opt-in recognizer biasing.
+#[cfg(target_os = "linux")]
 pub(crate) fn action_voice_bias_enabled() -> bool {
     crate::labs::x_agent() && VOICE.load(Ordering::Relaxed) == VoiceMode::Actions as u8
 }
