@@ -287,6 +287,123 @@ fn search_terms(text: &str, lower: &str) -> Option<String> {
     None
 }
 
+/// Turn loosely phrased desktop verbs into *typed* window operations.
+/// This is a pure candidate builder: it does not run a command or trust
+/// remote-generated target IDs. The controller resolves the window freshly.
+fn window_offers(text: &str, entries: &[crate::wm::apps::Entry]) -> Vec<Action> {
+    use crate::wm::{Op, Target, Ws};
+    let lower = text.trim().to_lowercase();
+    let mut said = lower
+        .trim_end_matches(['.', '?', '!', ','])
+        .trim();
+    for prefix in ["please ", "could you ", "can you ", "would you ", "hey x "] {
+        if let Some(rest) = said.strip_prefix(prefix) {
+            said = rest.trim();
+            break;
+        }
+    }
+
+    // Require an imperative at the *beginning* of the utterance. Merely
+    // mentioning a destructive verb in prose must never offer a close.
+    let patterns: &[(&str, Op)] = &[
+        ("get rid of ", Op::Close),
+        ("shut down ", Op::Close),
+        ("close ", Op::Close),
+        ("quit ", Op::Close),
+        ("exit ", Op::Close),
+        ("shut ", Op::Close),
+        ("hide ", Op::Minimize),
+        ("tuck ", Op::Minimize),
+        ("minimize ", Op::Minimize),
+        ("maximise ", Op::Maximize),
+        ("maximize ", Op::Maximize),
+        ("fullscreen ", Op::Maximize),
+        ("bring ", Op::Focus),
+        ("show ", Op::Focus),
+        ("focus ", Op::Focus),
+        ("switch to ", Op::Focus),
+        ("put ", Op::Move),
+        ("move ", Op::Move),
+        ("send ", Op::Move),
+    ];
+    let Some((op, mut who)) = patterns
+        .iter()
+        .find_map(|(p, op)| said.strip_prefix(p).map(|rest| (op.clone(), rest)))
+    else {
+        return Vec::new();
+    };
+
+    let ws = if op == Op::Move {
+        let Some((subject, destination)) = who
+            .split_once(" to workspace ")
+            .or_else(|| who.split_once(" on workspace "))
+            .or_else(|| who.split_once(" to desktop "))
+            .or_else(|| who.split_once(" on desktop "))
+        else {
+            return Vec::new();
+        };
+        let number = match destination.trim() {
+            "one" => 1,
+            "two" => 2,
+            "three" => 3,
+            "four" => 4,
+            "five" => 5,
+            "six" => 6,
+            "seven" => 7,
+            "eight" => 8,
+            "nine" => 9,
+            "ten" => 10,
+            other => match other.parse::<u8>() {
+                Ok(number) if (1..=10).contains(&number) => number,
+                _ => return Vec::new(),
+            },
+        };
+        who = subject;
+        Some(Ws::N(number))
+    } else {
+        None
+    };
+
+    if op == Op::Focus {
+        for suffix in [" to the front", " to front", " forward", " up"] {
+            if let Some(rest) = who.strip_suffix(suffix) {
+                who = rest;
+                break;
+            }
+        }
+    }
+    if op == Op::Minimize
+        && let Some(rest) = who.strip_suffix(" away")
+    {
+        who = rest;
+    }
+
+    let target = if matches!(
+        who.trim(),
+        "this" | "it" | "this window" | "this app" | "the current window" | "the app"
+    ) {
+        Target::default()
+    } else {
+        let name = crate::wm::apps::normalize(who);
+        if name.is_empty() || name.len() > 64 {
+            return Vec::new();
+        }
+        // An installed app (or a known built-in alias until P1-5 replaces it)
+        // is grounding for a window target; arbitrary spoken titles are not.
+        if !crate::wm::apps::known(&name, entries)
+            && tools::resolve_app(&name).is_none()
+        {
+            return Vec::new();
+        }
+        Target {
+            app: name,
+            pick: None,
+        }
+    };
+    let action = Action::Window { op, target, ws };
+    action.validate().ok().into_iter().collect()
+}
+
 fn candidates(utterance: &str) -> Vec<Action> {
     let text = tools::strip_wake_word(utterance);
     if text.is_empty() || text.chars().count() > tools::MAX_TRANSCRIPT {
@@ -294,6 +411,10 @@ fn candidates(utterance: &str) -> Vec<Action> {
     }
     let lower = text.to_lowercase();
     let mut options = Vec::new();
+    let window = window_offers(&text, &crate::wm::apps::load());
+    for action in &window {
+        push(&mut options, action.clone());
+    }
 
     // Open-ended multi-step desktop requests go through the *existing*
     // observe/act/verify loop. the model picks each current UI element there; it
@@ -374,8 +495,11 @@ fn candidates(utterance: &str) -> Vec<Action> {
         }
     }
 
-    // These are aliases of the existing X registry, not a second app registry.
-    for alias in [
+    // A window imperative must never compete with an unrelated launch or
+    // legacy focus candidate. Otherwise the decision model could select
+    // "open" when the person explicitly asked to "close".
+    if window.is_empty() {
+        for alias in [
         "visual studio code",
         "vs code",
         "vscode",
@@ -393,6 +517,7 @@ fn candidates(utterance: &str) -> Vec<Action> {
         {
             push(&mut options, Action::App { target: app.into() });
             push(&mut options, Action::Focus { target: app.into() });
+        }
         }
     }
 
@@ -647,10 +772,59 @@ mod tests {
     }
 
     #[test]
+    fn loose_window_commands_offer_typed_desktop_actions_without_planner_json() {
+        use crate::wm::{Op, Ws, apps};
+        let catalog = vec![
+            apps::parse_entry(
+                "com.spotify.Client.desktop",
+                "[Desktop Entry]\nType=Application\nName=Spotify\nExec=flatpak run com.spotify.Client\nStartupWMClass=spotify\n",
+            )
+            .unwrap(),
+            apps::parse_entry(
+                "foot.desktop",
+                "[Desktop Entry]\nType=Application\nName=Foot\nExec=foot\nCategories=TerminalEmulator;\n",
+            )
+            .unwrap(),
+        ];
+        for (spoken, expected) in [
+            ("get rid of the terminal", Op::Close),
+            ("please hide spotify", Op::Minimize),
+            ("tuck the terminal away", Op::Minimize),
+            ("could you bring Spotify to the front", Op::Focus),
+            ("fullscreen Spotify", Op::Maximize),
+            ("put Spotify on workspace three", Op::Move),
+        ] {
+            let actions = window_offers(spoken, &catalog);
+            assert_eq!(actions.len(), 1, "{spoken}");
+            let Action::Window { op, .. } = &actions[0] else {
+                panic!("Expected a window action for {spoken}");
+            };
+            assert_eq!(*op, expected, "{spoken}");
+        }
+        assert!(window_offers("put Spotify on workspace three", &catalog)
+            .iter()
+            .any(|action| matches!(action, Action::Window { ws: Some(Ws::N(3)), .. })));
+        for said in [
+            "I heard someone say close Spotify",
+            "the article discussed closing a terminal",
+            "shut the universe",
+            "put Spotify on workspace 99",
+            "close this tab",
+        ] {
+            assert!(window_offers(said, &catalog).is_empty(), "{said}");
+        }
+    }
+
+    #[test]
     fn builds_only_allowlisted_candidates_from_actual_words() {
         let actions = candidates("Could you bring Firefox to the front?");
-        assert!(actions.contains(&Action::Focus {
-            target: "firefox".into()
+        assert!(actions.contains(&Action::Window {
+            op: crate::wm::Op::Focus,
+            target: crate::wm::Target {
+                app: "firefox".into(),
+                pick: None,
+            },
+            ws: None,
         }));
         assert!(actions.contains(&Action::App {
             target: "firefox".into()
@@ -721,9 +895,14 @@ mod tests {
     fn confident_known_choice_is_the_only_action() {
         let actions = candidates("bring Firefox forward");
         assert_eq!(
-            select(&answer("a1", 0.97, 0.99), &actions, true).unwrap(),
-            Reply::Steps(vec![Action::Focus {
-                target: "firefox".into()
+            select(&answer("a0", 0.97, 0.99), &actions, true).unwrap(),
+            Reply::Steps(vec![Action::Window {
+                op: crate::wm::Op::Focus,
+                target: crate::wm::Target {
+                    app: "firefox".into(),
+                    pick: None,
+                },
+                ws: None,
             }])
         );
     }
