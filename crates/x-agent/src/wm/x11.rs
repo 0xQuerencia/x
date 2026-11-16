@@ -206,6 +206,87 @@ impl Backend for X11 {
 mod tests {
     use super::*;
 
+    /// This is run only inside a disposable Xvfb + Openbox session in CI.
+    /// No other window is touched or closed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires an isolated Xvfb display, Openbox, wmctrl, xprop and xterm"]
+    fn live_x11_ewmh() {
+        use std::time::Duration;
+        let mut child = Command::new("xterm")
+            .args(["-class", "XWMLive", "-title", "XWMLiveTest", "-e", "sleep", "90"])
+            .stdin(Stdio::null())
+            .spawn()
+            .expect("xterm available in isolated test session");
+        let backend = X11;
+        let own = || {
+            backend
+                .windows()
+                .unwrap()
+                .into_iter()
+                .find(|w| w.title == "XWMLiveTest")
+        };
+        for _ in 0..50 {
+            if own().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let original = own().expect("isolated test window never appeared");
+        assert!(original.pid > 0);
+        backend.run(&Cmd::Focus(original.id.clone())).unwrap();
+        assert_eq!(backend.focused().unwrap(), Some(original.id.clone()));
+
+        backend.run(&Cmd::Move {
+            win: original.id.clone(),
+            to: Place::N(2),
+        }).unwrap();
+        for _ in 0..20 {
+            if own().is_some_and(|w| w.workspace == 2) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(own().unwrap().workspace, 2);
+        backend.run(&Cmd::Move {
+            win: original.id.clone(),
+            to: original.place.clone(),
+        }).unwrap();
+        for _ in 0..20 {
+            if own().is_some_and(|w| w.workspace == original.workspace) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(own().unwrap().workspace, original.workspace);
+
+        backend.run(&Cmd::Maximize {
+            win: original.id.clone(),
+            on: true,
+        }).unwrap();
+        for _ in 0..20 {
+            if own().is_some_and(|w| w.maximized) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(own().unwrap().maximized);
+        backend.run(&Cmd::Maximize {
+            win: original.id.clone(),
+            on: false,
+        }).unwrap();
+        backend.run(&Cmd::Close(original.id.clone())).unwrap();
+        for _ in 0..40 {
+            if own().is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(own().is_none(), "Close must be verified, never assumed");
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
     #[test]
     fn parses_stable_ewmh_window_identity_and_workspace() {
         let listing = concat!(
