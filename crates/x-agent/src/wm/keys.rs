@@ -207,13 +207,78 @@ fn config_files() -> Vec<PathBuf> {
     files
 }
 
+/// Read active keybindings from the compositor when available; a parsed
+/// config may be stale after runtime remaps. Anonymous Lua dispatchers have
+/// no human-readable action and are intentionally skipped.
+fn parse_live_hyprland(text: &str) -> Vec<Bind> {
+    let Ok(list) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Vec::new();
+    };
+    let Some(list) = list.as_array() else {
+        return Vec::new();
+    };
+    list.iter()
+        .take(512)
+        .filter_map(|entry| {
+            let mask = entry.get("modmask")?.as_u64()?;
+            let key = entry.get("key")?.as_str()?.trim();
+            let action = entry.get("dispatcher")?.as_str()?.trim();
+            let arg = entry.get("arg").and_then(serde_json::Value::as_str).unwrap_or("");
+            if key.is_empty() || key.chars().count() > 64
+                || action.is_empty() || action.starts_with("__")
+                || entry.get("submap").and_then(serde_json::Value::as_str).is_some_and(|s| !s.is_empty())
+            {
+                return None;
+            }
+            // Hyprland uses XKB modifier masks: Shift=1, Ctrl=4, Alt=8,
+            // Mod4/Super=64. Ignore unknown masks rather than guessing.
+            if mask & !(1 | 4 | 8 | 64) != 0 {
+                return None;
+            }
+            let mods = [
+                ((mask & 64 != 0), "SUPER"),
+                ((mask & 4 != 0), "CTRL"),
+                ((mask & 8 != 0), "ALT"),
+                ((mask & 1 != 0), "SHIFT"),
+            ];
+            let mut parts: Vec<&str> = mods.iter().filter(|(on, _)| *on).map(|(_, m)| *m).collect();
+            parts.push(key);
+            let combo = canonical(&parts.join("+"))?;
+            Some(Bind {
+                combo,
+                action: clip(&format!("{action} {arg}")),
+            })
+        })
+        .collect()
+}
+
+fn live_hyprland() -> Vec<Bind> {
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
+        return Vec::new();
+    }
+    let Ok(output) = std::process::Command::new("hyprctl")
+        .args(["binds", "-j"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() || output.stdout.len() > MAX_FILE as usize {
+        return Vec::new();
+    }
+    std::str::from_utf8(&output.stdout)
+        .map(parse_live_hyprland)
+        .unwrap_or_default()
+}
+
 fn read_all() -> Vec<Bind> {
-    let mut out: Vec<Bind> = Vec::new();
+    let mut out: Vec<Bind> = live_hyprland();
     for file in config_files().into_iter().take(MAX_FILES) {
         let ok = std::fs::metadata(&file).is_ok_and(|m| m.is_file() && m.len() <= MAX_FILE);
         if let Some(text) = ok.then(|| std::fs::read_to_string(&file).ok()).flatten() {
             for bind in parse(&file, &text) {
-                if !out.contains(&bind) {
+                // Registered live binds win over a guessed config file; a
+                // Lua callback without a named action still uses config text.
+                if !out.iter().any(|current| current.combo == bind.combo) {
                     out.push(bind);
                 }
             }
@@ -368,6 +433,25 @@ mod tests {
 
     fn binds() -> Vec<Bind> {
         lua_binds(LUA)
+    }
+
+    #[test]
+    fn live_hyprland_bindings_use_registered_action_not_config_guess() {
+        let data = serde_json::json!([
+            {"modmask":64,"key":"Q","dispatcher":"killactive","arg":"","submap":""},
+            {"modmask":68,"key":"RETURN","dispatcher":"exec","arg":"foot","submap":""},
+            {"modmask":64,"key":"R","dispatcher":"__lua","arg":"4","submap":""},
+            {"modmask":64,"key":"X","dispatcher":"exec","arg":"hidden","submap":"resize"},
+            {"modmask":0,"key":"Print","dispatcher":"exec","arg":"grim","submap":""}
+        ]);
+        let binds = parse_live_hyprland(&data.to_string());
+        assert_eq!(binds.len(), 3);
+        assert_eq!(binds[0].combo, "SUPER+Q");
+        assert_eq!(binds[0].action, "killactive");
+        assert_eq!(binds[1].combo, "SUPER+CTRL+Return");
+        assert_eq!(binds[1].action, "exec foot");
+        assert_eq!(binds[2].combo, "Print");
+        assert!(parse_live_hyprland("{broken json").is_empty());
     }
 
     #[test]
