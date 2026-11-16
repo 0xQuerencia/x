@@ -1791,8 +1791,13 @@ mod tests {
 
     #[test]
     fn key_storage_is_private_and_replaces_atomically() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("openrouter-key");
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("x-private-key-test-{}-{id}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("openrouter-key");
         save_agent_key(&path, b"sk-first\n").unwrap();
         save_agent_key(&path, b"sk-new\n").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "sk-new");
@@ -1806,6 +1811,8 @@ mod tests {
         }
         assert!(save_agent_key(&path, b"bad key").is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "sk-new");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 
     #[test]
