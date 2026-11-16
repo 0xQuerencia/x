@@ -81,8 +81,7 @@ impl AgentPane {
         let serialized = serde_json::to_string(&snapshot).unwrap_or_default();
         let listed = (self.show_workflows || self.show_quick) && self.workflows.refresh();
         let can_undo = snapshot.phase == Phase::Completed
-            && (::x_agent::wm::recent_undo_available()
-                || ::x_agent::sys::recent_undo_available());
+            && (::x_agent::wm::recent_undo_available() || ::x_agent::sys::recent_undo_available());
         let undo_changed = can_undo != self.undo_visible;
         self.undo_visible = can_undo;
         if serialized == self.shown {
@@ -595,8 +594,7 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
         }
     }
     if snapshot.phase == Phase::Completed
-        && (::x_agent::wm::recent_undo_available()
-            || ::x_agent::sys::recent_undo_available())
+        && (::x_agent::wm::recent_undo_available() || ::x_agent::sys::recent_undo_available())
     {
         card = card.child(button(
             p,
