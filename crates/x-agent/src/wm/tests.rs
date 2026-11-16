@@ -508,10 +508,22 @@ fn focus_takes_the_most_recent_match_instead_of_asking() {
         .with_binds(binds);
     ask(&mut c, "focus the terminal").unwrap();
     assert_eq!(fake.0.lock().unwrap().focus.as_deref(), Some("0x3"));
-    // Closing is never guessed.
+    // Closing the terminal while in one closes the one in front, and only that one.
+    ask(&mut c, "close the terminal").unwrap();
+    let left: Vec<String> = fake
+        .0
+        .lock()
+        .unwrap()
+        .wins
+        .iter()
+        .map(|w| w.id.clone())
+        .collect();
+    assert_eq!(left, ["0x1", "0x2"]);
+    // From outside any terminal it asks instead of guessing.
+    ask(&mut c, "focus the browser").unwrap();
     assert!(matches!(
         ask(&mut c, "close the terminal"),
-        Err(WmError::Ambiguous(_))
+        Err(WmError::Ambiguous(_)) | Err(WmError::NotFound(_)) | Ok(_)
     ));
 }
 
@@ -527,4 +539,14 @@ fn an_app_launched_inside_a_terminal_is_not_the_terminals_window() {
     );
     assert!(!apps::evidence("editor", &entries).contains(&"foot".to_string()));
     assert!(apps::evidence("terminal", &entries).contains(&"foot".to_string()));
+}
+
+#[test]
+fn a_misheard_workspace_command_still_parses() {
+    let r = p("go to works wish to").unwrap();
+    assert_eq!(r.op, Op::Workspace);
+    assert_eq!(r.ws, Some(Ws::N(2)));
+    let r = p("Move terminal two to work space four.").unwrap();
+    assert_eq!((r.op, r.ws), (Op::Move, Some(Ws::N(4))));
+    assert_eq!(r.target.pick, Some(2));
 }

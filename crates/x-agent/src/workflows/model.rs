@@ -323,7 +323,11 @@ fn check_action(action: &StepAction, home: &Path) -> Result<(), String> {
             check_text("The action phrase", phrase)?;
             let actions = tools::plan_rules(phrase)
                 .ok_or("X does not understand that phrase as a built-in action")?;
-            if !tools::is_low_risk(&actions) {
+            // A saved workflow repeats unattended, so closing windows stays a person's call.
+            let closes = actions.iter().any(
+                |a| matches!(a, tools::Action::Window { op, .. } if *op == crate::wm::Op::Close),
+            );
+            if closes || !tools::is_low_risk(&actions) {
                 return Err(
                     "That action needs approval each time, so it cannot be a workflow step".into(),
                 );

@@ -973,15 +973,15 @@ pub fn wait_for_launched_focus() -> Result<(), String> {
     Err("The launched app's window never took focus, so nothing was typed".into())
 }
 
-/// Whether a plan may run without asking once the person trusts Actions: launches and
-/// searches, and typing only straight after a launch (so the text lands in the new window).
+/// Whether a plan may run without asking once the person trusts Actions: launches,
+/// searches, window changes (a polite close included) and typing only straight after a launch (so the text lands in the new window).
 pub fn is_low_risk(actions: &[Action]) -> bool {
     actions.iter().enumerate().all(|(i, action)| match action {
         Action::Type { .. } => i > 0 && actions[i - 1].launches_window(),
         Action::Session { .. } => actions.len() == 1,
         Action::Computer { .. } => false,
         Action::Copy { .. } => true,
-        Action::Window { op, .. } => !matches!(op, crate::wm::Op::Close),
+        Action::Window { .. } => true,
         _ => true,
     })
 }
