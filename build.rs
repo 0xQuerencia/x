@@ -193,8 +193,8 @@ fn test_build_commit() {
     }
 }
 
-/// Gives the executable its icon and the "Hex" name Explorer and Task
-/// Manager show, whatever the file is called.
+/// Embeds Windows Explorer/Task Manager product metadata. X preview builds
+/// carry an X identity; upstream Hex builds keep their existing identity.
 #[cfg(windows)]
 fn embed_windows_resources() {
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
