@@ -17,16 +17,30 @@ fn corpus_distinguishes_actions_from_dictation_without_model_calls() {
         match expected {
             "NONE" => {
                 negatives += 1;
-                assert!(plan.is_none(), "line {}: dictation was claimed as a command: {heard:?}", i + 1);
+                assert!(
+                    plan.is_none(),
+                    "line {}: dictation was claimed as a command: {heard:?}",
+                    i + 1
+                );
             }
             "ACTION" => {
                 actions += 1;
-                assert!(plan.is_some(), "line {}: an expected command was missed: {heard:?}", i + 1);
+                assert!(
+                    plan.is_some(),
+                    "line {}: an expected command was missed: {heard:?}",
+                    i + 1
+                );
                 assert!(!plan.unwrap().is_empty(), "line {}: empty plan", i + 1);
             }
             _ => panic!("line {}: unknown corpus classification", i + 1),
         }
     }
-    assert!(negatives >= 200, "must exercise at least 200 non-command sentences");
-    assert!(actions >= 10, "must retain an explicit supported-command subset");
+    assert!(
+        negatives >= 200,
+        "must exercise at least 200 non-command sentences"
+    );
+    assert!(
+        actions >= 10,
+        "must retain an explicit supported-command subset"
+    );
 }
