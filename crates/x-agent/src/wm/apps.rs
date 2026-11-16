@@ -13,6 +13,13 @@ const MAX_FILE: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Entry {
+    /// Desktop-file ID and source file, used only for launching a catalog match.
+    pub id: String,
+    pub path: PathBuf,
+    /// The freedesktop Exec and Terminal fields are retained as data. Actual
+    /// launching is delegated to GLib's desktop-entry implementation, not a shell.
+    pub exec: String,
+    pub terminal: bool,
     /// Lowercase things a person may call it: name, generic name, keywords, id, program.
     pub names: Vec<String>,
     /// Lowercase freedesktop categories, such as `webbrowser` or `terminalemulator`.
@@ -117,6 +124,7 @@ pub fn parse_entry(id: &str, text: &str) -> Option<Entry> {
         let value = value.trim();
         match key.trim() {
             "Type" => is_app = value == "Application",
+            "Terminal" => entry.terminal = value.eq_ignore_ascii_case("true"),
             "Hidden" | "NoDisplay" if value.eq_ignore_ascii_case("true") => return None,
             "Name" | "GenericName" => entry.names.push(value.to_ascii_lowercase()),
             "Keywords" => entry.names.extend(
@@ -133,6 +141,7 @@ pub fn parse_entry(id: &str, text: &str) -> Option<Entry> {
             ),
             "StartupWMClass" => entry.classes.push(value.to_ascii_lowercase()),
             "Exec" => {
+                entry.exec = value.to_string();
                 if let Some(p) = program(value) {
                     entry.names.push(p.clone());
                     entry.classes.push(p);
@@ -145,6 +154,7 @@ pub fn parse_entry(id: &str, text: &str) -> Option<Entry> {
         return None;
     }
     let id = id.trim_end_matches(".desktop").to_ascii_lowercase();
+    entry.id = id.clone();
     if let Some(last) = id.rsplit('.').next().filter(|l| *l != id) {
         entry.names.push(last.to_string());
         entry.classes.push(last.to_string());
@@ -220,6 +230,8 @@ fn scan_paths(paths: &[PathBuf]) -> Vec<Entry> {
                 .flatten()
                 .and_then(|text| parse_entry(id, &text))
             {
+                let mut entry = entry;
+                entry.path = path;
                 out.push(entry);
             }
         }
@@ -238,6 +250,48 @@ fn scan_paths(paths: &[PathBuf]) -> Vec<Entry> {
 
 fn scan() -> Vec<Entry> {
     scan_paths(&dirs())
+}
+
+/// Exact installed application lookup. Do not use fuzzy matching for launch:
+/// an ambiguous name or an entry with no source file does not execute.
+pub fn installed(name: &str) -> Option<Entry> {
+    installed_in(name, &load())
+}
+
+fn installed_in(name: &str, entries: &[Entry]) -> Option<Entry> {
+    let name = normalize(name);
+    if name.is_empty() || name.len() > 128 || name.chars().any(char::is_control) {
+        return None;
+    }
+    let mut matches = entries
+        .iter()
+        .filter(|entry| {
+            !entry.path.as_os_str().is_empty() && entry.names.iter().any(|n| n == &name)
+        });
+    let found = matches.next()?.clone();
+    matches.next().is_none().then_some(found)
+}
+
+/// GLib parses Exec, file placeholders, quoting and Flatpak launch wrappers
+/// according to the Desktop Entry specification. Nothing reaches a shell.
+pub fn launch_argv(
+    entry: &Entry,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Result<Vec<String>, String> {
+    if entry.path.as_os_str().is_empty()
+        || !entry.path.is_absolute()
+        || !entry.path.is_file()
+        || entry.id.is_empty()
+    {
+        return Err("Desktop application has no valid source file".into());
+    }
+    if let Some(gio) = resolve("gio") {
+        return Ok(vec![gio, "launch".into(), entry.path.display().to_string()]);
+    }
+    if let Some(gtk_launch) = resolve("gtk-launch") {
+        return Ok(vec![gtk_launch, entry.id.clone()]);
+    }
+    Err("An installed app needs gio or gtk-launch to start (install GLib utilities)".into())
 }
 
 static CACHE: Mutex<Option<(Instant, Vec<Entry>)>> = Mutex::new(None);
@@ -362,6 +416,47 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn desktop_exec_is_kept_as_data_not_a_shell_command() {
+        let mut app = parse_entry(
+            "com.spotify.Client.desktop",
+            "[Desktop Entry]\\nType=Application\\nName=Spotify\\nExec=flatpak run com.spotify.Client %U\\nTerminal=false\\nStartupWMClass=spotify\\n",
+        );
+        // The launcher does not interpret a Flatpak Exec or generate a shell command.
+        assert!(app.take().is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installed_app_uses_glib_launcher_and_rejects_ambiguity() {
+        let temp = tempfile::tempdir().unwrap();
+        let desktop = temp.path().join("com.spotify.Client.desktop");
+        std::fs::write(
+            &desktop,
+            "[Desktop Entry]\\nType=Application\\nName=Spotify\\nExec=flatpak run com.spotify.Client %U\\n",
+        )
+        .unwrap();
+        let mut entry =
+            parse_entry("com.spotify.Client.desktop", &std::fs::read_to_string(&desktop).unwrap())
+                .unwrap();
+        entry.path = desktop.clone();
+        assert_eq!(entry.id, "com.spotify.client");
+        assert_eq!(entry.exec, "flatpak run com.spotify.Client %U");
+        assert!(!entry.terminal);
+        assert_eq!(installed_in("Spotify", &[entry.clone()]), Some(entry.clone()));
+        assert!(installed_in("Spotify", &[entry.clone(), entry.clone()]).is_none());
+        assert_eq!(
+            launch_argv(&entry, &|bin| (bin == "gio").then(|| "/usr/bin/gio".into())).unwrap(),
+            ["/usr/bin/gio", "launch", desktop.to_str().unwrap()]
+        );
+        assert_eq!(
+            launch_argv(&entry, &|bin| (bin == "gtk-launch").then(|| "/usr/bin/gtk-launch".into()))
+                .unwrap(),
+            ["/usr/bin/gtk-launch", "com.spotify.client"]
+        );
+        assert!(launch_argv(&entry, &|_| None).is_err());
     }
 
     #[test]
