@@ -25,8 +25,10 @@ const MAX_WINDOWS: usize = 256;
 
 #[link(name = "user32")]
 unsafe extern "system" {
-    fn EnumWindows(callback: Option<unsafe extern "system" fn(Hwnd, isize) -> i32>, data: isize)
-        -> i32;
+    fn EnumWindows(
+        callback: Option<unsafe extern "system" fn(Hwnd, isize) -> i32>,
+        data: isize,
+    ) -> i32;
     fn GetForegroundWindow() -> Hwnd;
     fn GetWindowThreadProcessId(window: Hwnd, process: *mut u32) -> u32;
     fn GetWindowTextW(window: Hwnd, text: *mut u16, capacity: i32) -> i32;
@@ -72,10 +74,7 @@ fn parse_id(id: &str) -> Option<(usize, u32)> {
         return None;
     }
     let handle = usize::from_str_radix(raw, 16).ok().filter(|h| *h != 0)?;
-    let pid = parts[2]
-        .parse::<u32>()
-        .ok()
-        .filter(|pid| *pid != 0)?;
+    let pid = parts[2].parse::<u32>().ok().filter(|pid| *pid != 0)?;
     Some((handle, pid))
 }
 
@@ -199,7 +198,13 @@ impl Backend for Win11 {
     }
 
     fn caps(&self) -> Vec<Cap> {
-        vec![Cap::List, Cap::Focus, Cap::Maximize, Cap::Minimize, Cap::Close]
+        vec![
+            Cap::List,
+            Cap::Focus,
+            Cap::Maximize,
+            Cap::Minimize,
+            Cap::Close,
+        ]
     }
 
     fn windows(&self) -> Result<Vec<WinInfo>, WmError> {
@@ -207,7 +212,9 @@ impl Backend for Win11 {
         // SAFETY: valid callback and borrowed Vec, used synchronously.
         let ok = unsafe { EnumWindows(Some(enumerate), &mut out as *mut _ as isize) };
         if ok == 0 {
-            return Err(WmError::Backend("Windows refused window enumeration".into()));
+            return Err(WmError::Backend(
+                "Windows refused window enumeration".into(),
+            ));
         }
         Ok(out)
     }
@@ -281,9 +288,16 @@ mod tests {
     #[test]
     fn window_handles_cannot_be_injected_or_rebound_to_another_process() {
         for bad in [
-            "", "win:0:1", "win:123:0", "win:123", "win:123:4:5",
-            "win:123:7;echo", "win:-12:4", "win:0x12:4",
-            "win:12345678901234567:4", "win:12:4294967296",
+            "",
+            "win:0:1",
+            "win:123:0",
+            "win:123",
+            "win:123:4:5",
+            "win:123:7;echo",
+            "win:-12:4",
+            "win:0x12:4",
+            "win:12345678901234567:4",
+            "win:12:4294967296",
         ] {
             assert!(parse_id(bad).is_none(), "{bad}");
         }
