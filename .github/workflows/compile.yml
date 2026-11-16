@@ -61,7 +61,8 @@ jobs:
             libssl-dev libgtk-3-dev libxkbcommon-x11-dev libx11-xcb-dev \
             libfontconfig1-dev libfreetype-dev libxcursor-dev libxi-dev \
             libxrandr-dev libopenblas-dev libvulkan-dev glslc libshaderc-dev \
-            sway foot dbus-x11 mesa-vulkan-drivers
+            sway foot dbus-x11 mesa-vulkan-drivers \
+            xvfb openbox xterm wmctrl x11-utils xdotool
       - name: Check Linux installer and benchmark shell syntax
         run: |
           bash -n scripts/install-arch.sh
@@ -77,6 +78,8 @@ jobs:
       - run: cargo test --locked -p x-agent --all-targets
       - name: Real window operations under headless Sway
         run: bash scripts/smoke-x/sway-ci.sh
+      - name: Real EWMH window operations in disposable Xvfb and Openbox
+        run: bash scripts/smoke-x/x11-ci.sh
       # Clock-based desktop controls live in the Hex binary, not x-agent.
       - run: cargo test --locked --bin hex audio::clock_deadline::tests
 

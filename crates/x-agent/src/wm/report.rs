@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::hypr::Hypr;
 use super::i3::I3;
+use super::x11::X11;
 use super::{Backend, Cap};
 
 #[derive(Debug, Serialize)]
@@ -41,12 +42,23 @@ pub fn detect() -> Result<Box<dyn Backend>, String> {
             label: "i3",
         }));
     }
+    // Avoid mistaking XWayland's DISPLAY for the real window-management
+    // session. Only a native X11 session gets this EWMH backend.
+    if env("XDG_SESSION_TYPE").eq_ignore_ascii_case("x11")
+        && !env("DISPLAY").is_empty()
+        && has("wmctrl")
+        && has("xprop")
+    {
+        return Ok(Box::new(X11));
+    }
     Err(unsupported_note())
 }
 
 fn unsupported_note() -> String {
     let desktop = env("XDG_CURRENT_DESKTOP").to_ascii_lowercase();
-    let why = if desktop.contains("kde") {
+    let why = if env("XDG_SESSION_TYPE").eq_ignore_ascii_case("x11") {
+        "X11 window control requires an active DISPLAY and the wmctrl and xprop helpers"
+    } else if desktop.contains("kde") {
         "KDE Plasma needs a KWin scripting backend, which X does not have yet"
     } else if desktop.contains("gnome") {
         "GNOME Wayland exposes no window control to other apps; X has no extension backend yet"
@@ -90,15 +102,25 @@ pub struct Doctor {
     pub ready: bool,
 }
 
-fn probe_with(hyprland: bool, has: impl Fn(&str) -> bool) -> Vec<DoctorCheck> {
+fn probe_with(backend: &str, has: impl Fn(&str) -> bool) -> Vec<DoctorCheck> {
+    let hyprland = backend == "Hyprland";
+    let wayland = hyprland || backend == "Sway";
+    let x11 = backend == "X11 EWMH";
     [
         (
             "hyprctl",
             "Hyprland window inspection and control",
             hyprland,
         ),
-        ("wtype", "Safe Wayland typing into a focused window", true),
-        ("grim", "On-demand Wayland screenshots", true),
+        ("wmctrl", "EWMH X11 window control", x11),
+        ("xprop", "X11 window identity and state verification", x11),
+        ("xdotool", "Optional X11 window minimization", false),
+        (
+            "wtype",
+            "Safe Wayland typing into a focused window",
+            wayland,
+        ),
+        ("grim", "On-demand Wayland screenshots", wayland),
         ("slurp", "Interactive screenshot region selection", false),
         ("wl-copy", "Wayland clipboard writing", false),
         ("curl", "Remote free Decider transport", false),
@@ -124,7 +146,7 @@ fn probe_with(hyprland: bool, has: impl Fn(&str) -> bool) -> Vec<DoctorCheck> {
 /// Environment entries describe this CLI process, not the running systemd unit.
 pub fn doctor(key_path: Option<&Path>) -> Doctor {
     let desktop = report();
-    let checks = probe_with(desktop.backend.as_deref() == Some("Hyprland"), has);
+    let checks = probe_with(desktop.backend.as_deref().unwrap_or(""), has);
     let key = key_path.and_then(|path| std::fs::metadata(path).ok());
     let key_present = std::env::var_os("OPENROUTER_API_KEY").is_some() || key.is_some();
     #[cfg(unix)]
@@ -223,7 +245,7 @@ mod doctor_tests {
 
     #[test]
     fn missing_dependency_is_named_and_fails_readiness() {
-        let checks = probe_with(true, |bin| bin != "wtype");
+        let checks = probe_with("Hyprland", |bin| bin != "wtype");
         assert!(
             checks
                 .iter()
@@ -233,9 +255,25 @@ mod doctor_tests {
     }
 
     #[test]
+    fn x11_doctor_requires_ewmh_helpers_not_wayland_only_tools() {
+        let checks = probe_with("X11 EWMH", |bin| bin != "xprop");
+        assert!(
+            checks
+                .iter()
+                .any(|check| check.dependency == "xprop" && check.required && !check.installed)
+        );
+        assert!(
+            checks
+                .iter()
+                .filter(|check| check.dependency == "wtype" || check.dependency == "grim")
+                .all(|check| !check.required)
+        );
+    }
+
+    #[test]
     fn probe_lists_all_known_helpers_without_running_them() {
-        let checks = probe_with(true, |_| true);
-        assert_eq!(checks.len(), 8);
+        let checks = probe_with("Hyprland", |_| true);
+        assert_eq!(checks.len(), 11);
         assert!(checks.iter().all(|c| c.installed));
         assert!(checks.iter().any(|c| c.dependency == "curl"));
     }
