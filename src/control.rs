@@ -237,6 +237,8 @@ pub enum AgentAction {
     Approve {
         id: u64,
     },
+    /// Reverse the most recent verified, undoable window-manager change.
+    Undo,
     Stop,
     Workspace {
         path: String,

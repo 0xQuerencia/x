@@ -764,6 +764,18 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Ok(()) => ControlReply::done("Approved; running"),
             Err(error) => ControlReply::error("refused", error),
         },
+        AgentAction::Undo => {
+            use x_agent::wm::{Op, Request, Target};
+            let request = Request {
+                op: Op::Undo,
+                target: Target::default(),
+                ws: None,
+            };
+            match x_agent::wm::run(&request) {
+                Ok(outcome) => ControlReply::done(outcome.message),
+                Err(error) => ControlReply::error("refused", error.to_string()),
+            }
+        }
         AgentAction::Stop => {
             background(Service::cancel);
             ControlReply::done("Stop requested")
@@ -900,6 +912,15 @@ mod tests {
         for model in ["decider", "decider-flash"] {
             assert!(planner_for(model).is_some());
         }
+    }
+
+    #[test]
+    fn undo_is_a_distinct_control_action_not_an_approval() {
+        let action = AgentAction::Undo;
+        let json = serde_json::to_value(&action).unwrap();
+        assert_eq!(json["action"], "undo");
+        let parsed: AgentAction = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, AgentAction::Undo);
     }
 
     #[test]

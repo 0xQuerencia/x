@@ -381,6 +381,11 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Undo X's most recent verified reversible window change, when still fresh.
+    Undo {
+        #[command(flatten)]
+        output: Output,
+    },
     /// Discard the plan, drop the recording, or stop the running task.
     Stop {
         #[command(flatten)]
@@ -722,6 +727,7 @@ pub fn run(command: ControlCli) -> u8 {
                     output,
                 ),
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
+                AgentCommand::Undo { output } => (AgentAction::Undo, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
                 AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),
