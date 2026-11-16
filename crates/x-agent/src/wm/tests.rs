@@ -383,6 +383,7 @@ fn history_is_bounded() {
     assert!(c.history.len() <= UNDO_DEPTH);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn rejects_hostile_ids_in_real_backends() {
     use crate::wm::hypr::Hypr;
@@ -426,6 +427,7 @@ fn parse_phrases() {
 }
 
 /// Real Hyprland, one disposable foot window. `cargo test -- --ignored live_hyprland`.
+#[cfg(not(windows))]
 #[test]
 #[ignore = "needs a running Hyprland session"]
 fn live_hyprland() {
