@@ -115,7 +115,11 @@ fn probe_with(backend: &str, has: impl Fn(&str) -> bool) -> Vec<DoctorCheck> {
         ("wmctrl", "EWMH X11 window control", x11),
         ("xprop", "X11 window identity and state verification", x11),
         ("xdotool", "Optional X11 window minimization", false),
-        ("wtype", "Safe Wayland typing into a focused window", wayland),
+        (
+            "wtype",
+            "Safe Wayland typing into a focused window",
+            wayland,
+        ),
         ("grim", "On-demand Wayland screenshots", wayland),
         ("slurp", "Interactive screenshot region selection", false),
         ("wl-copy", "Wayland clipboard writing", false),
