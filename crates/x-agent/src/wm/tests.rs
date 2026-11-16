@@ -441,6 +441,66 @@ fn live_hyprland() {
     assert!(me(&c).is_none());
 }
 
+/// Real Sway in a headless compositor; run via scripts/smoke-x/sway-ci.sh.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires a running headless Sway compositor and foot"]
+fn live_sway() {
+    use std::process::{Command, Stdio};
+    let mut foot = Command::new("foot")
+        .args(["-a", "xwm-live", "sleep", "90"])
+        .stdin(Stdio::null())
+        .spawn()
+        .expect("foot must be installed");
+    let mut controller = Controller::new(Box::new(i3::I3 {
+        bin: "swaymsg",
+        label: "Sway",
+    }));
+    let own_window = |c: &Controller| {
+        c.backend
+            .windows()
+            .unwrap()
+            .into_iter()
+            .find(|win| win.class == "xwm-live")
+    };
+    for _ in 0..60 {
+        if own_window(&controller).is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let original = own_window(&controller).expect("Sway did not map foot");
+    assert!(original.pid > 0);
+    let target = Target {
+        app: "xwm-live".into(),
+        pick: None,
+    };
+    let request = |op, ws| Request {
+        op,
+        target: target.clone(),
+        ws,
+    };
+    let moved = controller.run(&request(Op::Move, Some(Ws::N(2)))).unwrap();
+    assert!(moved.undoable);
+    assert_eq!(own_window(&controller).unwrap().workspace, 2);
+    let restored = controller.run(&request(Op::Undo, None)).unwrap();
+    assert!(restored.message.contains("Undo"));
+    assert_eq!(
+        own_window(&controller).unwrap().workspace,
+        original.workspace
+    );
+    let maximized = controller.run(&request(Op::Maximize, None)).unwrap();
+    assert!(maximized.undoable);
+    assert!(own_window(&controller).unwrap().maximized);
+    controller.run(&request(Op::Undo, None)).unwrap();
+    assert!(!own_window(&controller).unwrap().maximized);
+    controller.run(&request(Op::Focus, None)).unwrap();
+    controller.run(&request(Op::Close, None)).unwrap();
+    assert!(own_window(&controller).is_none());
+    let _ = foot.kill();
+    let _ = foot.wait();
+}
+
 #[test]
 fn roles_reach_the_right_window_without_naming_the_app() {
     let (mut c, fake) = setup();
