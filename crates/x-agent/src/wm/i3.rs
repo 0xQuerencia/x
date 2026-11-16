@@ -49,6 +49,31 @@ impl I3 {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_pid_cannot_become_a_reversible_window_identity() {
+        let tree = serde_json::json!({
+            "type":"root",
+            "nodes":[{
+                "type":"workspace", "num":1,
+                "nodes":[
+                    {"type":"con","id":1,"app_id":"foot","name":"untrusted","pid":null,"nodes":[]},
+                    {"type":"con","id":2,"app_id":"foot","name":"safe","pid":1234,"nodes":[]}
+                ]
+            }]
+        });
+        let mut windows = Vec::new();
+        collect(&tree, 0, &mut windows, &mut None);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].id, "2");
+        assert_eq!(windows[0].pid, 1234);
+        assert_eq!(windows[0].workspace, 1);
+    }
+}
+
 fn numeric(id: &str) -> Result<&str, WmError> {
     if !id.is_empty() && id.len() <= 12 && id.chars().all(|c| c.is_ascii_digit()) {
         Ok(id)
@@ -66,8 +91,13 @@ fn collect(node: &Value, ws: i64, out: &mut Vec<WinInfo>, focus: &mut Option<Str
     let class = node["app_id"]
         .as_str()
         .or_else(|| node["window_properties"]["class"].as_str());
-    if let (Some(class), Some(id), Some(pid)) =
-        (class, node["id"].as_i64(), node["pid"].as_u64().or(Some(0)))
+    // Missing PID is not identity 0: different windows would become
+    // indistinguishable to the controller's exact-identity and undo checks.
+    let pid = node["pid"]
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|pid| *pid != 0);
+    if let (Some(class), Some(id), Some(pid)) = (class, node["id"].as_i64(), pid)
         && node["type"] == "con"
         && node["nodes"].as_array().is_none_or(|n| n.is_empty())
     {
@@ -76,7 +106,7 @@ fn collect(node: &Value, ws: i64, out: &mut Vec<WinInfo>, focus: &mut Option<Str
         }
         out.push(WinInfo {
             id: id.to_string(),
-            pid: u32::try_from(pid).unwrap_or(0),
+            pid,
             class: class.to_string(),
             title: node["name"].as_str().unwrap_or("").to_string(),
             workspace: ws,
