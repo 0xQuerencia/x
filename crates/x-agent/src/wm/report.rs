@@ -90,15 +90,23 @@ pub struct Doctor {
     pub ready: bool,
 }
 
-fn probe_with(backend_ready: bool, has: impl Fn(&str) -> bool) -> Vec<DoctorCheck> {
+fn probe_with(hyprland: bool, has: impl Fn(&str) -> bool) -> Vec<DoctorCheck> {
     [
-        ("hyprctl", "Hyprland window inspection and control", backend_ready),
+        (
+            "hyprctl",
+            "Hyprland window inspection and control",
+            hyprland,
+        ),
         ("wtype", "Safe Wayland typing into a focused window", true),
         ("grim", "On-demand Wayland screenshots", true),
         ("slurp", "Interactive screenshot region selection", false),
         ("wl-copy", "Wayland clipboard writing", false),
         ("curl", "Remote free Decider transport", false),
-        ("agent-desktop", "Accessibility computer-use helper (CLI)", false),
+        (
+            "agent-desktop",
+            "Accessibility computer-use helper (CLI)",
+            false,
+        ),
         ("opencode", "Supervised Work tasks", false),
     ]
     .into_iter()
@@ -116,7 +124,7 @@ fn probe_with(backend_ready: bool, has: impl Fn(&str) -> bool) -> Vec<DoctorChec
 /// Environment entries describe this CLI process, not the running systemd unit.
 pub fn doctor(key_path: Option<&Path>) -> Doctor {
     let desktop = report();
-    let checks = probe_with(desktop.backend.is_some(), has);
+    let checks = probe_with(desktop.backend.as_deref() == Some("Hyprland"), has);
     let key = key_path.and_then(|path| std::fs::metadata(path).ok());
     let key_present = std::env::var_os("OPENROUTER_API_KEY").is_some() || key.is_some();
     #[cfg(unix)]
@@ -157,7 +165,11 @@ impl Doctor {
     pub fn lines(&self) -> String {
         let mut lines = vec![format!(
             "X diagnostics: {}",
-            if self.ready { "ready" } else { "needs attention" }
+            if self.ready {
+                "ready"
+            } else {
+                "needs attention"
+            }
         )];
         lines.push(format!(
             "Desktop: {} ({}) | window backend: {}",
@@ -194,7 +206,11 @@ impl Doctor {
         ));
         lines.push(format!(
             "OpenRouter key: {} | owner-only file permissions: {}",
-            if self.key_present { "present" } else { "not configured" },
+            if self.key_present {
+                "present"
+            } else {
+                "not configured"
+            },
             if self.key_private { "OK" } else { "unsafe" },
         ));
         lines.join("\n")
@@ -208,7 +224,11 @@ mod doctor_tests {
     #[test]
     fn missing_dependency_is_named_and_fails_readiness() {
         let checks = probe_with(true, |bin| bin != "wtype");
-        assert!(checks.iter().any(|c| c.dependency == "wtype" && c.required && !c.installed));
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.dependency == "wtype" && c.required && !c.installed)
+        );
         assert!(!checks.iter().filter(|c| c.required).all(|c| c.installed));
     }
 
