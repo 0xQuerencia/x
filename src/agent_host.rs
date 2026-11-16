@@ -20,6 +20,7 @@ use crate::control::{AgentAction, ControlReply};
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod wake;
 mod workflows;
+pub(crate) mod heard;
 
 const DISABLED: &str = "X is off. Turn it on with `hex labs on x-agent`";
 
@@ -580,9 +581,26 @@ pub(crate) fn plan_spoken(mode: Mode, command: &str) -> bool {
         }
         return true;
     }
-    match service().plan_spoken(command, mode) {
-        Ok(_) => true,
+    // Only explicit Actions voice mode can feed the opt-in private correction
+    // history. Never inspect dictation, Smart, Auto or hands-free audio.
+    let learn = mode == Mode::Actions
+        && VOICE.load(Ordering::Relaxed) == VoiceMode::Actions as u8;
+    let candidate = if learn {
+        heard::apply(command)
+    } else {
+        command.to_string()
+    };
+    match service().plan_spoken(&candidate, mode) {
+        Ok(_) => {
+            if learn {
+                heard::record_success(&candidate);
+            }
+            true
+        }
         Err(error) if error.starts_with("Not understood") && mode == Mode::Actions => {
+            if learn {
+                heard::record_miss(command);
+            }
             service().emit(
                 "info",
                 "Not a command X knows, so it was typed as dictation",
