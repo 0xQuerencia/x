@@ -47,7 +47,9 @@ fn script(source: &str) -> Result<Value, WmError> {
         .wait_with_output()
         .map_err(|_| WmError::Backend("KWin script could not finish".into()))?;
     if !output.status.success() || output.stdout.len() > MAX_OUTPUT {
-        return Err(WmError::Backend("KWin script failed or output exceeded limit".into()));
+        return Err(WmError::Backend(
+            "KWin script failed or output exceeded limit".into(),
+        ));
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|_| WmError::Backend("KWin script did not return valid JSON".into()))
@@ -81,7 +83,9 @@ output_result(JSON.stringify({
 fn parse_window(row: &Value) -> Option<WinInfo> {
     let id = row.get("id")?.as_str()?;
     valid_id(id).ok()?;
-    let pid = u32::try_from(row.get("pid")?.as_u64()?).ok().filter(|p| *p != 0)?;
+    let pid = u32::try_from(row.get("pid")?.as_u64()?)
+        .ok()
+        .filter(|p| *p != 0)?;
     let class = row.get("class")?.as_str()?.trim();
     if class.is_empty() || class.len() > 256 {
         return None;
@@ -103,24 +107,29 @@ fn parse_window(row: &Value) -> Option<WinInfo> {
 fn request(cmd: &Cmd) -> Result<String, WmError> {
     let select = |id: &str| -> Result<String, WmError> {
         let id = valid_id(id)?;
-        let literal = serde_json::to_string(id).map_err(|_| WmError::Backend("Invalid id".into()))?;
+        let literal =
+            serde_json::to_string(id).map_err(|_| WmError::Backend("Invalid id".into()))?;
         Ok(format!(
             "var target = workspace.windowList().find(function(w) {{ return String(w.internalId) === {literal}; }});"
         ))
     };
     let (prefix, operation) = match cmd {
-        Cmd::Focus(id) => (
-            select(id)?,
-            "workspace.activeWindow = target;".to_string(),
-        ),
-        Cmd::Move { win, to: Place::N(n) } if (1..=10).contains(n) => (
+        Cmd::Focus(id) => (select(id)?, "workspace.activeWindow = target;".to_string()),
+        Cmd::Move {
+            win,
+            to: Place::N(n),
+        } if (1..=10).contains(n) => (
             select(win)?,
             format!(
                 "var d = workspace.desktops.find(function(x) {{ return Number(x.x11DesktopNumber) === {n}; }}); \
                  if (!d) {{ output_error('Desktop not found'); }} else {{ target.desktops = [d]; }}"
             ),
         ),
-        Cmd::Move { .. } => return Err(WmError::Unsupported("KDE backend cannot restore special desktops".into())),
+        Cmd::Move { .. } => {
+            return Err(WmError::Unsupported(
+                "KDE backend cannot restore special desktops".into(),
+            ));
+        }
         Cmd::Workspace(n) if (1..=10).contains(n) => (
             String::new(),
             format!(
@@ -129,10 +138,7 @@ fn request(cmd: &Cmd) -> Result<String, WmError> {
             ),
         ),
         Cmd::Workspace(_) => return Err(WmError::Unsupported("Desktop must be 1-10".into())),
-        Cmd::Maximize { win, on } => (
-            select(win)?,
-            format!("target.setMaximize({}, {});", on, on),
-        ),
+        Cmd::Maximize { win, on } => (select(win)?, format!("target.setMaximize({}, {});", on, on)),
         Cmd::Minimize { win } => (select(win)?, "target.minimized = true;".to_string()),
         Cmd::Close(id) => (select(id)?, "target.closeWindow();".to_string()),
     };
@@ -140,7 +146,9 @@ fn request(cmd: &Cmd) -> Result<String, WmError> {
     let guard = if prefix.is_empty() {
         operation
     } else {
-        format!("{prefix}\nif (!target) {{ output_error('Window is gone'); }} else {{ {operation} }}")
+        format!(
+            "{prefix}\nif (!target) {{ output_error('Window is gone'); }} else {{ {operation} }}"
+        )
     };
     Ok(format!(
         "{guard}\noutput_result(JSON.stringify({{ok:true}}));"
@@ -166,7 +174,8 @@ impl Backend for Kde {
 
     fn windows(&self) -> Result<Vec<WinInfo>, WmError> {
         let reply = script(READ)?;
-        Ok(reply.get("windows")
+        Ok(reply
+            .get("windows")
             .and_then(Value::as_array)
             .ok_or_else(|| WmError::Backend("KWin has no window list".into()))?
             .iter()
@@ -177,7 +186,8 @@ impl Backend for Kde {
 
     fn focused(&self) -> Result<Option<String>, WmError> {
         let reply = script(READ)?;
-        Ok(reply.get("focused")
+        Ok(reply
+            .get("focused")
             .and_then(Value::as_str)
             .and_then(|id| valid_id(id).ok())
             .map(String::from))
@@ -209,8 +219,13 @@ mod tests {
 
     #[test]
     fn only_kwin_internal_uuids_can_enter_scripts() {
-        for bad in ["", "0x1", "123", "{abc}; close()", "{12345678-1234-1234-1234-123456789abc};",
-            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n"
+        for bad in [
+            "",
+            "0x1",
+            "123",
+            "{abc}; close()",
+            "{12345678-1234-1234-1234-123456789abc};",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n",
         ] {
             assert!(valid_id(bad).is_err(), "{bad:?}");
             assert!(request(&Cmd::Close(bad.into())).is_err());
@@ -240,7 +255,20 @@ mod tests {
     #[test]
     fn refuses_special_desktops_and_unsupported_numbers() {
         assert!(request(&Cmd::Workspace(11)).is_err());
-        assert!(request(&Cmd::Move { win: ID.into(), to: Place::Special("special:test".into()) }).is_err());
-        assert!(request(&Cmd::Maximize { win: ID.into(), on: true }).unwrap().contains("setMaximize"));
+        assert!(
+            request(&Cmd::Move {
+                win: ID.into(),
+                to: Place::Special("special:test".into())
+            })
+            .is_err()
+        );
+        assert!(
+            request(&Cmd::Maximize {
+                win: ID.into(),
+                on: true
+            })
+            .unwrap()
+            .contains("setMaximize")
+        );
     }
 }
