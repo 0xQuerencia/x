@@ -26,11 +26,11 @@ pub mod screenshots;
 pub mod service;
 pub mod sys;
 pub mod tools;
-pub mod wm;
 #[cfg(windows)]
 mod windows_clipboard;
 #[cfg(windows)]
 mod windows_input;
+pub mod wm;
 pub mod workflows;
 
 /// Retry a spawn that fails with ETXTBSY: another thread forked while the executable was
