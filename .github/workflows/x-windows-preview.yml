@@ -1,0 +1,79 @@
+name: X Windows 11 preview (unsigned)
+
+# A disposable source build for testing. Never publishes a GitHub Release,
+# installer, tag, signature, or updater feed; never contacts a deployment.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/x-windows-preview.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x-win11-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    name: Windows 11 x64 preview
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      # Brand and sandbox as X; prevent self-update into a Hex installation.
+      X_BUILD: "1"
+      HEX_LOCAL_BUILD: "1"
+      HEX_TEST_BUILD: "1"
+      TRANSCRIBE_CMAKE_ARGS: -DGGML_NATIVE=OFF
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+      - name: Install the Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@30ba978f977e81b72d091fc8888feb1fb26f9aff # v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+      - name: Install SPIRV-Headers
+        shell: pwsh
+        run: |
+          vcpkg install spirv-headers:x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg installation failed" }
+          $prefix = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows" -replace '\\','/'
+          $combined = if ($env:CMAKE_PREFIX_PATH) { "$prefix;$env:CMAKE_PREFIX_PATH" } else { $prefix }
+          Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=$combined"
+      - name: Formatting and agent tests
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw "Rustfmt failed" }
+          cargo clippy --locked -p x-agent --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw "X agent Clippy failed" }
+          cargo test --locked -p x-agent --all-targets
+          if ($LASTEXITCODE -ne 0) { throw "X agent tests failed" }
+      - name: Compile unsigned X executable
+        shell: pwsh
+        run: |
+          cargo build --locked --release --bin hex
+          if ($LASTEXITCODE -ne 0) { throw "X build failed" }
+          New-Item -Type Directory -Force dist | Out-Null
+          Copy-Item target/release/hex.exe dist/x.exe
+          $sha = (Get-FileHash dist/x.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  x.exe" | Set-Content -Encoding ascii dist/SHA256SUMS
+          "Unsigned developer preview only. No real Windows 11 desktop and microphone acceptance has been recorded." |
+            Set-Content -Encoding utf8 dist/README-preview.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: x-win11-preview-${{ github.sha }}
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
