@@ -3,10 +3,16 @@
 use serde::Serialize;
 use std::path::Path;
 
+#[cfg(not(windows))]
 use super::hypr::Hypr;
+#[cfg(not(windows))]
 use super::i3::I3;
+#[cfg(not(windows))]
 use super::kde::Kde;
+#[cfg(not(windows))]
 use super::x11::X11;
+#[cfg(windows)]
+use super::win11::Win11;
 use super::{Backend, Cap};
 
 #[derive(Debug, Serialize)]
@@ -26,7 +32,14 @@ fn env(key: &str) -> String {
     std::env::var(key).unwrap_or_default()
 }
 
+/// Win32 desktop operations are native and don't depend on XDG or shell tools.
+#[cfg(windows)]
+pub fn detect() -> Result<Box<dyn Backend>, String> {
+    Ok(Box::new(Win11))
+}
+
 /// Picks a backend by what actually answers, not by `XDG_CURRENT_DESKTOP` alone.
+#[cfg(not(windows))]
 pub fn detect() -> Result<Box<dyn Backend>, String> {
     if !env("HYPRLAND_INSTANCE_SIGNATURE").is_empty() && has("hyprctl") {
         return Ok(Box::new(Hypr));
@@ -68,6 +81,7 @@ pub fn detect() -> Result<Box<dyn Backend>, String> {
     Err(unsupported_note())
 }
 
+#[cfg(not(windows))]
 fn unsupported_note() -> String {
     let desktop = env("XDG_CURRENT_DESKTOP").to_ascii_lowercase();
     let why = if env("XDG_SESSION_TYPE").eq_ignore_ascii_case("x11") {
@@ -88,11 +102,23 @@ pub fn report() -> Report {
         Err(note) => (None, Vec::new(), note),
     };
     Report {
-        desktop: env("XDG_CURRENT_DESKTOP"),
-        session: env("XDG_SESSION_TYPE"),
+        desktop: if cfg!(windows) {
+            "Windows".into()
+        } else {
+            env("XDG_CURRENT_DESKTOP")
+        },
+        session: if cfg!(windows) {
+            "Win32 interactive desktop".into()
+        } else {
+            env("XDG_SESSION_TYPE")
+        },
         backend,
         supported,
-        note,
+        note: if cfg!(windows) {
+            "Experimental Windows 11 backend: real desktop and microphone acceptance tests pending; virtual desktop indices are unsupported".into()
+        } else {
+            note
+        },
     }
 }
 
