@@ -95,7 +95,7 @@ fn write(path: &std::path::Path, store: &Store) -> Result<(), String> {
     }
     use std::io::Write;
     file.write_all(&content)
-        .map_err(|_| "Cannot save correction history")
+        .map_err(|_| "Cannot save correction history".to_string())
 }
 
 fn suitable(text: &str) -> Option<String> {
