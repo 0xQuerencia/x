@@ -52,6 +52,7 @@ pub fn detect() -> Result<Box<dyn Backend>, String> {
             .contains("kde")
         && has("kdotool")
         && !env("DBUS_SESSION_BUS_ADDRESS").is_empty()
+        && env("X_ENABLE_EXPERIMENTAL_KDE") == "1"
     {
         return Ok(Box::new(Kde));
     }
@@ -72,7 +73,7 @@ fn unsupported_note() -> String {
     let why = if env("XDG_SESSION_TYPE").eq_ignore_ascii_case("x11") {
         "X11 window control requires an active DISPLAY and the wmctrl and xprop helpers"
     } else if desktop.contains("kde") {
-        "KDE Plasma Wayland requires Plasma 6, kdotool and a working session D-Bus"
+        "KDE Plasma 6 Wayland control is experimental and disabled by default; install kdotool, ensure session D-Bus is active, then explicitly set X_ENABLE_EXPERIMENTAL_KDE=1 to test"
     } else if desktop.contains("gnome") {
         "GNOME Wayland exposes no window control to other apps; X has no extension backend yet"
     } else {
