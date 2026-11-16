@@ -177,14 +177,13 @@ impl Store {
     }
 
     fn apply(&self, heard: &str) -> String {
-        if self.enabled {
-            if let Some(row) = self
+        if self.enabled
+            && let Some(row) = self
                 .corrections
                 .iter()
                 .find(|row| row.promoted && row.heard.eq_ignore_ascii_case(heard.trim()))
-            {
-                return row.meant.clone();
-            }
+        {
+            return row.meant.clone();
         }
         heard.to_string()
     }
