@@ -293,9 +293,7 @@ fn search_terms(text: &str, lower: &str) -> Option<String> {
 fn window_offers(text: &str, entries: &[crate::wm::apps::Entry]) -> Vec<Action> {
     use crate::wm::{Op, Target, Ws};
     let lower = text.trim().to_lowercase();
-    let mut said = lower
-        .trim_end_matches(['.', '?', '!', ','])
-        .trim();
+    let mut said = lower.trim_end_matches(['.', '?', '!', ',']).trim();
     for prefix in ["please ", "could you ", "can you ", "would you ", "hey x "] {
         if let Some(rest) = said.strip_prefix(prefix) {
             said = rest.trim();
@@ -328,7 +326,7 @@ fn window_offers(text: &str, entries: &[crate::wm::apps::Entry]) -> Vec<Action> 
     ];
     let Some((op, mut who)) = patterns
         .iter()
-        .find_map(|(p, op)| said.strip_prefix(p).map(|rest| (op.clone(), rest)))
+        .find_map(|(p, op)| said.strip_prefix(p).map(|rest| ((*op).clone(), rest)))
     else {
         return Vec::new();
     };
@@ -390,9 +388,7 @@ fn window_offers(text: &str, entries: &[crate::wm::apps::Entry]) -> Vec<Action> 
         }
         // An installed app (or a known built-in alias until P1-5 replaces it)
         // is grounding for a window target; arbitrary spoken titles are not.
-        if !crate::wm::apps::known(&name, entries)
-            && tools::resolve_app(&name).is_none()
-        {
+        if !crate::wm::apps::known(&name, entries) && tools::resolve_app(&name).is_none() {
             return Vec::new();
         }
         Target {
@@ -500,24 +496,24 @@ fn candidates(utterance: &str) -> Vec<Action> {
     // "open" when the person explicitly asked to "close".
     if window.is_empty() {
         for alias in [
-        "visual studio code",
-        "vs code",
-        "vscode",
-        "editor",
-        "firefox",
-        "chromium",
-        "chrome",
-        "brave",
-        "terminal",
-        "file manager",
-        "files",
-    ] {
-        if mentions(&lower, alias)
-            && let Some(app) = tools::resolve_app(alias)
-        {
-            push(&mut options, Action::App { target: app.into() });
-            push(&mut options, Action::Focus { target: app.into() });
-        }
+            "visual studio code",
+            "vs code",
+            "vscode",
+            "editor",
+            "firefox",
+            "chromium",
+            "chrome",
+            "brave",
+            "terminal",
+            "file manager",
+            "files",
+        ] {
+            if mentions(&lower, alias)
+                && let Some(app) = tools::resolve_app(alias)
+            {
+                push(&mut options, Action::App { target: app.into() });
+                push(&mut options, Action::Focus { target: app.into() });
+            }
         }
     }
 
@@ -801,9 +797,17 @@ mod tests {
             };
             assert_eq!(*op, expected, "{spoken}");
         }
-        assert!(window_offers("put Spotify on workspace three", &catalog)
-            .iter()
-            .any(|action| matches!(action, Action::Window { ws: Some(Ws::N(3)), .. })));
+        assert!(
+            window_offers("put Spotify on workspace three", &catalog)
+                .iter()
+                .any(|action| matches!(
+                    action,
+                    Action::Window {
+                        ws: Some(Ws::N(3)),
+                        ..
+                    }
+                ))
+        );
         for said in [
             "I heard someone say close Spotify",
             "the article discussed closing a terminal",
