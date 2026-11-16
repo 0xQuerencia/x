@@ -240,7 +240,7 @@ fn transcription_entries() -> Vec<VocabularyEntry> {
     #[cfg(target_os = "linux")]
     {
         let agent = agent_entries();
-        return merged(&agent, &shared);
+        merged(&agent, &shared)
     }
     #[cfg(not(target_os = "linux"))]
     shared
