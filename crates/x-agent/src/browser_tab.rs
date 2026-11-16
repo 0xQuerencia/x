@@ -1,8 +1,10 @@
 //! Browser tab shortcuts: a fixed, local key mapping guarded by compositor
 //! focus identity and the installed app's freedesktop WebBrowser category.
+#[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
+#[cfg(any(target_os = "linux", test))]
 use crate::wm::{self, View, WinInfo};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -22,6 +24,7 @@ pub fn parse(text: &str) -> Option<Op> {
     })
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn browser_focused(view: &View, catalog: &[wm::apps::Entry]) -> Result<WinInfo, String> {
     let win = view.focused.as_ref().ok_or("No focused window")?;
     let classes = wm::apps::evidence("browser", catalog);
