@@ -565,6 +565,27 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
                 )),
         );
     }
+    // The Controller keeps stable window IDs for 30 seconds: these labels
+    // never recompute index -> window identity while the user is choosing.
+    if matches!(snapshot.phase, Phase::Failed | Phase::Completed)
+        && let Ok(choices) = ::x_agent::wm::choices()
+    {
+        for (i, choice) in choices.iter().enumerate() {
+            let index = u8::try_from(i + 1).unwrap_or_default();
+            if index == 0 {
+                break;
+            }
+            card = card.child(button(
+                p,
+                &format!("agent-window-choice-{index}"),
+                &format!("{index}. {}", choice.label),
+                ButtonKind::Secondary,
+                move |_: &mut Ui, _| {
+                    agent_host::handle(AgentAction::Choose { index });
+                },
+            ));
+        }
+    }
     if snapshot.phase == Phase::Running {
         card = card.child(button(
             p,
