@@ -436,6 +436,12 @@ pub fn voice_mode() -> VoiceMode {
     VoiceMode::from_u8(VOICE.load(Ordering::Relaxed))
 }
 
+/// Read the initialized voice policy without causing agent initialization from
+/// a transcription thread. This is used only for opt-in recognizer biasing.
+pub(crate) fn action_voice_bias_enabled() -> bool {
+    crate::labs::x_agent() && VOICE.load(Ordering::Relaxed) == VoiceMode::Actions as u8
+}
+
 pub fn set_voice_mode(mode: VoiceMode) -> ControlReply {
     let Some(path) = voice_file() else {
         return ControlReply::error("failed", "the data folder is unavailable");
