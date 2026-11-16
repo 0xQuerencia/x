@@ -1,3 +1,38 @@
+#[test]
+fn autonomy_risk_is_exhaustive_and_closes_fail_closed() {
+    use crate::wm::{Op, Target};
+    let make = |op| Action::Window {
+        op,
+        target: Target::default(),
+        ws: None,
+    };
+    for op in [
+        Op::Focus,
+        Op::Back,
+        Op::Move,
+        Op::Workspace,
+        Op::Maximize,
+        Op::Minimize,
+        Op::Undo,
+    ] {
+        assert_eq!(make(op).risk(), Risk::Reversible);
+    }
+    for op in [Op::List, Op::Keys] {
+        assert_eq!(make(op).risk(), Risk::Safe);
+    }
+    let close = make(Op::Close);
+    assert_eq!(close.risk(), Risk::Destructive);
+    assert!(!is_low_risk(&[close]));
+    assert!(!is_low_risk(&[Action::Computer {
+        app: "firefox".into(),
+        goal: "click something".into(),
+    }]));
+    assert!(!is_low_risk(&[Action::Type { text: "hello".into() }]));
+    assert!(is_low_risk(&[Action::App {
+        target: "firefox".into(),
+    }]));
+}
+
 use super::*;
 
 fn fake_path(name: &str) -> Option<String> {
