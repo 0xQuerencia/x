@@ -44,17 +44,21 @@ commit SHA, machine/OS build, actual result and whether the action was verified.
 
 1. Launch X without interfering with any installed Hex version, record shortcut
    and local transcription behavior, and verify the service lifecycle.
-2. Open Notepad, Firefox, File Explorer and two windows of the same app. Test
+2. Switch from X to a keyboard-intensive app (including a Tauri 2 app where
+   possible), press/release the dictation hotkey, switch back, and repeat.
+   Check that the shortcut never disappears, duplicates, or remains held.
+   This foreground-hook regression requires a **physical Windows desktop**.
+3. Open Notepad, Firefox, File Explorer and two windows of the same app. Test
    list, focus, maximize/undo, minimize/undo, and graceful close. Verify the
    intended HWND/PID only; ensure unsaved Notepad prompts are respected.
-3. Close a window after it was listed, then repeat its stale action. X must
+4. Close a window after it was listed, then repeat its stale action. X must
    refuse rather than operate a reused HWND.
-4. Ask to move a window to desktop 2 or switch to desktop 2. X must explicitly
+5. Ask to move a window to desktop 2 or switch to desktop 2. X must explicitly
    say this is unsupported; it must not invoke a different or guessed desktop.
-5. Test dictation, screenshot, workflows, app launching, OpenCode, accessibility
+6. Test dictation, screenshot, workflows, app launching, OpenCode, accessibility
    grants, undo, failed-network decisions and context editing separately. Mark
    every unsupported behavior as **unsupported**, not pass.
-6. Confirm no private microphone/audio transcript, key, screenshot or selected
+7. Confirm no private microphone/audio transcript, key, screenshot or selected
    text enters telemetry or a release log. Verify Windows permissions and
    program signature/hash, packaged executable, onboarding and update path.
 

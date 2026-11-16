@@ -12,6 +12,8 @@ on:
       - "crates/x-agent/src/browser_tab.rs"
       - "crates/x-agent/src/windows_input.rs"
       - "crates/x-agent/src/wm/tests.rs"
+      - "src/windows/input.rs"
+      - "src/windows/input/rearm.rs"
 
 permissions:
   contents: read
