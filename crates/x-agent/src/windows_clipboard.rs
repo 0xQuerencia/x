@@ -65,8 +65,18 @@ fn open_clipboard() -> Result<ClipboardGuard, String> {
     // invisible, belongs to this process, and owns this clipboard transaction.
     let owner = unsafe {
         CreateWindowExW(
-            0, class.as_ptr(), ptr::null(), 0, 0, 0, 0, 0,
-            ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
+            0,
+            class.as_ptr(),
+            ptr::null(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
         )
     };
     if owner.is_null() {
