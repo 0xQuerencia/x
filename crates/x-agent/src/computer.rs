@@ -458,7 +458,8 @@ pub(crate) fn run_with(
                         // afresh and ask for a NEW grounded choice; never
                         // replay the old reference on an updated screen.
                         stale_retry_used = true;
-                        p.history.push("(control changed: re-observing once)".into());
+                        p.history
+                            .push("(control changed: re-observing once)".into());
                         host.emit("info", "A control changed; getting a fresh snapshot");
                         continue;
                     }
