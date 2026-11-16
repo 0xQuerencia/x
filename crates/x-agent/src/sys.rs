@@ -274,7 +274,10 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
 /// Reverses only a verified volume, mute or brightness change.
 pub fn undo(runner: &dyn Runner) -> Result<String, String> {
     let previous = HISTORY.lock().unwrap_or_else(|p| p.into_inner()).pop();
-    match previous.ok_or("There is no system-control change to undo")?.1 {
+    match previous
+        .ok_or("There is no system-control change to undo")?
+        .1
+    {
         Undo::Volume(value) => {
             set_volume(runner, value)?;
             Ok(format!("Restored volume to {value}%"))
