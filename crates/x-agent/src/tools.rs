@@ -419,7 +419,7 @@ impl Action {
                 {
                     Ok(vec![exe_for("files", resolve)?, directory.clone()])
                 }
-            },
+            }
             Self::Session { .. } => Err("A session runs as Work, not as an Action".into()),
             Self::Computer { .. } => Err("Computer steps run through the observe loop".into()),
             Self::Opencode => opencode_argv(&session_dir("opencode"), resolve),
@@ -582,8 +582,8 @@ fn terminal_argv(
     if run.is_some() {
         return Err("Windows Terminal is required to open an OpenCode session".into());
     }
-    let shell = resolve("powershell.exe")
-        .ok_or("Install Windows Terminal or make PowerShell available")?;
+    let shell =
+        resolve("powershell.exe").ok_or("Install Windows Terminal or make PowerShell available")?;
     Ok(vec![shell, "-NoProfile".into(), "-NoExit".into()])
 }
 
