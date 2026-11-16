@@ -56,13 +56,13 @@ impl Circuit {
     }
 
     fn before(&mut self) -> Result<(), String> {
-        if let Some(until) = self.until {
-            if let Some(remaining) = until.checked_duration_since(Instant::now()) {
-                return Err(format!(
-                    "Remote choice is cooling down (about {}s). Exact local commands still work.",
-                    remaining.as_secs().max(1)
-                ));
-            }
+        if let Some(until) = self.until
+            && let Some(remaining) = until.checked_duration_since(Instant::now())
+        {
+            return Err(format!(
+                "Remote choice is cooling down (about {}s). Exact local commands still work.",
+                remaining.as_secs().max(1)
+            ));
         }
         self.until = None;
         Ok(())
