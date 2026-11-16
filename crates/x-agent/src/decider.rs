@@ -248,16 +248,9 @@ mod tests {
                                 capture: &capture,
                                 send: &send,
                             };
-                            p.decide_with(
-                                goal,
-                                "firefox",
-                                &obs,
-                                &history,
-                                remote && granted,
-                                &io,
-                            )
-                            .unwrap()
-                            .unwrap();
+                            p.decide_with(goal, "firefox", &obs, &history, remote && granted, &io)
+                                .unwrap()
+                                .unwrap();
                             assert_eq!(
                                 calls.get(),
                                 u32::from(vision && remote && granted && first && visual),
