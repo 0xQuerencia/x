@@ -132,6 +132,9 @@ pub(crate) fn refresh_x_authority() {
 /// connection. Returns the display it adopted. Called on the main thread
 /// before Hex starts any other thread.
 pub(crate) fn adopt_wayland_display() -> Option<String> {
+    // A user service can have a valid display but no Hyprland instance key.
+    // Do this at startup, before background threads and hyprctl users start.
+    adopt_hyprland_instance();
     if custom_root() || graphical_session() {
         return None;
     }
@@ -148,6 +151,61 @@ pub(crate) fn adopt_wayland_display() -> Option<String> {
         std::env::set_var("WAYLAND_DISPLAY", &display);
     }
     Some(display)
+}
+
+/// Recovers the instance only when a single user-owned, complete Hyprland
+/// IPC directory exists. Never guess between multiple compositor sessions.
+fn hyprland_signature(runtime: &Path, uid: u32) -> Option<String> {
+    let root = runtime.join("hypr");
+    let dirs = fs::read_dir(root).ok()?;
+    let candidates: Vec<String> = dirs
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            if name.is_empty()
+                || name.len() > 180
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+            {
+                return None;
+            }
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path).ok()?;
+            if !metadata.is_dir() || metadata.uid() != uid {
+                return None;
+            }
+            for socket in [".socket.sock", ".socket2.sock"] {
+                let meta = fs::symlink_metadata(path.join(socket)).ok()?;
+                if !meta.file_type().is_socket() || meta.uid() != uid {
+                    return None;
+                }
+            }
+            Some(name)
+        })
+        .collect();
+    (candidates.len() == 1)
+        .then(|| candidates.into_iter().next())
+        .flatten()
+}
+
+/// Called before the listener creates threads, never from an arbitrary voice
+/// callback. Missing environment must not direct a command at another session.
+fn adopt_hyprland_instance() {
+    if custom_root()
+        || std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some_and(|v| !v.is_empty())
+    {
+        return;
+    }
+    let uid = unsafe { libc::getuid() };
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("/run/user/{uid}")));
+    if let Some(signature) = hyprland_signature(&runtime, uid) {
+        // The caller invokes this before any other thread exists.
+        unsafe { std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", signature) };
+    }
 }
 
 /// The newest `wayland-*` socket in `runtime` that `uid` owns and that
@@ -967,6 +1025,9 @@ const SESSION_KEYS: &[&str] = &[
     "DBUS_SESSION_BUS_ADDRESS",
     "XDG_CURRENT_DESKTOP",
     "XDG_SESSION_TYPE",
+    "HYPRLAND_INSTANCE_SIGNATURE",
+    "SWAYSOCK",
+    "I3SOCK",
     // The window's cursor theme and input method.
     "XCURSOR_THEME",
     "XCURSOR_SIZE",
@@ -1138,11 +1199,47 @@ mod tests {
         .unwrap();
         assert!(body.contains("DISPLAY=\":0\"\n"));
         assert!(body.contains("WAYLAND_DISPLAY=\"\"\n"));
+        assert!(body.contains("HYPRLAND_INSTANCE_SIGNATURE=\"\"\n"));
+        assert!(body.contains("SWAYSOCK=\"\"\n"));
+        assert!(body.contains("I3SOCK=\"\"\n"));
         assert!(body.contains("XCURSOR_THEME=\"Adwaita\"\n"));
         assert!(body.contains("LANG=\"de_DE.UTF-8\"\n"));
         assert!(!body.contains("XDG_DATA_DIRS"));
         assert!(!body.contains("LC_ALL"));
         assert!(environment_line("DISPLAY", ":0\nEVIL=yes").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hyprland_discovery_requires_one_complete_owner_socket_pair() {
+        use std::os::unix::net::UnixListener;
+        let temp = std::env::temp_dir().join(format!(
+            "x-hypr-socket-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&temp).unwrap();
+        let root = temp.join("hypr");
+        fs::create_dir(&root).unwrap();
+        let id = "abcdef_123";
+        let instance = root.join(id);
+        fs::create_dir(&instance).unwrap();
+        let uid = unsafe { libc::getuid() };
+        assert!(hyprland_signature(&temp, uid).is_none());
+        let first = UnixListener::bind(instance.join(".socket.sock")).unwrap();
+        assert!(hyprland_signature(&temp, uid).is_none());
+        let second = UnixListener::bind(instance.join(".socket2.sock")).unwrap();
+        assert_eq!(hyprland_signature(&temp, uid).as_deref(), Some(id));
+        let other = root.join("other_456");
+        fs::create_dir(&other).unwrap();
+        let third = UnixListener::bind(other.join(".socket.sock")).unwrap();
+        let fourth = UnixListener::bind(other.join(".socket2.sock")).unwrap();
+        assert!(hyprland_signature(&temp, uid).is_none());
+        drop((first, second, third, fourth));
+        fs::remove_dir_all(&temp).unwrap();
     }
 
     #[test]
