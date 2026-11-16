@@ -979,9 +979,9 @@ fn split_steps(text: &str) -> Vec<String> {
 }
 
 fn focused() -> Option<(String, u32)> {
-    let json = hypr_json(&["activewindow", "-j"])?;
-    let address = json.get("address")?.as_str()?.to_string();
-    Some((address, u32::try_from(json.get("pid")?.as_u64()?).ok()?))
+    let view = crate::wm::view().ok()?;
+    let focused = view.focused?;
+    Some((focused.id, focused.pid))
 }
 
 /// Waits up to six seconds for the window of the process X just started to take focus.
