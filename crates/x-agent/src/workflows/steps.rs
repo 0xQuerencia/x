@@ -4,6 +4,8 @@
 
 use std::time::{Duration, Instant};
 
+use std::collections::HashMap;
+
 use super::engine::{Config, Host, Reversal, StepResult, StepStatus};
 use super::model::{DEFAULT_TIMEOUT, Step, StepAction, Workflow};
 use super::paths;
@@ -126,18 +128,20 @@ fn launch_new(
         return StepResult::done(
             format!("Window appeared and is on workspace {ws}"),
             reversals,
-        );
+        )
+        .with_opened(win);
     }
-    StepResult::done("Window appeared", reversals)
+    StepResult::done("Window appeared", reversals).with_opened(win)
 }
 
 pub(super) fn run_step(
     step: &Step,
     host: &dyn Host,
     cfg: &Config,
+    opened: &HashMap<String, WinInfo>,
     on_wait: &mut dyn FnMut(bool),
 ) -> StepResult {
-    let result = run_action(step, host, cfg, on_wait);
+    let result = run_action(step, host, cfg, opened, on_wait);
     on_wait(false);
     result
 }
@@ -146,6 +150,7 @@ fn run_action(
     step: &Step,
     host: &dyn Host,
     cfg: &Config,
+    opened: &HashMap<String, WinInfo>,
     on_wait: &mut dyn FnMut(bool),
 ) -> StepResult {
     match &step.action {
@@ -279,6 +284,30 @@ fn run_action(
                 )),
             }
         }
+        StepAction::CloseOpenedWindow { opened_by } => {
+            let Some(original) = opened.get(opened_by) else {
+                return StepResult::failed(
+                    "The referenced step did not open a new window during this run",
+                );
+            };
+            let Ok(windows) = host.windows() else {
+                return StepResult::failed("Cannot verify current window identities");
+            };
+            if !windows.iter().any(|w| {
+                w.id == original.id && w.pid == original.pid && w.class == original.class
+            }) {
+                return StepResult::failed("That exact window is already gone or changed identity");
+            }
+            if let Err(error) = host.close_window(original) {
+                return StepResult::failed(error);
+            }
+            match host.windows() {
+                Ok(after) if after.iter().all(|w| {
+                    w.id != original.id || w.pid != original.pid || w.class != original.class
+                }) => StepResult::done("Closed the window opened by this workflow", vec![]),
+                _ => StepResult::failed("The previously opened window is still present"),
+            }
+        }
         StepAction::RunAction { phrase } => run_phrase(phrase, host),
         StepAction::OpencodeTask { goal, directory } => {
             let dir = match paths::existing(directory, &cfg.home) {
@@ -409,6 +438,9 @@ pub fn preflight(wf: &Workflow, host: &dyn Host, cfg: &Config) -> Vec<String> {
                         .map_err(|_| format!("{app} is not installed and nothing opens it")),
                     );
                 }
+            }
+            StepAction::CloseOpenedWindow { .. } => {
+                need(cap(Cap::Close, "close windows"));
             }
             StepAction::RunAction { phrase } => match tools::plan_rules(phrase) {
                 None => need(Err("X does not understand that phrase".into())),
