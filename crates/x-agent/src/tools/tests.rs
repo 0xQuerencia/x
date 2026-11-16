@@ -280,6 +280,38 @@ fn urls_are_locked_down() {
 }
 
 #[test]
+fn legacy_focus_and_workspace_json_map_to_verified_window_actions() {
+    use crate::wm::{Op, Target, Ws};
+    assert_eq!(
+        parse_plan_json(r#"{"steps":[{"kind":"focus","target":"firefox"}]}"#).unwrap(),
+        [Action::Window {
+            op: Op::Focus,
+            target: Target {
+                app: "firefox".into(),
+                pick: None,
+            },
+            ws: None,
+        }]
+    );
+    assert_eq!(
+        parse_plan_json(r#"{"steps":[{"kind":"workspace","number":3}]}"#).unwrap(),
+        [Action::Window {
+            op: Op::Workspace,
+            target: Target::default(),
+            ws: Some(Ws::N(3)),
+        }]
+    );
+    for invalid in [
+        r#"{"steps":[{"kind":"focus","target":"bash"}]}"#,
+        r#"{"steps":[{"kind":"focus","target":"firefox","extra":"--bad"}]}"#,
+        r#"{"steps":[{"kind":"workspace","number":99}]}"#,
+        r#"{"steps":[{"kind":"workspace","number":3,"cmd":"shell"}]}"#,
+    ] {
+        assert!(parse_plan_json(invalid).is_err(), "{invalid}");
+    }
+}
+
+#[test]
 fn planner_json_is_untrusted() {
     let ok = r#"{"steps":[{"kind":"search","target":"youtube","query":"cats"}]}"#;
     assert_eq!(parse_plan_json(ok).unwrap().len(), 1);
