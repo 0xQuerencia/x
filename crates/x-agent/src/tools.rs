@@ -256,7 +256,7 @@ impl Action {
                     crate::wm::Op::Move => match ws {
                         Some(ws) => format!("Move {who} to {}", destination(ws)),
                         None => format!("Move {who} (destination missing)"),
-                    }
+                    },
                     crate::wm::Op::Workspace => match ws {
                         Some(ws) => format!("Switch to {}", destination(ws)),
                         None => "Switch workspace (destination missing)".to_string(),
@@ -419,7 +419,7 @@ impl Action {
                 {
                     Ok(vec![exe_for("files", resolve)?, directory.clone()])
                 }
-            },
+            }
             Self::Session { .. } => Err("A session runs as Work, not as an Action".into()),
             Self::Computer { .. } => Err("Computer steps run through the observe loop".into()),
             Self::Opencode => opencode_argv(&session_dir("opencode"), resolve),
