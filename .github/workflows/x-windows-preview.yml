@@ -68,6 +68,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "X build failed" }
           New-Item -Type Directory -Force dist | Out-Null
           Copy-Item target/release/hex.exe dist/x.exe
+          & .\dist\x.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "Windows preview could not launch" }
           $sha = (Get-FileHash dist/x.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$sha  x.exe" | Set-Content -Encoding ascii dist/SHA256SUMS
           "Unsigned developer preview only. No real Windows 11 desktop and microphone acceptance has been recorded." |
