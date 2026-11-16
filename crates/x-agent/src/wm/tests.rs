@@ -217,10 +217,7 @@ fn ambiguity_choice_refuses_vanished_or_reused_identity() {
     let choices = controller.choices();
     assert_eq!(choices.len(), 2);
     fake.0.lock().unwrap().wins[0] = win("0x1", "intruder", "different app", 1);
-    assert!(matches!(
-        controller.choose(1),
-        Err(WmError::NotFound(_))
-    ));
+    assert!(matches!(controller.choose(1), Err(WmError::NotFound(_))));
     assert!(controller.choices().is_empty());
 }
 
