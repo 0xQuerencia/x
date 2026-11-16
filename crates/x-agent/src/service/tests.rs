@@ -183,7 +183,7 @@ fn action_risk_labels_agree_with_autonomy_policy() {
             app: "firefox".into(),
             goal: "navigate".into(),
         }),
-        "may type or act inside an application"
+        "reads this app's screen, then may click or type"
     );
     assert_eq!(
         action_risk_label(&Action::App {
