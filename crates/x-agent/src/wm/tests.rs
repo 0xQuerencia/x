@@ -171,6 +171,60 @@ fn ignored_command_is_not_success() {
 }
 
 #[test]
+fn numbered_ambiguity_uses_stable_identity_not_recomputed_position() {
+    let fake = world(vec![
+        win("0x1", "firefox", "Browser", 1),
+        win("0x2", "foot", "First", 1),
+        win("0x3", "foot", "Second", 1),
+    ]);
+    let mut controller = Controller::new(Box::new(fake.clone()))
+        .with_catalog(catalog)
+        .with_binds(binds);
+    let req = p("close terminal").unwrap();
+    let err = controller.run(&req).unwrap_err();
+    let WmError::Ambiguous(choices) = err else {
+        panic!("expected ambiguity");
+    };
+    assert_eq!(choices.len(), 2);
+    assert_eq!(choices[1].id, "0x3");
+    assert_eq!(controller.choices().len(), 2);
+    // Opening another window after the question must not change choice #2.
+    fake.0
+        .lock()
+        .unwrap()
+        .wins
+        .insert(1, win("0x0", "foot", "New window", 1));
+    let outcome = controller.choose(2).unwrap();
+    assert!(outcome.message.contains("Second"));
+    let remaining: Vec<String> = fake
+        .0
+        .lock()
+        .unwrap()
+        .wins
+        .iter()
+        .map(|w| w.id.clone())
+        .collect();
+    assert!(remaining.contains(&"0x0".into()));
+    assert!(!remaining.contains(&"0x3".into()));
+    assert!(controller.choices().is_empty());
+    assert!(controller.choose(1).is_err());
+}
+
+#[test]
+fn ambiguity_choice_refuses_vanished_or_reused_identity() {
+    let (mut controller, fake) = setup();
+    controller.run(&p("close firefox").unwrap()).unwrap_err();
+    let choices = controller.choices();
+    assert_eq!(choices.len(), 2);
+    fake.0.lock().unwrap().wins[0] = win("0x1", "intruder", "different app", 1);
+    assert!(matches!(
+        controller.choose(1),
+        Err(WmError::NotFound(_))
+    ));
+    assert!(controller.choices().is_empty());
+}
+
+#[test]
 fn two_windows_need_a_pick() {
     let (mut c, _) = setup();
     let err = ask(&mut c, "focus firefox").unwrap_err();
