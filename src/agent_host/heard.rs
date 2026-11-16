@@ -87,8 +87,8 @@ fn with_lock<T>(action: impl FnOnce(&std::path::Path) -> Result<T, String>) -> R
     }
     fs2::FileExt::lock_exclusive(&lock).map_err(|_| "Cannot lock correction history")?;
     let result = action(&target);
-    let unlocked = fs2::FileExt::unlock(&lock)
-        .map_err(|_| "Cannot unlock correction history".to_string());
+    let unlocked =
+        fs2::FileExt::unlock(&lock).map_err(|_| "Cannot unlock correction history".to_string());
     match (result, unlocked) {
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
