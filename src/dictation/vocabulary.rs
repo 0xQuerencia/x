@@ -147,6 +147,77 @@ pub(crate) fn for_dictation<R>(work: impl FnOnce() -> R) -> R {
     work()
 }
 
+/// Limit recognizer hints to short canonical app names and operation words.
+/// Window classes come first; unlike window titles, they don't contain page
+/// content or private document titles. All hints stay local to transcription.
+#[cfg(target_os = "linux")]
+fn bounded_agent_terms(
+    open_classes: &[String],
+    installed_names: &[String],
+) -> Vec<VocabularyEntry> {
+    let mut list = Vec::new();
+    for term in [
+        "close",
+        "minimize",
+        "maximize",
+        "focus",
+        "move",
+        "workspace",
+        "window",
+        "terminal",
+        "browser",
+        "screenshot",
+        "undo",
+        "volume",
+        "brightness",
+        "mute",
+        "pause",
+        "play",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .chain(open_classes.iter().cloned())
+    .chain(installed_names.iter().cloned())
+    {
+        let clean = term.trim().to_ascii_lowercase();
+        if clean.chars().count() < 3
+            || clean.chars().count() > 30
+            || !clean
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '.' | '_'))
+            || list
+                .iter()
+                .any(|entry: &VocabularyEntry| entry.term == clean)
+        {
+            continue;
+        }
+        list.push(VocabularyEntry {
+            term: clean,
+            sounds_like: Vec::new(),
+        });
+        // Leave room for a person's own saved vocabulary within the engine cap.
+        if list.len() >= 40 {
+            break;
+        }
+    }
+    list
+}
+
+#[cfg(target_os = "linux")]
+fn agent_entries() -> Vec<VocabularyEntry> {
+    if !crate::agent_host::action_voice_bias_enabled() {
+        return Vec::new();
+    }
+    let open_classes: Vec<String> = x_agent::wm::view()
+        .map(|view| view.windows.into_iter().map(|w| w.class).collect())
+        .unwrap_or_default();
+    let installed_names = x_agent::wm::apps::load()
+        .into_iter()
+        .flat_map(|entry| entry.names.into_iter())
+        .collect::<Vec<_>>();
+    bounded_agent_terms(&open_classes, &installed_names)
+}
+
 /// The focused mode's own terms first, so the bias cap keeps them, then the
 /// shared list, each term once.
 fn transcription_entries() -> Vec<VocabularyEntry> {
@@ -166,6 +237,12 @@ fn transcription_entries() -> Vec<VocabularyEntry> {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = focused;
+    #[cfg(target_os = "linux")]
+    {
+        let agent = agent_entries();
+        merged(&agent, &shared)
+    }
+    #[cfg(not(target_os = "linux"))]
     shared
 }
 
@@ -539,6 +616,31 @@ mod tests {
         assert!(remove(&mut list, "opencode"));
         assert!(!remove(&mut list, "opencode"));
         assert_eq!(list, [entry("Rune", &[])]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn agent_bias_prioritizes_known_window_classes_and_keeps_personal_terms() {
+        let active = vec!["org.example.Editor".into(), "Firefox".into()];
+        let installed = vec![
+            "Code Studio".into(),
+            "Firefox".into(),
+            "ignore \\n malicious".into(),
+            "the app with an extremely long overflowing name".into(),
+        ];
+        let agent = bounded_agent_terms(&active, &installed);
+        let terms: Vec<&str> = agent.iter().map(|entry| entry.term.as_str()).collect();
+        assert!(terms.contains(&"firefox"));
+        assert!(terms.contains(&"code studio"));
+        assert_eq!(terms.iter().filter(|term| **term == "firefox").count(), 1);
+        assert!(!terms.iter().any(|term| term.contains("malicious")));
+        assert!(terms.len() <= 40);
+        let saved = vec![VocabularyEntry {
+            term: "Aerospace".into(),
+            sounds_like: vec![],
+        }];
+        let merged = merged(&agent, &saved);
+        assert!(merged.iter().any(|entry| entry.term == "Aerospace"));
     }
 
     #[test]
