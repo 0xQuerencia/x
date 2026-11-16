@@ -260,8 +260,11 @@ pub(crate) fn click_allowed(role: &str, name: &str) -> bool {
 
 fn rebind(desktop: &dyn Desktop, app: &str, win: &Win, host: &dyn Host) -> Result<Win, String> {
     let now = desktop.find_window(app)?;
-    if now.address != win.address {
-        host.emit("info", &format!("Now operating {:?}", now.title));
+    // Never silently transfer a granted task to a different process or
+    // application window. A page title may change freely.
+    if now.address != win.address || now.pid != win.pid || now.class != win.class {
+        host.emit("info", "The originally granted window has changed identity");
+        return Err("Stopped: the originally granted window is gone or changed identity".into());
     }
     Ok(now)
 }
@@ -333,7 +336,7 @@ pub(crate) fn run_with(
     limits: &Limits,
 ) -> Outcome {
     let start = Instant::now();
-    let mut win = match wait_for_window(desktop, app, host) {
+    let win = match wait_for_window(desktop, app, host) {
         Ok(win) => win,
         Err(e) => return Outcome::Failed(e),
     };
@@ -349,6 +352,7 @@ pub(crate) fn run_with(
         prev: Observation::default(),
         last_render: String::new(),
     };
+    let mut stale_retry_used = false;
     for turn in 0..limits.steps {
         if host.stopped() {
             return Outcome::Cancelled;
@@ -356,7 +360,7 @@ pub(crate) fn run_with(
         if start.elapsed() > limits.deadline {
             return Outcome::Failed("Stopped: the time limit was reached".into());
         }
-        win = match rebind(desktop, app, &win, host) {
+        let win = match rebind(desktop, app, &win, host) {
             Ok(w) => w,
             Err(e) => return Outcome::Failed(e),
         };
@@ -441,6 +445,7 @@ pub(crate) fn run_with(
             }
             action => match act(desktop, &win, &obs, action, &mut p, host, goal) {
                 Ok(()) => {
+                    stale_retry_used = false;
                     p.acts += 1;
                     p.acted_last = true;
                     std::thread::sleep(SETTLE);
@@ -448,6 +453,15 @@ pub(crate) fn run_with(
                 Err(Refusal::Stop(reason)) => return Outcome::Failed(reason),
                 Err(Refusal::Retry(reason)) => {
                     p.typed_into_navigation = false;
+                    if reason == "That control changed; observe again" && !stale_retry_used {
+                        // The original element reference is stale. Observe
+                        // afresh and ask for a NEW grounded choice; never
+                        // replay the old reference on an updated screen.
+                        stale_retry_used = true;
+                        p.history.push("(control changed: re-observing once)".into());
+                        host.emit("info", "A control changed; getting a fresh snapshot");
+                        continue;
+                    }
                     p.errors += 1;
                     host.emit("error", &reason);
                     p.history.push(format!("(failed: {reason})"));
