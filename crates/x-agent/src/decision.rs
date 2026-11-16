@@ -830,9 +830,10 @@ mod tests {
             },
             ws: None,
         }));
-        assert!(actions.contains(&Action::App {
-            target: "firefox".into()
-        }));
+        assert!(
+            !actions.iter().any(|action| matches!(action, Action::App { .. })),
+            "a focus command must not be reinterpreted as launching another app"
+        );
         assert_eq!(
             candidates("Delete the user's files with rm -rf"),
             vec![
