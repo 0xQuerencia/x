@@ -53,7 +53,10 @@ fn virtual_key(key: u16, up: bool) -> Input {
     }
 }
 
-pub(crate) fn browser_hotkey(op: crate::browser_tab::Op, expected_hwnd: usize) -> Result<(), String> {
+pub(crate) fn browser_hotkey(
+    op: crate::browser_tab::Op,
+    expected_hwnd: usize,
+) -> Result<(), String> {
     const CTRL: u16 = 0x11;
     const SHIFT: u16 = 0x10;
     const T: u16 = 0x54;
