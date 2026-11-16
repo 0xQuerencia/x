@@ -171,7 +171,9 @@ fn check_overlaps(
     {
         if other.get("address").and_then(serde_json::Value::as_str) == Some(address)
             || other.get("mapped").and_then(serde_json::Value::as_bool) == Some(false)
-            || (other.pointer("/workspace/id").and_then(serde_json::Value::as_i64)
+            || (other
+                .pointer("/workspace/id")
+                .and_then(serde_json::Value::as_i64)
                 != Some(workspace)
                 && other.get("pinned").and_then(serde_json::Value::as_bool) != Some(true))
         {
@@ -368,12 +370,20 @@ mod tests {
         let layers = serde_json::json!({
             "DP-1":{"levels":{"0":[{"at":[0,0],"size":[2000,1200]}],"2":[],"3":[]}}
         });
-        assert!(check_overlaps(&focused, &serde_json::json!([own, other_workspace]), &layers).is_ok());
-        assert!(check_overlaps(&focused, &serde_json::json!([overlap]), &layers)
-            .unwrap_err()
-            .contains("Another window"));
-        assert!(check_overlaps(&focused, &serde_json::json!([]), &serde_json::json!({}))
-            .is_ok());
+        assert!(
+            check_overlaps(
+                &focused,
+                &serde_json::json!([own, other_workspace]),
+                &layers
+            )
+            .is_ok()
+        );
+        assert!(
+            check_overlaps(&focused, &serde_json::json!([overlap]), &layers)
+                .unwrap_err()
+                .contains("Another window")
+        );
+        assert!(check_overlaps(&focused, &serde_json::json!([]), &serde_json::json!({})).is_ok());
     }
 
     #[cfg(target_os = "linux")]
@@ -385,14 +395,19 @@ mod tests {
         let overlay = serde_json::json!({
             "DP-1":{"levels":{"2":[{"at":[20,20],"size":[150,50]}],"3":[]}}
         });
-        assert!(check_overlaps(&focused, &serde_json::json!([]), &overlay)
-            .unwrap_err()
-            .contains("panel or notification"));
-        assert!(check_overlaps(
-            &focused,
-            &serde_json::json!([]),
-            &serde_json::json!({"DP-1":{"levels":{"3":[{"at":[0,0]}]}}})
-        ).is_err());
+        assert!(
+            check_overlaps(&focused, &serde_json::json!([]), &overlay)
+                .unwrap_err()
+                .contains("panel or notification")
+        );
+        assert!(
+            check_overlaps(
+                &focused,
+                &serde_json::json!([]),
+                &serde_json::json!({"DP-1":{"levels":{"3":[{"at":[0,0]}]}}})
+            )
+            .is_err()
+        );
         assert!(check_overlaps(&focused, &serde_json::json!({}), &overlay).is_err());
     }
 
