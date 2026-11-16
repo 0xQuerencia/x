@@ -90,6 +90,11 @@ pub enum StepAction {
     WaitForWindow {
         app: String,
     },
+    /// Close only a window that THIS workflow run actually opened.
+    /// Reused, preexisting or merely guessed windows are never eligible.
+    CloseOpenedWindow {
+        opened_by: String,
+    },
     /// An existing X action, written as the phrase you would say, such as
     /// `search github for rust lifetimes`. It is parsed and checked like spoken input.
     RunAction {
@@ -121,6 +126,9 @@ impl StepAction {
                 format!("Move {app} to workspace {workspace}")
             }
             Self::WaitForWindow { app } => format!("Wait for {app} to appear"),
+            Self::CloseOpenedWindow { opened_by } => {
+                format!("Close the window opened by step {opened_by}")
+            },
             Self::RunAction { phrase } => format!("Run: {phrase}"),
             Self::OpencodeTask { goal, directory } => {
                 format!("OpenCode in {directory}: {goal}")
@@ -137,6 +145,7 @@ impl StepAction {
             }
             Self::OpenUrl { .. } => "opens a website",
             Self::RunAction { .. } => "runs an X action",
+            Self::CloseOpenedWindow { .. } => "closes a window opened by this run",
             _ => "",
         }
     }
@@ -232,6 +241,7 @@ impl Workflow {
             }
         }
         let mut ids: Vec<&str> = Vec::new();
+        let mut opening_steps: HashSet<&str> = HashSet::new();
         for step in &self.steps {
             let sid = Some(step.id.as_str());
             if !slug_ok(&step.id) {
@@ -253,6 +263,19 @@ impl Workflow {
             }
             if let Err(why) = check_action(&step.action, home) {
                 note(sid, why);
+            }
+            if let StepAction::CloseOpenedWindow { opened_by } = &step.action
+                && !opening_steps.contains(opened_by.as_str())
+            {
+                note(sid, format!(
+                    "Step {opened_by:?} must be an earlier OpenApp or OpenTerminal step"
+                ));
+            }
+            if matches!(
+                step.action,
+                StepAction::OpenApp { .. } | StepAction::OpenTerminal { .. }
+            ) {
+                opening_steps.insert(&step.id);
             }
             ids.push(&step.id);
         }
@@ -319,6 +342,13 @@ fn check_action(action: &StepAction, home: &Path) -> Result<(), String> {
             check_workspace(*workspace)
         }
         StepAction::WaitForWindow { app } => check_app(app),
+        StepAction::CloseOpenedWindow { opened_by } => {
+            if slug_ok(opened_by) {
+                Ok(())
+            } else {
+                Err("The opening step id is invalid".into())
+            }
+        },
         StepAction::RunAction { phrase } => {
             check_text("The action phrase", phrase)?;
             let actions = tools::plan_rules(phrase)
