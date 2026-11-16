@@ -193,6 +193,15 @@ impl Host for Fake {
         }
         Ok(())
     }
+    fn close_window(&self, win: &WinInfo) -> Result<(), String> {
+        let mut state = self.w.lock().unwrap();
+        let pos = state.wins.iter().position(|w| {
+            w.id == win.id && w.pid == win.pid && w.class == win.class
+        }).ok_or("The window is gone or its identity changed")?;
+        state.log.push(format!("close exact {}", win.id));
+        state.wins.remove(pos);
+        Ok(())
+    }
     fn opencode_ready(&self) -> Result<(), String> {
         Ok(())
     }
@@ -486,6 +495,51 @@ mod validation {
 
 mod running {
     use super::*;
+
+    #[test]
+    fn close_only_windows_this_run_actually_created() {
+        let home = home();
+        let host = Fake::new();
+        let mut wf = coding(home.path());
+        wf.steps.push(step(
+            "close-browser",
+            StepAction::CloseOpenedWindow {
+                opened_by: "browser".into(),
+            },
+        ));
+        let out = run(&wf, &host, &cfg(home.path()));
+        assert_eq!(out.report.state, RunState::Completed);
+        assert!(host.log().iter().any(|line| line.starts_with("close exact ")));
+        assert!(host.windows_now().iter().all(|w| w.class != "firefox"));
+    }
+
+    #[test]
+    fn close_reused_or_untracked_window_is_forbidden() {
+        let home = home();
+        let host = Fake::new();
+        let mut wf = coding(home.path());
+        let reused = win("0xf00", "firefox", 1);
+        host.w.lock().unwrap().wins.push(reused.clone());
+        wf.steps.push(step(
+            "close-reused",
+            StepAction::CloseOpenedWindow {
+                opened_by: "browser".into(),
+            },
+        ));
+        let result = run(&wf, &host, &cfg(home.path()));
+        assert_eq!(result.report.state, RunState::Failed);
+        assert!(host.windows_now().iter().any(|w| w.id == reused.id));
+        assert!(!host.log().iter().any(|line| line.starts_with("close exact ")));
+
+        let mut invalid = coding(home.path());
+        invalid.steps.push(step(
+            "close-other",
+            StepAction::CloseOpenedWindow {
+                opened_by: "focus".into(),
+            },
+        ));
+        assert!(invalid.validate(home.path()).is_err());
+    }
 
     #[test]
     fn runs_every_step_in_order_and_verifies_them() {
