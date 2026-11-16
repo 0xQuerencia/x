@@ -499,9 +499,8 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
-    /// Free decision providers: decider-flash and decider (OpenRouter Perplexity V1.3).
-    /// A local Ollama model (for example `gemma4:e2b-it-qat`) plans requests the built-in rules
-    /// do not understand, from the same closed set of steps. `off` turns it off.
+    /// Choice-only free Perplexity Decider providers: decider-flash, decider, or off.
+    /// Gemini, OpenAI-compatible, Ollama and legacy Jev settings are unsupported.
     Planner {
         model: String,
         #[command(flatten)]
