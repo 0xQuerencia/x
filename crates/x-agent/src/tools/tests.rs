@@ -108,6 +108,32 @@ fn an_opencode_session_request_opens_opencode_in_a_terminal_not_a_headless_run()
 }
 
 #[test]
+fn screenshot_phrases_create_local_only_approval_gated_actions() {
+    for (said, mode) in [
+        ("take a screenshot", "screen"),
+        ("screenshot", "screen"),
+        ("screenshot this window", "window"),
+        ("take a screenshot of a region", "region"),
+    ] {
+        let actions = plan_rules(said).unwrap();
+        assert_eq!(actions, [Action::Screenshot { mode: mode.into() }]);
+        assert!(!is_low_risk(&actions), "private capture must not auto-run");
+        assert!(actions[0].argv(&fake_path).is_err(), "no screenshot subprocess");
+    }
+    assert!(Action::Screenshot { mode: "invalid".into() }
+        .validate()
+        .is_err());
+    for said in [
+        "I took a screenshot yesterday",
+        "she said take a screenshot",
+        "take a screenshot and upload it",
+        "screenshot my passwords",
+    ] {
+        assert!(screenshot_request(said).is_none(), "{said}");
+    }
+}
+
+#[test]
 fn opens_known_apps_and_sites() {
     assert_eq!(plan("open Firefox"), ["Open firefox"]);
     assert_eq!(plan("Hey X, launch VS Code."), ["Open vscode"]);
