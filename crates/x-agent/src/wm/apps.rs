@@ -63,7 +63,11 @@ fn program(exec: &str) -> Option<String> {
         if token.contains('=') {
             continue; // e.g. env MOZ_ENABLE_WAYLAND=1
         }
-        let base = token.rsplit('/').next()?.trim_matches('"').to_ascii_lowercase();
+        let base = token
+            .rsplit('/')
+            .next()?
+            .trim_matches('"')
+            .to_ascii_lowercase();
         if base == "env" {
             continue;
         }
@@ -164,7 +168,12 @@ fn dirs() -> Vec<PathBuf> {
         .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
     let mut dirs: Vec<PathBuf> = home
         .into_iter()
-        .chain(system.split(':').filter(|d| !d.is_empty()).map(PathBuf::from))
+        .chain(
+            system
+                .split(':')
+                .filter(|d| !d.is_empty())
+                .map(PathBuf::from),
+        )
         .map(|d| d.join("applications"))
         .collect();
 
@@ -173,9 +182,7 @@ fn dirs() -> Vec<PathBuf> {
     if let Some(home) = dirs::home_dir() {
         dirs.push(home.join(".local/share/flatpak/exports/share/applications"));
     }
-    dirs.push(PathBuf::from(
-        "/var/lib/flatpak/exports/share/applications",
-    ));
+    dirs.push(PathBuf::from("/var/lib/flatpak/exports/share/applications"));
     let mut unique = Vec::new();
     for path in dirs {
         if !unique.contains(&path) {
@@ -206,8 +213,7 @@ fn scan_paths(paths: &[PathBuf]) -> Vec<Entry> {
             }
             *seen += 1;
             // fs::metadata follows a file symlink; DirEntry::metadata does not.
-            let ok = std::fs::metadata(&path)
-                .is_ok_and(|m| m.is_file() && m.len() <= MAX_FILE);
+            let ok = std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= MAX_FILE);
             let id = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
             if let Some(entry) = ok
                 .then(|| std::fs::read_to_string(&path).ok())
@@ -360,7 +366,10 @@ mod tests {
 
     #[test]
     fn wrappers_never_become_application_identities() {
-        assert_eq!(program("env MOZ_ENABLE_WAYLAND=1 /usr/lib/firefox/firefox %u"), Some("firefox".into()));
+        assert_eq!(
+            program("env MOZ_ENABLE_WAYLAND=1 /usr/lib/firefox/firefox %u"),
+            Some("firefox".into())
+        );
         for line in [
             "flatpak run --branch=stable com.spotify.Client",
             "snap run spotify",
@@ -378,11 +387,13 @@ mod tests {
         assert!(!entry.names.contains(&"flatpak".to_string()));
         assert!(!entry.classes.contains(&"flatpak".to_string()));
         assert!(entry.names.contains(&"spotify".to_string()));
-        assert!(parse_entry(
-            "hidden.desktop",
-            "[Desktop Entry]\nType=Application\nName=Private\nNoDisplay=true\n"
-        )
-        .is_none());
+        assert!(
+            parse_entry(
+                "hidden.desktop",
+                "[Desktop Entry]\nType=Application\nName=Private\nNoDisplay=true\n"
+            )
+            .is_none()
+        );
     }
 
     #[cfg(unix)]
