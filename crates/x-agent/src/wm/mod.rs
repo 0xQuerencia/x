@@ -9,6 +9,7 @@ mod i3;
 pub mod keys;
 pub mod parse;
 mod report;
+mod speech;
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -424,6 +425,10 @@ impl Controller {
             (1, _) => Ok(found.remove(0)),
             (n, Some(p)) if (1..=n).contains(&usize::from(p)) => {
                 Ok(found.remove(usize::from(p) - 1))
+            }
+            // "Close the terminal" while in a terminal means the one in front.
+            (_, None) if !prefer_recent && focused.is_some_and(|f| found.contains(f)) => {
+                Ok(focused.cloned().unwrap_or_else(|| found.remove(0)))
             }
             (_, None) if prefer_recent && found.iter().any(|w| w.recent != u32::MAX) => {
                 // Not the window already in front: the one used just before it.

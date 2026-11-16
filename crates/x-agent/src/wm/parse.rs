@@ -114,10 +114,7 @@ pub fn parse(text: &str) -> Option<Request> {
 
 /// [`parse`] against a given set of installed apps.
 pub fn parse_with(text: &str, entries: &[Entry]) -> Option<Request> {
-    let text = text
-        .trim()
-        .trim_end_matches(['.', '!', '?', ' '])
-        .to_ascii_lowercase();
+    let text = super::speech::fix(text);
     let text = text.as_str();
     match text {
         "undo" | "undo that" | "undo it" => return req(Op::Undo, Target::default(), None),
