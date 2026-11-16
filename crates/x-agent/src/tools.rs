@@ -99,6 +99,11 @@ pub enum Action {
     Screenshot {
         mode: String,
     },
+    /// An exact local browser command; remote planners cannot create this.
+    #[serde(skip_deserializing)]
+    BrowserTab {
+        op: crate::browser_tab::Op,
+    },
     /// Types plain text into the focused window. Never Enter or any control key, so
     /// nothing typed here can run on its own.
     Type {
@@ -174,6 +179,7 @@ impl Action {
         use crate::wm::Op;
         match self {
             Self::Window { op: Op::Close, .. } => Risk::Destructive,
+            Self::BrowserTab { op: crate::browser_tab::Op::Close } => Risk::Consequential,
             Self::Window {
                 op: Op::List | Op::Keys,
                 ..
@@ -195,7 +201,8 @@ impl Action {
             | Self::Opencode
             | Self::Copy { .. }
             | Self::Terminal { .. }
-            | Self::Folder { .. } => Risk::Reversible,
+            | Self::Folder { .. }
+            | Self::BrowserTab { .. } => Risk::Reversible,
             Self::Screenshot { .. }
             | Self::Type { .. }
             | Self::Session { .. }
@@ -207,6 +214,7 @@ impl Action {
         match self {
             Self::App { target } => format!("Open {target}"),
             Self::Screenshot { mode } => format!("Save {mode} screenshot locally"),
+            Self::BrowserTab { op } => format!("Browser tab {op:?}"),
             Self::Type { text } => format!("Type \"{text}\" into the focused window"),
             Self::Opencode => "Open OpenCode in a new temporary folder".to_string(),
             Self::Terminal { directory } => format!("Open a terminal in {directory}"),
@@ -272,6 +280,7 @@ impl Action {
             Self::Screenshot { mode } => {
                 crate::screenshots::Mode::parse(mode)?;
             }
+            Self::BrowserTab { .. } => {}
             Self::Copy { text } => crate::clipboard::validate(text)?,
             Self::Terminal { directory } | Self::Folder { directory } => {
                 crate::workflows::paths::check(directory, &crate::workflows::paths::home()?)?;
@@ -361,6 +370,7 @@ impl Action {
             Self::Screenshot { .. } => {
                 Err("Screenshots are handled locally, never launched as a command".into())
             }
+            Self::BrowserTab { .. } => Err("Browser tab shortcuts run locally".into()),
             Self::Copy { .. } => Err("Copy runs through the clipboard helper".into()),
             Self::Terminal { directory } => {
                 terminal_argv(std::path::Path::new(directory), None, resolve)
@@ -418,6 +428,9 @@ impl Action {
                     }
                 })
                 .map_err(|e| e.to_string());
+        }
+        if let Self::BrowserTab { op } = &valid {
+            return crate::browser_tab::execute(*op);
         }
         if let Self::Copy { text } = &valid {
             return crate::clipboard::copy(text);
@@ -812,6 +825,9 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
     }
     if let Some(shot) = screenshot_request(text) {
         return Some(vec![shot]);
+    }
+    if let Some(op) = crate::browser_tab::parse(text) {
+        return Some(vec![Action::BrowserTab { op }]);
     }
     let mut browser = String::new();
     let mut search_text = text.to_string();
