@@ -1,0 +1,129 @@
+name: X Linux x64 preview (unsigned)
+
+# Current X source preview, not a signed or general-purpose distribution
+# package. KDE support is experimental; a CI runner is not a Plasma desktop.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/x-linux-preview.yml"
+      - "crates/x-agent/src/wm/kde.rs"
+      - "crates/x-agent/src/wm/report.rs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x-linux-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-x64:
+    name: Linux x64 current X binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      X_BUILD: "1"
+      HEX_LOCAL_BUILD: "1"
+      HEX_TEST_BUILD: "1"
+      BLA_VENDOR: OpenBLAS
+      OPENSSL_NO_VENDOR: "1"
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake pkg-config python3 libasound2-dev \
+            libssl-dev libgtk-3-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libfontconfig1-dev libfreetype-dev libxcursor-dev libxi-dev \
+            libxrandr-dev libopenblas-dev libvulkan-dev glslc libshaderc-dev
+      - name: Format and test X agent
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked -p x-agent --all-targets -- -D warnings
+          cargo test --locked -p x-agent --all-targets
+      - name: Build and smoke-run portable-ish ELF preview
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --bin hex
+          install -Dm755 target/release/hex dist/x-linux-x64
+          file dist/x-linux-x64 | grep -E 'ELF 64-bit.*x86-64'
+          dist/x-linux-x64 --version
+          (cd dist && sha256sum x-linux-x64 > SHA256SUMS && sha256sum --check SHA256SUMS)
+          printf '%s\n' \
+            'Experimental X Linux x64 preview built on Ubuntu 24.04.' \
+            'Not tested on KDE Plasma or any second-party workstation.' \
+            'Needs compatible runtime libraries (glibc >= 2.39, Wayland/X11/audio/graphics).' \
+            'KDE agent requires kdotool, Plasma 6 Wayland and X_ENABLE_EXPERIMENTAL_KDE=1.' \
+            'Not an installer, .deb, .rpm, or signed stable release.' \
+            > dist/README-preview.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: x-linux-preview-${{ github.sha }}
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  prerelease:
+    name: Publish experimental Linux binary
+    if: github.ref == 'refs/heads/main'
+    needs: linux-x64
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: x-linux-preview-${{ github.sha }}
+          path: dist
+      - name: Verify checksum and ELF identity
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS)
+          file dist/x-linux-x64 | grep -E 'ELF 64-bit.*x86-64'
+          test -s dist/x-linux-x64
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          short=${GITHUB_SHA:0:12}
+          tag="x-linux-preview-$short"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::Preview already exists"
+            exit 0
+          fi
+          cat > notes.md <<EOF
+          **Experimental X Linux x64 preview, not a stable packaged release.**
+
+          Commit $GITHUB_SHA passed Rustfmt, x-agent tests and an ELF startup
+          check on Ubuntu 24.04. The SHA256SUMS asset is verified before upload.
+          The binary targets modern Linux distributions with compatible
+          runtime libraries, including glibc 2.39 or newer.
+
+          KDE Plasma 6 Wayland control is **experimental and untested live**:
+          install kdotool and explicitly enable X_ENABLE_EXPERIMENTAL_KDE=1
+          in the X service environment. GNOME desktop control is not supported.
+
+          This bare ELF is not a .deb, .rpm, AppImage or installer. It does not
+          validate KDE, Hyprland, a real microphone, or all desktop actions.
+          See docs/x-release-qa.md for physical acceptance criteria.
+          EOF
+          gh release create "$tag" dist/x-linux-x64 dist/SHA256SUMS dist/README-preview.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "X Linux x64 experimental preview ($short)" \
+            --prerelease \
+            --notes-file notes.md
