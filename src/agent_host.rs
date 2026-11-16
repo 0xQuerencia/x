@@ -764,6 +764,10 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Ok(()) => ControlReply::done("Approved; running"),
             Err(error) => ControlReply::error("refused", error),
         },
+        AgentAction::Choose { index } => match x_agent::wm::choose(usize::from(index)) {
+            Ok(outcome) => ControlReply::done(outcome.message),
+            Err(error) => ControlReply::error("refused", error.to_string()),
+        },
         AgentAction::Undo => {
             use x_agent::wm::{Op, Request, Target};
             let request = Request {
@@ -912,6 +916,16 @@ mod tests {
         for model in ["decider", "decider-flash"] {
             assert!(planner_for(model).is_some());
         }
+    }
+
+    #[test]
+    fn window_choice_is_an_explicit_control_command() {
+        let action = AgentAction::Choose { index: 2 };
+        let wire = serde_json::to_value(&action).unwrap();
+        assert_eq!(wire["action"], "choose");
+        assert_eq!(wire["index"], 2);
+        let parsed: AgentAction = serde_json::from_value(wire).unwrap();
+        assert_eq!(parsed, action);
     }
 
     #[test]
