@@ -1213,24 +1213,33 @@ mod tests {
     #[test]
     fn hyprland_discovery_requires_one_complete_owner_socket_pair() {
         use std::os::unix::net::UnixListener;
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("hypr");
+        let temp = std::env::temp_dir().join(format!(
+            "x-hypr-socket-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&temp).unwrap();
+        let root = temp.join("hypr");
         fs::create_dir(&root).unwrap();
         let id = "abcdef_123";
         let instance = root.join(id);
         fs::create_dir(&instance).unwrap();
         let uid = unsafe { libc::getuid() };
-        assert!(hyprland_signature(temp.path(), uid).is_none());
+        assert!(hyprland_signature(&temp, uid).is_none());
         let first = UnixListener::bind(instance.join(".socket.sock")).unwrap();
-        assert!(hyprland_signature(temp.path(), uid).is_none());
+        assert!(hyprland_signature(&temp, uid).is_none());
         let second = UnixListener::bind(instance.join(".socket2.sock")).unwrap();
-        assert_eq!(hyprland_signature(temp.path(), uid).as_deref(), Some(id));
+        assert_eq!(hyprland_signature(&temp, uid).as_deref(), Some(id));
         let other = root.join("other_456");
         fs::create_dir(&other).unwrap();
         let third = UnixListener::bind(other.join(".socket.sock")).unwrap();
         let fourth = UnixListener::bind(other.join(".socket2.sock")).unwrap();
-        assert!(hyprland_signature(temp.path(), uid).is_none());
+        assert!(hyprland_signature(&temp, uid).is_none());
         drop((first, second, third, fourth));
+        fs::remove_dir_all(&temp).unwrap();
     }
 
     #[test]
