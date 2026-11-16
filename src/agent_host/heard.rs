@@ -137,24 +137,28 @@ impl Store {
             return;
         }
         if self.corrections.iter().any(|row| {
-            row.heard.eq_ignore_ascii_case(&pending.heard)
-                && row.meant.eq_ignore_ascii_case(&meant)
+            row.heard.eq_ignore_ascii_case(&pending.heard) && row.meant.eq_ignore_ascii_case(&meant)
         }) {
             return;
         }
-        self.corrections.insert(0, Entry {
-            heard: pending.heard,
-            meant,
-            promoted: false,
-        });
+        self.corrections.insert(
+            0,
+            Entry {
+                heard: pending.heard,
+                meant,
+                promoted: false,
+            },
+        );
         self.corrections.truncate(MAX_ENTRIES);
     }
 
     fn apply(&self, heard: &str) -> String {
         if self.enabled {
-            if let Some(row) = self.corrections.iter().find(|row| {
-                row.promoted && row.heard.eq_ignore_ascii_case(heard.trim())
-            }) {
+            if let Some(row) = self
+                .corrections
+                .iter()
+                .find(|row| row.promoted && row.heard.eq_ignore_ascii_case(heard.trim()))
+            {
                 return row.meant.clone();
             }
         }
@@ -207,19 +211,27 @@ pub(crate) fn command(command: &str, index: Option<usize>) -> Result<String, Str
             if store.corrections.is_empty() {
                 return Ok("No local corrections recorded".into());
             }
-            Ok(store.corrections.iter().enumerate().map(|(i, row)| {
-                format!(
-                    "{}. {:?} -> {:?}{}",
-                    i + 1,
-                    row.heard,
-                    row.meant,
-                    if row.promoted { " [promoted]" } else { "" }
-                )
-            }).collect::<Vec<_>>().join("\n"))
+            Ok(store
+                .corrections
+                .iter()
+                .enumerate()
+                .map(|(i, row)| {
+                    format!(
+                        "{}. {:?} -> {:?}{}",
+                        i + 1,
+                        row.heard,
+                        row.meant,
+                        if row.promoted { " [promoted]" } else { "" }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n"))
         }
         "promote" => {
             let n = index.ok_or("Specify the correction number")?;
-            let entry = store.corrections.get_mut(n.saturating_sub(1))
+            let entry = store
+                .corrections
+                .get_mut(n.saturating_sub(1))
                 .filter(|_| n > 0)
                 .ok_or("No correction with that number")?;
             entry.promoted = true;
@@ -264,12 +276,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn refuses_symlinks_and_world_readable_logs() {
-        use std::os::unix::fs::{symlink, PermissionsExt};
-        let tmp = std::env::temp_dir().join(format!(
-            "x-heard-test-{}-{}",
-            std::process::id(),
-            now()
-        ));
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let tmp =
+            std::env::temp_dir().join(format!("x-heard-test-{}-{}", std::process::id(), now()));
         std::fs::create_dir_all(&tmp).unwrap();
         let target = tmp.join("target.json");
         let link = tmp.join("link.json");
@@ -278,7 +287,10 @@ mod tests {
         assert!(write(&link, &Store::default()).is_err());
         let file = tmp.join("private.json");
         write(&file, &Store::default()).unwrap();
-        assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o077, 0);
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o077,
+            0
+        );
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(read(&file).is_err());
         std::fs::remove_file(&link).unwrap();
@@ -288,7 +300,11 @@ mod tests {
 
     #[test]
     fn sensitive_transcripts_are_not_retained() {
-        for heard in ["my password is secret", "open https://secret.example", "email a@b.com"] {
+        for heard in [
+            "my password is secret",
+            "open https://secret.example",
+            "email a@b.com",
+        ] {
             assert!(suitable(heard).is_none());
         }
         let mut store = Store {
