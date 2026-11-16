@@ -338,6 +338,29 @@ fn rejects_hostile_ids_in_real_backends() {
 }
 
 #[test]
+fn natural_window_synonyms_preserve_catalog_target_validation() {
+    for (said, expected) in [
+        ("quit the terminal", Op::Close),
+        ("exit the browser", Op::Close),
+        ("shut the terminal", Op::Close),
+        ("hide the terminal", Op::Minimize),
+        ("tuck the terminal away", Op::Minimize),
+        ("fullscreen Firefox", Op::Maximize),
+        ("show Firefox", Op::Focus),
+        ("bring the terminal to the front", Op::Focus),
+        ("bring up my browser", Op::Focus),
+        ("put Firefox on workspace three", Op::Move),
+    ] {
+        let request = p(said).unwrap_or_else(|| panic!("unrecognized safe synonym: {said}"));
+        assert_eq!(request.op, expected, "{said}");
+    }
+    assert!(p("close this tab").is_none());
+    assert!(p("hide the universe").is_none());
+    assert!(p("please delete all my work").is_none());
+    assert!(p("I heard somebody say quit the browser").is_none());
+}
+
+#[test]
 fn parse_phrases() {
     let r = p("Send Firefox to workspace 2.").unwrap();
     assert_eq!(
