@@ -153,13 +153,12 @@ pub fn parse_with(text: &str, entries: &[Entry]) -> Option<Request> {
         );
     }
     if let Some(rest) = prefixed(text, &["move", "send", "put"]) {
-        let (who, to) = rest.split_once(" to ").or_else(|| rest.split_once(" on "))?;
+        let (who, to) = rest
+            .split_once(" to ")
+            .or_else(|| rest.split_once(" on "))?;
         return req(Op::Move, target(who, entries)?, Some(workspace(to)?));
     }
-    if let Some(rest) = prefixed(
-        text,
-        &["switch to", "go to", "focus", "show", "bring up"],
-    ) {
+    if let Some(rest) = prefixed(text, &["switch to", "go to", "focus", "show", "bring up"]) {
         if let Some(ws) = workspace(rest).filter(|_| rest.starts_with("workspace")) {
             return req(Op::Workspace, Target::default(), Some(ws));
         }
