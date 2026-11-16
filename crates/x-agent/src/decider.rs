@@ -11,6 +11,14 @@ use crate::tools::Reply;
 
 const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 
+type CaptureFn<'a> = dyn Fn(&str, &str) -> Result<Vec<u8>, String> + 'a;
+type SendFn<'a> = dyn Fn(&Value) -> Result<Value, String> + 'a;
+
+struct DecisionIo<'a> {
+    capture: &'a CaptureFn<'a>,
+    send: &'a SendFn<'a>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Model {
     Flash,
@@ -99,10 +107,9 @@ impl Decider {
         request: &Value,
         app: &str,
         title: &str,
-        capture: &dyn Fn(&str, &str) -> Result<Vec<u8>, String>,
-        send: &dyn Fn(&Value) -> Result<Value, String>,
+        io: &DecisionIo<'_>,
     ) -> Result<Value, String> {
-        let png = capture(app, title)?;
+        let png = (io.capture)(app, title)?;
         let uri = format!(
             "data:image/png;base64,{}",
             crate::screenshots::base64_png(&png)
@@ -113,7 +120,7 @@ impl Decider {
             state.to_string(),
             { "type": "image_url", "image_url": { "url": uri } }
         ]);
-        send(&body)
+        (io.send)(&body)
     }
 
     fn decide_with(
@@ -123,16 +130,15 @@ impl Decider {
         observation: &crate::desktop::Observation,
         history: &[String],
         vision_allowed: bool,
-        capture: &dyn Fn(&str, &str) -> Result<Vec<u8>, String>,
-        send: &dyn Fn(&Value) -> Result<Value, String>,
+        io: &DecisionIo<'_>,
     ) -> Option<Result<crate::computer::Step, String>> {
         let image = self.wants_image(goal, observation, history, vision_allowed);
         Some(crate::decision_computer::decide(
             &|body| {
                 if image {
-                    Self::send_visual_with(body, app, &observation.title, capture, send)
+                    Self::send_visual_with(body, app, &observation.title, io)
                 } else {
-                    send(body)
+                    (io.send)(body)
                 }
             },
             self.model.id(),
@@ -161,15 +167,12 @@ impl Planner for Decider {
         history: &[String],
         vision_allowed: bool,
     ) -> Option<Result<crate::computer::Step, String>> {
-        self.decide_with(
-            goal,
-            app,
-            observation,
-            history,
-            vision_allowed,
-            &crate::screenshots::capture_for_decider,
-            &|body| self.send(body),
-        )
+        let send = |body: &Value| self.send(body);
+        let io = DecisionIo {
+            capture: &crate::screenshots::capture_for_decider,
+            send: &send,
+        };
+        self.decide_with(goal, app, observation, history, vision_allowed, &io)
     }
 }
 
@@ -241,14 +244,17 @@ mod tests {
                                     }
                                 }))
                             };
+                            let io = DecisionIo {
+                                capture: &capture,
+                                send: &send,
+                            };
                             p.decide_with(
                                 goal,
                                 "firefox",
                                 &obs,
                                 &history,
                                 remote && granted,
-                                &capture,
-                                &send,
+                                &io,
                             )
                             .unwrap()
                             .unwrap();
