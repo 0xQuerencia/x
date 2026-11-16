@@ -272,12 +272,15 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
 }
 
 /// Reverses only a verified volume, mute or brightness change.
+/// As with window Undo, a stale state must not rewrite a current setting.
 pub fn undo(runner: &dyn Runner) -> Result<String, String> {
     let previous = HISTORY.lock().unwrap_or_else(|p| p.into_inner()).pop();
-    match previous
-        .ok_or("There is no system-control change to undo")?
-        .1
-    {
+    let (at, previous) = previous.ok_or("There is no system-control change to undo")?;
+    if at.elapsed() > Duration::from_secs(600) {
+        HISTORY.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        return Err("System change is too old to undo".into());
+    }
+    match previous {
         Undo::Volume(value) => {
             set_volume(runner, value)?;
             Ok(format!("Restored volume to {value}%"))
