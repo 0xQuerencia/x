@@ -534,7 +534,10 @@ pub fn intercept(text: &str) -> bool {
 /// A bare numbered answer is treated as a choice only during a pending
 /// owner-approved window disambiguation. Ordinary dictation stays untouched.
 fn spoken_window_number(text: &str) -> Option<usize> {
-    let lower = text.trim().trim_end_matches(['.', '!', '?']).to_ascii_lowercase();
+    let lower = text
+        .trim()
+        .trim_end_matches(['.', '!', '?'])
+        .to_ascii_lowercase();
     let index = match lower.as_str() {
         "1" | "one" | "first" | "number one" => 1,
         "2" | "two" | "second" | "number two" => 2,
@@ -557,7 +560,11 @@ fn follow_up_window_choice(text: &str) -> Option<Result<String, String>> {
     if choices.is_empty() {
         return None;
     }
-    Some(x_agent::wm::choose(index).map(|out| out.message).map_err(|e| e.to_string()))
+    Some(
+        x_agent::wm::choose(index)
+            .map(|out| out.message)
+            .map_err(|e| e.to_string()),
+    )
 }
 
 /// Plans a spoken command. True when X took it; false when it was not a command X knows
@@ -796,19 +803,19 @@ pub fn handle(action: AgentAction) -> ControlReply {
                 };
             }
             match Mode::parse(&mode) {
-            Err(error) => ControlReply::error("usage", error),
-            Ok(mode) if mode == Mode::Actions && svc.needs_model(&text) => {
-                background(move |svc| {
-                    if let Err(error) = svc.plan(&text, mode) {
-                        svc.emit("error", &error);
-                    }
-                });
-                ControlReply::done("Planning with the model; watch `x agent status`")
-            }
-            Ok(mode) => match svc.plan(&text, mode) {
-                Ok(_) => snapshot(0),
-                Err(error) => ControlReply::error("refused", error),
-            },
+                Err(error) => ControlReply::error("usage", error),
+                Ok(mode) if mode == Mode::Actions && svc.needs_model(&text) => {
+                    background(move |svc| {
+                        if let Err(error) = svc.plan(&text, mode) {
+                            svc.emit("error", &error);
+                        }
+                    });
+                    ControlReply::done("Planning with the model; watch `x agent status`")
+                }
+                Ok(mode) => match svc.plan(&text, mode) {
+                    Ok(_) => snapshot(0),
+                    Err(error) => ControlReply::error("refused", error),
+                },
             }
         }
         AgentAction::Approve { id } => match svc.approve(id) {
@@ -980,7 +987,11 @@ mod tests {
         assert_eq!(spoken_window_number("two"), Some(2));
         assert_eq!(spoken_window_number("number three."), Some(3));
         assert_eq!(spoken_window_number("second"), Some(2));
-        for text in ["the number two", "I saw two terminals", "close the second window"] {
+        for text in [
+            "the number two",
+            "I saw two terminals",
+            "close the second window",
+        ] {
             assert_eq!(spoken_window_number(text), None);
         }
     }
