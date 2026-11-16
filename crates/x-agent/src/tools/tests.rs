@@ -41,11 +41,18 @@ use super::*;
 fn system_controls_are_exact_local_actions_with_fail_closed_risk() {
     use crate::sys::Op;
     let command = plan_rules("volume to 30%").unwrap();
-    assert_eq!(command, vec![Action::System { op: Op::SetVolume(30) }]);
+    assert_eq!(
+        command,
+        vec![Action::System {
+            op: Op::SetVolume(30)
+        }]
+    );
     assert!(is_low_risk(&command));
     assert_eq!(
         plan_rules("mute audio"),
-        Some(vec![Action::System { op: Op::SetMute(true) }])
+        Some(vec![Action::System {
+            op: Op::SetMute(true)
+        }])
     );
     let next = Action::System { op: Op::Next };
     assert_eq!(next.risk(), Risk::Consequential);
@@ -53,12 +60,10 @@ fn system_controls_are_exact_local_actions_with_fail_closed_risk() {
     assert!(plan_rules("I read an article about the volume of music").is_none());
     assert!(plan_rules("volume to 120%").is_none());
     assert!(
-        serde_json::from_str::<Action>(r#"{"kind":"system","op":{"set_volume":30}}"#)
-            .is_err(),
+        serde_json::from_str::<Action>(r#"{"kind":"system","op":{"set_volume":30}}"#).is_err(),
         "Remote JSON must not grant system-control powers"
     );
 }
-
 
 
 fn fake_path(name: &str) -> Option<String> {
