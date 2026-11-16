@@ -33,7 +33,7 @@ impl I3 {
     }
 
     fn command(&self, command: &str) -> Result<(), WmError> {
-        let reply: Value = serde_json::from_slice(&self.call(&["-t", "run_command", command])?)
+        let reply: Value = serde_json::from_slice(&self.call(&["-r", "-t", "command", command])?)
             .map_err(|_| WmError::Backend("unreadable command reply".into()))?;
         let ok = reply.as_array().is_some_and(|r| {
             !r.is_empty() && r.iter().all(|e| e["success"].as_bool() == Some(true))
