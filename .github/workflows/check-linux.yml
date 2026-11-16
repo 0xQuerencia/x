@@ -99,6 +99,10 @@ jobs:
       - name: Exercise service IPC and client-independent lifecycle
         run: python3 scripts/test-linux-service.py target/debug/hex
       - run: cargo clippy --locked --bin hex --tests -- -D warnings
+      # X is its own action/safety boundary; stable and check releases
+      # must run the same deterministic tests that every X PR runs.
+      - run: cargo clippy --locked -p x-agent --all-targets -- -D warnings
+      - run: cargo test --locked -p x-agent --all-targets
       - run: cargo clippy --locked -p scrawl-router --all-targets -- -D warnings
 
   nix:
