@@ -11,6 +11,14 @@ use crate::tools::Reply;
 
 const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 
+type CaptureFn<'a> = dyn Fn(&str, &str) -> Result<Vec<u8>, String> + 'a;
+type SendFn<'a> = dyn Fn(&Value) -> Result<Value, String> + 'a;
+
+struct DecisionIo<'a> {
+    capture: &'a CaptureFn<'a>,
+    send: &'a SendFn<'a>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Model {
     Flash,
@@ -68,8 +76,12 @@ impl Decider {
         goal: &str,
         observation: &crate::desktop::Observation,
         history: &[String],
+        vision_allowed: bool,
     ) -> bool {
-        if !self.vision_file.as_ref().is_some_and(|p| p.is_file()) || !history.is_empty() {
+        if !vision_allowed
+            || !self.vision_file.as_ref().is_some_and(|p| p.is_file())
+            || !history.is_empty()
+        {
             return false;
         }
         let lower = goal.to_ascii_lowercase();
@@ -90,10 +102,14 @@ impl Decider {
         visual_words.iter().any(|word| lower.contains(word)) || observation.elements.is_empty()
     }
 
-    fn send_visual(&self, request: &Value, app: &str, title: &str) -> Result<Value, String> {
-        // Capture only after app grant + remote consent in the existing computer
-        // task executor, and after the independent vision opt-in is present.
-        let png = crate::screenshots::capture_for_decider(app, title)?;
+    /// Injectable seams keep privacy tests off the actual desktop and network.
+    fn send_visual_with(
+        request: &Value,
+        app: &str,
+        title: &str,
+        io: &DecisionIo<'_>,
+    ) -> Result<Value, String> {
+        let png = (io.capture)(app, title)?;
         let uri = format!(
             "data:image/png;base64,{}",
             crate::screenshots::base64_png(&png)
@@ -104,7 +120,33 @@ impl Decider {
             state.to_string(),
             { "type": "image_url", "image_url": { "url": uri } }
         ]);
-        self.send(&body)
+        (io.send)(&body)
+    }
+
+    fn decide_with(
+        &self,
+        goal: &str,
+        app: &str,
+        observation: &crate::desktop::Observation,
+        history: &[String],
+        vision_allowed: bool,
+        io: &DecisionIo<'_>,
+    ) -> Option<Result<crate::computer::Step, String>> {
+        let image = self.wants_image(goal, observation, history, vision_allowed);
+        Some(crate::decision_computer::decide(
+            &|body| {
+                if image {
+                    Self::send_visual_with(body, app, &observation.title, io)
+                } else {
+                    (io.send)(body)
+                }
+            },
+            self.model.id(),
+            goal,
+            app,
+            observation,
+            history,
+        ))
     }
 }
 
@@ -123,22 +165,14 @@ impl Planner for Decider {
         app: &str,
         observation: &crate::desktop::Observation,
         history: &[String],
+        vision_allowed: bool,
     ) -> Option<Result<crate::computer::Step, String>> {
-        let image = self.wants_image(goal, observation, history);
-        Some(crate::decision_computer::decide(
-            &|body| {
-                if image {
-                    self.send_visual(body, app, &observation.title)
-                } else {
-                    self.send(body)
-                }
-            },
-            self.model.id(),
-            goal,
-            app,
-            observation,
-            history,
-        ))
+        let send = |body: &Value| self.send(body);
+        let io = DecisionIo {
+            capture: &crate::screenshots::capture_for_decider,
+            send: &send,
+        };
+        self.decide_with(goal, app, observation, history, vision_allowed, &io)
     }
 }
 
@@ -156,6 +190,80 @@ mod tests {
     }
 
     #[test]
+    fn image_capture_requires_every_consent_gate_and_a_first_step() {
+        use std::cell::Cell;
+
+        let dir = tempfile::tempdir().unwrap();
+        let flag = dir.path().join("vision");
+        std::fs::write(&flag, b"on").unwrap();
+        // A non-empty accessibility tree ensures only explicitly visual
+        // wording asks for pixels; a missing tree is also a visual cue.
+        let obs = crate::desktop::Observation {
+            elements: vec![crate::desktop::Element {
+                id: "e1".into(),
+                reference: "@s:e1".into(),
+                role: "button".into(),
+                name: "Continue".into(),
+                value: String::new(),
+                actions: vec!["Click".into()],
+            }],
+            ..Default::default()
+        };
+        for vision in [false, true] {
+            for remote in [false, true] {
+                for granted in [false, true] {
+                    for first in [false, true] {
+                        for visual in [false, true] {
+                            let p = Decider {
+                                model: Model::Flash,
+                                key_file: None,
+                                vision_file: vision.then(|| flag.clone()),
+                            };
+                            let history = if first {
+                                Vec::new()
+                            } else {
+                                vec!["previous step".to_string()]
+                            };
+                            let goal = if visual {
+                                "click this button"
+                            } else {
+                                "click Continue"
+                            };
+                            let calls = Cell::new(0);
+                            let capture = |_: &str, _: &str| {
+                                calls.set(calls.get() + 1);
+                                Ok(b"fake-png".to_vec())
+                            };
+                            let send = |_: &Value| {
+                                Ok(serde_json::json!({
+                                    "answers": {
+                                        "operation": {
+                                            "choice": "blocked",
+                                            "probabilities": {"blocked": 0.99}
+                                        }
+                                    }
+                                }))
+                            };
+                            let io = DecisionIo {
+                                capture: &capture,
+                                send: &send,
+                            };
+                            p.decide_with(goal, "firefox", &obs, &history, remote && granted, &io)
+                                .unwrap()
+                                .unwrap();
+                            assert_eq!(
+                                calls.get(),
+                                u32::from(vision && remote && granted && first && visual),
+                                "vision={vision} remote={remote} granted={granted} first={first} visual={visual}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn vision_is_opt_in_and_only_on_first_step() {
         let p = Decider {
             model: Model::Flash,
@@ -163,6 +271,6 @@ mod tests {
             vision_file: None,
         };
         let obs = crate::desktop::Observation::default();
-        assert!(!p.wants_image("click this button", &obs, &[]));
+        assert!(!p.wants_image("click this button", &obs, &[], true));
     }
 }

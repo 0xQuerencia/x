@@ -49,11 +49,15 @@ pub fn capture_for_decider(app: &str, observed_title: &str) -> Result<Vec<u8>, S
             .and_then(serde_json::Value::as_str)
             .ok_or("Focused window lacks an address")?
             .to_owned();
+        // A rectangular grim grab can include pixels from another window or a
+        // top/overlay layer. Refuse rather than send content outside this grant.
+        refuse_overlaps(&before)?;
         let image = capture(Mode::Window)?;
         let after = active_window()?;
         if after.get("address").and_then(serde_json::Value::as_str) != Some(address.as_str()) {
             return Err("Focus changed during capture; screenshot discarded".into());
         }
+        refuse_overlaps(&after)?;
         Ok(image)
     }
     #[cfg(not(target_os = "linux"))]
@@ -108,6 +112,124 @@ pub fn capture(mode: Mode) -> Result<Vec<u8>, String> {
         let _ = mode;
         Err("Screenshots currently require Wayland on Linux".into())
     }
+}
+
+/// The visual grant is for one app, never for other visible surfaces sharing
+/// its rectangular screenshot. A malformed compositor response fails closed.
+#[cfg(target_os = "linux")]
+fn refuse_overlaps(window: &serde_json::Value) -> Result<(), String> {
+    let clients = crate::desktop::hypr(&["clients", "-j"])?;
+    let layers = crate::desktop::hypr(&["layers", "-j"])?;
+    check_overlaps(window, &clients, &layers)
+}
+
+#[cfg(target_os = "linux")]
+fn rectangle(value: &serde_json::Value) -> Result<(i64, i64, i64, i64), String> {
+    let pos = value
+        .get("at")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("Visual capture has unknown surface position")?;
+    let size = value
+        .get("size")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("Visual capture has unknown surface size")?;
+    let (x, y, w, h) = (
+        pos.first().and_then(serde_json::Value::as_i64),
+        pos.get(1).and_then(serde_json::Value::as_i64),
+        size.first().and_then(serde_json::Value::as_i64),
+        size.get(1).and_then(serde_json::Value::as_i64),
+    );
+    match (x, y, w, h) {
+        (Some(x), Some(y), Some(w), Some(h)) if w > 0 && h > 0 => Ok((x, y, w, h)),
+        _ => Err("Visual capture has invalid surface geometry".into()),
+    }
+}
+
+/// Hyprland uses `x/y/w/h` for layer surfaces, unlike the
+/// `at/size` arrays emitted for normal client windows.
+#[cfg(target_os = "linux")]
+fn layer_rectangle(value: &serde_json::Value) -> Result<(i64, i64, i64, i64), String> {
+    let values = ["x", "y", "w", "h"].map(|key| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_i64)
+            .ok_or("Visual capture has unknown layer geometry")
+    });
+    let [x, y, w, h] = values;
+    let (x, y, w, h) = (x?, y?, w?, h?);
+    if w <= 0 || h <= 0 {
+        return Err("Visual capture has invalid layer geometry".into());
+    }
+    Ok((x, y, w, h))
+}
+
+#[cfg(target_os = "linux")]
+fn intersects(a: (i64, i64, i64, i64), b: (i64, i64, i64, i64)) -> bool {
+    a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
+}
+
+#[cfg(target_os = "linux")]
+fn check_overlaps(
+    window: &serde_json::Value,
+    clients: &serde_json::Value,
+    layers: &serde_json::Value,
+) -> Result<(), String> {
+    let rect = rectangle(window)?;
+    let address = window
+        .get("address")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("Focused window has no identity")?;
+    let workspace = window
+        .pointer("/workspace/id")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or("Focused window has no workspace")?;
+    for other in clients
+        .as_array()
+        .ok_or("Cannot inspect other windows before private capture")?
+    {
+        if other.get("address").and_then(serde_json::Value::as_str) == Some(address)
+            || other.get("mapped").and_then(serde_json::Value::as_bool) == Some(false)
+            || (other
+                .pointer("/workspace/id")
+                .and_then(serde_json::Value::as_i64)
+                != Some(workspace)
+                && other.get("pinned").and_then(serde_json::Value::as_bool) != Some(true))
+        {
+            continue;
+        }
+        if intersects(rect, rectangle(other)?) {
+            return Err("Another window overlaps the granted app; no screenshot taken".into());
+        }
+    }
+
+    // Layers 0/1 are wallpaper/bottom surfaces. Levels 2/3 are top/overlay
+    // surfaces, including notification popups and panels.
+    for monitor in layers
+        .as_object()
+        .ok_or("Cannot inspect overlay layers before private capture")?
+        .values()
+    {
+        let levels = monitor
+            .get("levels")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("Cannot inspect overlay levels before private capture")?;
+        for level in ["2", "3"] {
+            if let Some(surfaces) = levels.get(level) {
+                for surface in surfaces
+                    .as_array()
+                    .ok_or("Cannot inspect overlay surfaces before private capture")?
+                {
+                    if intersects(rect, layer_rectangle(surface)?) {
+                        return Err(
+                            "A panel or notification overlaps the granted app; no screenshot taken"
+                                .into(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -243,6 +365,96 @@ mod tests {
         assert_eq!(base64_png(b"Man"), "TWFu");
         assert!(Mode::parse("region").is_ok());
         assert!(Mode::parse("auto").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn private_visual_capture_refuses_another_mapped_window() {
+        let focused = serde_json::json!({
+            "address":"0x1", "at":[10,10], "size":[600,400], "workspace":{"id":1}
+        });
+        let own = serde_json::json!({
+            "address":"0x1", "at":[10,10], "size":[600,400],
+            "workspace":{"id":1}, "mapped":true
+        });
+        let overlap = serde_json::json!({
+            "address":"0x2", "at":[600,50], "size":[100,100],
+            "workspace":{"id":1}, "mapped":true
+        });
+        let other_workspace = serde_json::json!({
+            "address":"0x3", "at":[10,10], "size":[100,100],
+            "workspace":{"id":2}, "mapped":true
+        });
+        let layers = serde_json::json!({
+            "DP-1":{"levels":{"0":[{"at":[0,0],"size":[2000,1200]}],"2":[],"3":[]}}
+        });
+        assert!(
+            check_overlaps(
+                &focused,
+                &serde_json::json!([own, other_workspace]),
+                &layers
+            )
+            .is_ok()
+        );
+        assert!(
+            check_overlaps(&focused, &serde_json::json!([overlap]), &layers)
+                .unwrap_err()
+                .contains("Another window")
+        );
+        assert!(check_overlaps(&focused, &serde_json::json!([]), &serde_json::json!({})).is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn private_visual_capture_recognizes_real_hyprctl_layers_geometry() {
+        let window = serde_json::json!({
+            "address":"0x1", "at":[400,300], "size":[700,500], "workspace":{"id":1}
+        });
+        let clear = serde_json::json!({
+            "DP-1":{"levels":{
+                "0":[{"x":0,"y":0,"w":2000,"h":1200}],
+                "2":[{"x":0,"y":0,"w":2000,"h":20}],
+                "3":[]
+            }}
+        });
+        assert!(check_overlaps(&window, &serde_json::json!([]), &clear).is_ok());
+        let obstructed = serde_json::json!({
+            "DP-1":{"levels":{
+                "2":[{"x":450,"y":310,"w":800,"h":75}]
+            }}
+        });
+        assert!(
+            check_overlaps(&window, &serde_json::json!([]), &obstructed)
+                .unwrap_err()
+                .contains("notification")
+        );
+        assert!(layer_rectangle(&serde_json::json!({"x":10,"y":10,"w":0,"h":40})).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn private_visual_capture_refuses_overlays_and_unknown_geometry() {
+        let focused = serde_json::json!({
+            "address":"0x1", "at":[10,10], "size":[600,400], "workspace":{"id":1}
+        });
+        // Actual `hyprctl layers -j` fields are x/y/w/h, not at/size.
+        let overlay = serde_json::json!({
+            "DP-1":{"levels":{"2":[{"x":20,"y":20,"w":150,"h":50}],"3":[]}}
+        });
+        assert!(
+            check_overlaps(&focused, &serde_json::json!([]), &overlay)
+                .unwrap_err()
+                .contains("panel or notification")
+        );
+        assert!(
+            check_overlaps(
+                &focused,
+                &serde_json::json!([]),
+                &serde_json::json!({"DP-1":{"levels":{"3":[{"x":0,"y":0,"w":500}]}}})
+            )
+            .is_err()
+        );
+        assert!(check_overlaps(&focused, &serde_json::json!({}), &overlay).is_err());
     }
 
     #[cfg(target_os = "linux")]

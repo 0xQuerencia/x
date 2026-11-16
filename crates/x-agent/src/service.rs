@@ -181,6 +181,7 @@ pub trait Planner: Send + Sync {
         _app: &str,
         _observation: &crate::desktop::Observation,
         _history: &[String],
+        _vision_allowed: bool,
     ) -> Option<Result<crate::computer::Step, String>> {
         None
     }
@@ -898,7 +899,15 @@ impl Service {
             goal,
             desktop.as_ref(),
             &|goal, app, observation, history| {
-                if let Some(decision) = planner.decide_computer(goal, app, observation, history) {
+                // A one-task approval permits accessibility text, not pixels.
+                // Remote vision also requires a persistent per-app grant.
+                let vision_allowed = {
+                    let state = self.lock();
+                    state.computer_remote && state.computer_apps.iter().any(|name| name == app)
+                };
+                if let Some(decision) =
+                    planner.decide_computer(goal, app, observation, history, vision_allowed)
+                {
                     decision
                 } else {
                     let prompt = crate::computer::prompt(goal, app, observation, history);
