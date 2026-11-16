@@ -22,6 +22,7 @@ pub mod phase;
 pub mod planner;
 pub mod quick;
 pub mod screenshots;
+pub mod browser_tab;
 pub mod service;
 pub mod tools;
 pub mod wm;
