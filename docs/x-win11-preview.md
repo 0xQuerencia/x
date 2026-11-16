@@ -2,16 +2,15 @@
 
 X's current Windows 11 port is **experimental**, not a tested release.
 
-A merge of the preview workflow creates a downloadable, unsigned `x.exe`
-build on the Windows GitHub Actions runner, with `SHA256SUMS`. Nothing is
-deployed or installed automatically.
+After the preview workflow passes on `main`, it publishes an unsigned `x.exe`
+and `SHA256SUMS` as an explicitly labeled GitHub **prerelease**. Nothing is
+installed, auto-updated, or advertised as fully supported.
 
 ## Get a preview
 
-1. Open the [X Windows 11 preview workflow](https://github.com/0xQuerencia/x/actions/workflows/x-windows-preview.yml).
-2. Open the successful run of the exact `main` commit you intend to test.
-3. Under **Artifacts**, download `x-win11-preview-<commit SHA>` (requires
-   a GitHub login), extract `x.exe` and `SHA256SUMS`.
+1. Open [X Releases](https://github.com/0xQuerencia/x/releases) and select the newest **Windows 11 experimental preview** prerelease.
+2. Download `x.exe` and `SHA256SUMS` from **Assets**. Do not confuse it with the Linux-only alpha.
+3. Verify the checksum before executing.
 4. On Windows 11 PowerShell, run:
 
    ```powershell
