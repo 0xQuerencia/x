@@ -145,6 +145,24 @@ fn rectangle(value: &serde_json::Value) -> Result<(i64, i64, i64, i64), String> 
     }
 }
 
+/// Hyprland uses `x/y/w/h` for layer surfaces, unlike the
+/// `at/size` arrays emitted for normal client windows.
+#[cfg(target_os = "linux")]
+fn layer_rectangle(value: &serde_json::Value) -> Result<(i64, i64, i64, i64), String> {
+    let values = ["x", "y", "w", "h"].map(|key| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_i64)
+            .ok_or("Visual capture has unknown layer geometry")
+    });
+    let [x, y, w, h] = values;
+    let (x, y, w, h) = (x?, y?, w?, h?);
+    if w <= 0 || h <= 0 {
+        return Err("Visual capture has invalid layer geometry".into());
+    }
+    Ok((x, y, w, h))
+}
+
 #[cfg(target_os = "linux")]
 fn intersects(a: (i64, i64, i64, i64), b: (i64, i64, i64, i64)) -> bool {
     a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
@@ -201,7 +219,7 @@ fn check_overlaps(
                     .as_array()
                     .ok_or("Cannot inspect overlay surfaces before private capture")?
                 {
-                    if intersects(rect, rectangle(surface)?) {
+                    if intersects(rect, layer_rectangle(surface)?) {
                         return Err(
                             "A panel or notification overlaps the granted app; no screenshot taken"
                                 .into(),
@@ -388,12 +406,38 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn private_visual_capture_recognizes_real_hyprctl_layers_geometry() {
+        let window = serde_json::json!({
+            "address":"0x1", "at":[400,300], "size":[700,500], "workspace":{"id":1}
+        });
+        let clear = serde_json::json!({
+            "DP-1":{"levels":{
+                "0":[{"x":0,"y":0,"w":2000,"h":1200}],
+                "2":[{"x":0,"y":0,"w":2000,"h":20}],
+                "3":[]
+            }}
+        });
+        assert!(check_overlaps(&window, &serde_json::json!([]), &clear).is_ok());
+        let obstructed = serde_json::json!({
+            "DP-1":{"levels":{
+                "2":[{"x":450,"y":310,"w":800,"h":75}]
+            }}
+        });
+        assert!(check_overlaps(&window, &serde_json::json!([]), &obstructed)
+            .unwrap_err()
+            .contains("notification"));
+        assert!(layer_rectangle(&serde_json::json!({"x":10,"y":10,"w":0,"h":40})).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn private_visual_capture_refuses_overlays_and_unknown_geometry() {
         let focused = serde_json::json!({
             "address":"0x1", "at":[10,10], "size":[600,400], "workspace":{"id":1}
         });
+        // Actual `hyprctl layers -j` fields are x/y/w/h, not at/size.
         let overlay = serde_json::json!({
-            "DP-1":{"levels":{"2":[{"at":[20,20],"size":[150,50]}],"3":[]}}
+            "DP-1":{"levels":{"2":[{"x":20,"y":20,"w":150,"h":50}],"3":[]}}
         });
         assert!(
             check_overlaps(&focused, &serde_json::json!([]), &overlay)
@@ -404,7 +448,7 @@ mod tests {
             check_overlaps(
                 &focused,
                 &serde_json::json!([]),
-                &serde_json::json!({"DP-1":{"levels":{"3":[{"at":[0,0]}]}}})
+                &serde_json::json!({"DP-1":{"levels":{"3":[{"x":0,"y":0,"w":500}]}}})
             )
             .is_err()
         );
