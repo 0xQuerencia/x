@@ -9,10 +9,10 @@ use super::hypr::Hypr;
 use super::i3::I3;
 #[cfg(not(windows))]
 use super::kde::Kde;
-#[cfg(not(windows))]
-use super::x11::X11;
 #[cfg(windows)]
 use super::win11::Win11;
+#[cfg(not(windows))]
+use super::x11::X11;
 use super::{Backend, Cap};
 
 #[derive(Debug, Serialize)]
