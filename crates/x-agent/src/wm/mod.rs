@@ -332,43 +332,43 @@ impl Controller {
             let focused = self.focused_in(&all)?;
             self.note_focus(focused.as_ref());
             match req.op {
-            Op::List => Ok(list(&all)),
-            Op::Keys => Ok(Outcome {
-                message: keys::answer(&(self.binds)(), &req.target.app),
-                undoable: false,
-            }),
-            Op::Undo => self.undo(&all),
-            Op::Workspace => {
-                let ws = self.target_ws(req.ws.as_ref())?;
-                self.switch(ws)
-            }
-            Op::Back => {
-                let prev = self.fresh(self.previous.clone(), &all, "No previous window")?;
-                self.focus(&prev, focused)
-            }
-            Op::Focus => {
-                let win = self.resolve(&req.target, &all, focused.as_ref(), true)?;
-                self.focus(&win, focused)
-            }
-            Op::Move => {
-                let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
-                let ws = self.target_ws(req.ws.as_ref())?;
-                self.move_to(&win, ws)
-            }
-            Op::Maximize => {
-                let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
-                self.maximize(&win)
-            }
-            Op::Minimize => {
-                let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
-                self.minimize(&win)
-            }
-            Op::Close => {
-                let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
-                let mut out = self.close(&win)?;
-                out.message.push_str(&keys::hint("close", &(self.binds)()));
-                Ok(out)
-            }
+                Op::List => Ok(list(&all)),
+                Op::Keys => Ok(Outcome {
+                    message: keys::answer(&(self.binds)(), &req.target.app),
+                    undoable: false,
+                }),
+                Op::Undo => self.undo(&all),
+                Op::Workspace => {
+                    let ws = self.target_ws(req.ws.as_ref())?;
+                    self.switch(ws)
+                }
+                Op::Back => {
+                    let prev = self.fresh(self.previous.clone(), &all, "No previous window")?;
+                    self.focus(&prev, focused)
+                }
+                Op::Focus => {
+                    let win = self.resolve(&req.target, &all, focused.as_ref(), true)?;
+                    self.focus(&win, focused)
+                }
+                Op::Move => {
+                    let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
+                    let ws = self.target_ws(req.ws.as_ref())?;
+                    self.move_to(&win, ws)
+                }
+                Op::Maximize => {
+                    let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
+                    self.maximize(&win)
+                }
+                Op::Minimize => {
+                    let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
+                    self.minimize(&win)
+                }
+                Op::Close => {
+                    let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
+                    let mut out = self.close(&win)?;
+                    out.message.push_str(&keys::hint("close", &(self.binds)()));
+                    Ok(out)
+                }
             }
         })();
         if let Err(WmError::Ambiguous(ref choices)) = result {
