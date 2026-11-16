@@ -221,16 +221,25 @@ fn timing_events_have_no_transcript_or_private_window_title() {
     let (service, _, _) = rig();
     let task = service.plan("list windows", Mode::Actions).unwrap();
     let state = service.snapshot(0);
-    assert!(state.events.iter().any(|e| {
-        e.kind == "timing" && e.text.starts_with("phase=plan elapsed_ms=")
-    }));
+    assert!(
+        state
+            .events
+            .iter()
+            .any(|e| { e.kind == "timing" && e.text.starts_with("phase=plan elapsed_ms=") })
+    );
     service.approve(task.id).unwrap();
     let done = wait_for(&service, |s| s.phase == Phase::Completed);
     let timings: Vec<_> = done.events.iter().filter(|e| e.kind == "timing").collect();
-    assert!(timings.iter().any(|e| e.text.starts_with("phase=act_verify step=1 elapsed_ms=")));
-    assert!(timings.iter().all(|e| {
-        !e.text.contains("list windows") && !e.text.contains("terminal")
-    }));
+    assert!(
+        timings
+            .iter()
+            .any(|e| e.text.starts_with("phase=act_verify step=1 elapsed_ms="))
+    );
+    assert!(
+        timings
+            .iter()
+            .all(|e| { !e.text.contains("list windows") && !e.text.contains("terminal") })
+    );
 }
 
 #[test]
