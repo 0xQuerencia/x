@@ -263,11 +263,9 @@ fn installed_in(name: &str, entries: &[Entry]) -> Option<Entry> {
     if name.is_empty() || name.len() > 128 || name.chars().any(char::is_control) {
         return None;
     }
-    let mut matches = entries
-        .iter()
-        .filter(|entry| {
-            !entry.path.as_os_str().is_empty() && entry.names.iter().any(|n| n == &name)
-        });
+    let mut matches = entries.iter().filter(|entry| {
+        !entry.path.as_os_str().is_empty() && entry.names.iter().any(|n| n == &name)
+    });
     let found = matches.next()?.clone();
     matches.next().is_none().then_some(found)
 }
@@ -440,22 +438,28 @@ mod tests {
             "[Desktop Entry]\nType=Application\nName=Spotify\nExec=flatpak run com.spotify.Client %U\n",
         )
         .unwrap();
-        let mut entry =
-            parse_entry("com.spotify.Client.desktop", &std::fs::read_to_string(&desktop).unwrap())
-                .unwrap();
+        let mut entry = parse_entry(
+            "com.spotify.Client.desktop",
+            &std::fs::read_to_string(&desktop).unwrap(),
+        )
+        .unwrap();
         entry.path = desktop.clone();
         assert_eq!(entry.id, "com.spotify.client");
         assert_eq!(entry.exec, "flatpak run com.spotify.Client %U");
         assert!(!entry.terminal);
-        assert_eq!(installed_in("Spotify", &[entry.clone()]), Some(entry.clone()));
+        assert_eq!(
+            installed_in("Spotify", &[entry.clone()]),
+            Some(entry.clone())
+        );
         assert!(installed_in("Spotify", &[entry.clone(), entry.clone()]).is_none());
         assert_eq!(
             launch_argv(&entry, &|bin| (bin == "gio").then(|| "/usr/bin/gio".into())).unwrap(),
             ["/usr/bin/gio", "launch", desktop.to_str().unwrap()]
         );
         assert_eq!(
-            launch_argv(&entry, &|bin| (bin == "gtk-launch").then(|| "/usr/bin/gtk-launch".into()))
-                .unwrap(),
+            launch_argv(&entry, &|bin| (bin == "gtk-launch")
+                .then(|| "/usr/bin/gtk-launch".into()))
+            .unwrap(),
             ["/usr/bin/gtk-launch", "com.spotify.client"]
         );
         assert!(launch_argv(&entry, &|_| None).is_err());
