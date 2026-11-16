@@ -208,7 +208,7 @@ fn agent_entries() -> Vec<VocabularyEntry> {
     if !crate::agent_host::action_voice_bias_enabled() {
         return Vec::new();
     }
-    let open_classes = x_agent::wm::view()
+    let open_classes: Vec<String> = x_agent::wm::view()
         .map(|view| view.windows.into_iter().map(|w| w.class).collect())
         .unwrap_or_default();
     let installed_names = x_agent::wm::apps::load()
