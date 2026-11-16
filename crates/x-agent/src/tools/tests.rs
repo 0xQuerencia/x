@@ -27,7 +27,9 @@ fn autonomy_risk_is_exhaustive_and_closes_fail_closed() {
         app: "firefox".into(),
         goal: "click something".into(),
     }]));
-    assert!(!is_low_risk(&[Action::Type { text: "hello".into() }]));
+    assert!(!is_low_risk(&[Action::Type {
+        text: "hello".into()
+    }]));
     assert!(is_low_risk(&[Action::App {
         target: "firefox".into(),
     }]));
