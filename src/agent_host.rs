@@ -17,10 +17,10 @@ use x_agent::service::{Mode, RealLauncher, Service};
 
 use crate::control::{AgentAction, ControlReply};
 
+pub(crate) mod heard;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod wake;
 mod workflows;
-pub(crate) mod heard;
 
 const DISABLED: &str = "X is off. Turn it on with `hex labs on x-agent`";
 
@@ -583,8 +583,7 @@ pub(crate) fn plan_spoken(mode: Mode, command: &str) -> bool {
     }
     // Only explicit Actions voice mode can feed the opt-in private correction
     // history. Never inspect dictation, Smart, Auto or hands-free audio.
-    let learn = mode == Mode::Actions
-        && VOICE.load(Ordering::Relaxed) == VoiceMode::Actions as u8;
+    let learn = mode == Mode::Actions && VOICE.load(Ordering::Relaxed) == VoiceMode::Actions as u8;
     let candidate = if learn {
         heard::apply(command)
     } else {
