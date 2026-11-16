@@ -36,7 +36,9 @@ impl Runner for Local {
 
     fn run(&self, program: &str, args: &[&str]) -> Result<String, String> {
         if !self.exists(program) {
-            return Err(format!("{program} is unavailable; install it or use a different backend"));
+            return Err(format!(
+                "{program} is unavailable; install it or use a different backend"
+            ));
         }
         let mut child = Command::new(program)
             .args(args)
@@ -104,7 +106,10 @@ fn percent_from_wpctl(text: &str) -> Result<(u8, bool), String> {
         .and_then(|v| v.parse::<f64>().ok())
         .filter(|v| v.is_finite() && (0.0..=1.5).contains(v))
         .ok_or("Audio backend returned an invalid volume")?;
-    Ok(((value * 100.0).round().min(100.0) as u8, text.contains("[MUTED]")))
+    Ok((
+        (value * 100.0).round().min(100.0) as u8,
+        text.contains("[MUTED]"),
+    ))
 }
 
 fn percent_from_pactl(text: &str) -> Result<u8, String> {
@@ -138,7 +143,9 @@ fn set_volume(runner: &dyn Runner, level: u8) -> Result<(), String> {
     }
     let (actual, _) = volume(runner)?;
     if actual.abs_diff(level) > 1 {
-        return Err(format!("Volume did not reach {level}% (read back {actual}%)"));
+        return Err(format!(
+            "Volume did not reach {level}% (read back {actual}%)"
+        ));
     }
     Ok(())
 }
@@ -170,14 +177,16 @@ fn brightness(runner: &dyn Runner) -> Result<u8, String> {
     if max == 0 || current > max {
         return Err("Invalid brightness range".into());
     }
-    Ok(((current * 100 + max / 2) / max).min(100) as u8)
+    Ok(((u128::from(current) * 100 + u128::from(max) / 2) / u128::from(max)).min(100) as u8)
 }
 
 fn set_brightness(runner: &dyn Runner, level: u8) -> Result<(), String> {
     runner.run("brightnessctl", &["set", &format!("{level}%")])?;
     let actual = brightness(runner)?;
     if actual.abs_diff(level) > 2 {
-        return Err(format!("Brightness did not reach {level}% (read back {actual}%)"));
+        return Err(format!(
+            "Brightness did not reach {level}% (read back {actual}%)"
+        ));
     }
     Ok(())
 }
@@ -211,7 +220,12 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
             let (_, before) = volume(runner)?;
             set_mute(runner, muted)?;
             remember(Undo::Mute(before));
-            Ok(if muted { "Audio muted (verified)" } else { "Audio unmuted (verified)" }.into())
+            Ok(if muted {
+                "Audio muted (verified)"
+            } else {
+                "Audio unmuted (verified)"
+            }
+            .into())
         }
         Op::SetBrightness(level) if level <= 100 => {
             let before = brightness(runner)?;
@@ -237,7 +251,9 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
                 }
                 return Ok(format!("Media {expected} (verified)"));
             }
-            Ok(format!("Media {command} sent; track transition not verified"))
+            Ok(format!(
+                "Media {command} sent; track transition not verified"
+            ))
         }
     }
 }
@@ -327,7 +343,10 @@ mod tests {
     #[test]
     fn readback_and_capability_probe() {
         let p = Probe;
-        assert_eq!(capabilities(&p), vec![Capability::Audio, Capability::Brightness, Capability::Media]);
+        assert_eq!(
+            capabilities(&p),
+            vec![Capability::Audio, Capability::Brightness, Capability::Media]
+        );
         assert_eq!(volume(&p).unwrap(), (30, true));
         assert_eq!(brightness(&p).unwrap(), 30);
         assert!(execute(Op::SetVolume(30), &p).is_ok());
@@ -339,6 +358,9 @@ mod tests {
     fn refuses_invalid_or_nonfinite_audio_data() {
         assert!(percent_from_wpctl("Volume: NaN").is_err());
         assert!(percent_from_wpctl("Volume: 9.99").is_err());
-        assert_eq!(percent_from_pactl("Volume: front-left: 32768 / 50% / -18dB").unwrap(), 50);
+        assert_eq!(
+            percent_from_pactl("Volume: front-left: 32768 / 50% / -18dB").unwrap(),
+            50
+        );
     }
 }
