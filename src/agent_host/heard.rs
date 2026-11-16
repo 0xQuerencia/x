@@ -323,6 +323,28 @@ mod tests {
     }
 
     #[test]
+    fn replaces_existing_history_without_losing_new_content() {
+        let dir = std::env::temp_dir().join(format!(
+            "x-heard-replace-test-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("corrections.json");
+        write(&file, &Store::default()).unwrap();
+        assert!(!read(&file).unwrap().enabled);
+        let enabled = Store {
+            enabled: true,
+            ..Store::default()
+        };
+        write(&file, &enabled).unwrap();
+        assert!(read(&file).unwrap().enabled);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_file(file).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
     fn sensitive_transcripts_are_not_retained() {
         for heard in [
             "my password is secret",
