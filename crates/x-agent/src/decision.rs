@@ -6,6 +6,8 @@
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -38,18 +40,62 @@ pub(crate) fn plan_with(
     select(&answer, &options, smart)
 }
 
-/// Fixed-endpoint Decisions API transport; credentials and payload never reach argv.
-pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Value, String> {
-    // Curl configuration (including bearer credential and the payload) is
-    // handed over stdin rather than command-line args. Only the fixed
-    // configured HTTPS decisions endpoint is reachable from this integration.
-    let config = format!(
-        "url = \"{endpoint}\"\nheader = \"Authorization: Bearer {}\"\n\
-         header = \"Content-Type: application/json\"\n\
-         data-binary = {}\n",
-        key,
-        quote(&request.to_string()),
-    );
+/// Small local-only circuit breaker: bad network conditions do not stall every
+/// subsequent voice command. Exact local rules bypass this path entirely.
+struct Circuit {
+    consecutive_failures: u8,
+    until: Option<Instant>,
+}
+
+impl Circuit {
+    const fn new() -> Self {
+        Self {
+            consecutive_failures: 0,
+            until: None,
+        }
+    }
+
+    fn before(&mut self) -> Result<(), String> {
+        if let Some(until) = self.until
+            && let Some(remaining) = until.checked_duration_since(Instant::now())
+        {
+            return Err(format!(
+                "Remote choice is cooling down (about {}s). Exact local commands still work.",
+                remaining.as_secs().max(1)
+            ));
+        }
+        self.until = None;
+        Ok(())
+    }
+
+    fn success(&mut self) {
+        self.consecutive_failures = 0;
+        self.until = None;
+    }
+
+    fn failed(&mut self, retry_after: Option<Duration>) {
+        if let Some(wait) = retry_after {
+            self.until = Some(Instant::now() + wait);
+            self.consecutive_failures = 0;
+        } else {
+            self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+            if self.consecutive_failures >= 2 {
+                self.until = Some(Instant::now() + Duration::from_secs(40));
+                self.consecutive_failures = 0;
+            }
+        }
+    }
+}
+
+static CIRCUIT: Mutex<Circuit> = Mutex::new(Circuit::new());
+
+enum NetworkFailure {
+    Timeout,
+    Offline,
+    Other,
+}
+
+fn transport(config: &str) -> Result<String, NetworkFailure> {
     let mut child = Command::new("curl")
         .args([
             "--silent",
@@ -57,7 +103,9 @@ pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Va
             "--max-time",
             "5",
             "--connect-timeout",
-            "2",
+            "1",
+            "--dump-header",
+            "-",
             "--config",
             "-",
             "--write-out",
@@ -67,38 +115,125 @@ pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Va
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|_| "curl is required to reach the decision provider".to_string())?;
-    let sent = child
+        .map_err(|_| NetworkFailure::Offline)?;
+    if child
         .stdin
         .take()
-        .ok_or("Could not open decision request input")?
-        .write_all(config.as_bytes());
-    if sent.is_err() {
+        .ok_or(NetworkFailure::Other)?
+        .write_all(config.as_bytes())
+        .is_err()
+    {
         let _ = child.kill();
         let _ = child.wait();
-        return Err("Could not send the decision request".into());
+        return Err(NetworkFailure::Offline);
     }
     let output = child
         .wait_with_output()
-        .map_err(|_| "Could not finish the decision request")?;
+        .map_err(|_| NetworkFailure::Other)?;
     if !output.status.success() {
-        return Err("Decision request failed or timed out. Nothing was run.".into());
+        return Err(match output.status.code() {
+            Some(28) => NetworkFailure::Timeout,
+            Some(5 | 6 | 7 | 35 | 52 | 56) => NetworkFailure::Offline,
+            _ => NetworkFailure::Other,
+        });
     }
     if output.stdout.len() > 64 * 1024 {
-        return Err("Decision response exceeded the size limit".into());
+        return Err(NetworkFailure::Other);
     }
-    let wire =
-        std::str::from_utf8(&output.stdout).map_err(|_| "Decision response was not UTF-8")?;
-    let (body, status) = wire
+    String::from_utf8(output.stdout).map_err(|_| NetworkFailure::Other)
+}
+
+struct Response<'a> {
+    status: u16,
+    body: &'a str,
+    retry_after: Option<Duration>,
+}
+
+fn response(wire: &str) -> Result<Response<'_>, String> {
+    let (payload, status) = wire
         .rsplit_once('\n')
         .ok_or("Decision response had no HTTP status")?;
-    if status.trim() != "200" {
-        return Err(format!(
-            "Decision provider returned HTTP {}. No fallback model was called and nothing was run.",
-            status.trim()
-        ));
+    let status = status
+        .trim()
+        .parse::<u16>()
+        .map_err(|_| "Decision response had an invalid HTTP status")?;
+    // curl -D - writes the response headers to the same stdout stream,
+    // including all 1xx/proxy headers. Only the final header block matters.
+    let (headers, body) = payload
+        .rsplit_once("\r\n\r\n")
+        .or_else(|| payload.rsplit_once("\n\n"))
+        .ok_or("Decision response had no HTTP headers")?;
+    let retry_after = headers
+        .lines()
+        .rev()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("retry-after")
+                .then(|| value.trim().parse::<u64>().ok())
+                .flatten()
+        })
+        .map(|seconds| Duration::from_secs(seconds.clamp(1, 120)));
+    Ok(Response {
+        status,
+        body,
+        retry_after,
+    })
+}
+
+/// Fixed-endpoint Decisions API transport; credentials and payload never reach argv.
+pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Value, String> {
+    {
+        let mut circuit = CIRCUIT.lock().unwrap_or_else(|p| p.into_inner());
+        circuit.before()?;
     }
-    serde_json::from_str(body).map_err(|_| "Decision response was not JSON".into())
+    let config = format!(
+        "url = \"{endpoint}\"\nheader = \"Authorization: Bearer {}\"\n\
+         header = \"Content-Type: application/json\"\n\
+         data-binary = {}\n",
+        key,
+        quote(&request.to_string()),
+    );
+    let wire = match transport(&config) {
+        Ok(wire) => wire,
+        Err(kind) => match kind {
+            NetworkFailure::Offline | NetworkFailure::Timeout => {
+                CIRCUIT
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .failed(None);
+                return Err(
+                    "Remote choice is offline or timed out; exact commands still work.".into(),
+                );
+            }
+            NetworkFailure::Other => {
+                return Err("Decision request failed; no action was run.".into());
+            }
+        },
+    };
+    let reply = response(&wire)?;
+    match reply.status {
+        200 => {
+            CIRCUIT.lock().unwrap_or_else(|p| p.into_inner()).success();
+            serde_json::from_str(reply.body).map_err(|_| "Decision response was not JSON".into())
+        }
+        429 => {
+            CIRCUIT
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .failed(Some(reply.retry_after.unwrap_or(Duration::from_secs(40))));
+            Err(
+                "Remote choice is rate limited. Exact local commands still work; nothing was run."
+                    .into(),
+            )
+        }
+        401 | 403 => {
+            Err("Decision provider denied authentication or access. No action was run.".into())
+        }
+        500..=599 => Err("Decision provider is unavailable. No fallback was called.".into()),
+        other => Err(format!(
+            "Decision provider returned HTTP {other}. No fallback model was called."
+        )),
+    }
 }
 
 fn quote(value: &str) -> String {
@@ -474,6 +609,41 @@ mod tests {
                 "is_command": {"noul": intent},
             }
         })
+    }
+
+    #[test]
+    fn decider_transport_parses_rate_limit_without_leaking_body() {
+        let wire = "HTTP/2 429\r\nContent-Type: application/json\r\nRetry-After: 12\r\n\r\n{\"error\":\"private\"}\n429";
+        let result = response(wire).unwrap();
+        assert_eq!(result.status, 429);
+        assert_eq!(result.retry_after, Some(Duration::from_secs(12)));
+        let mut circuit = Circuit::new();
+        circuit.failed(result.retry_after);
+        assert!(circuit.before().unwrap_err().contains("cooling down"));
+    }
+
+    #[test]
+    fn two_network_failures_trip_a_bounded_circuit_breaker() {
+        let mut circuit = Circuit::new();
+        assert!(circuit.before().is_ok());
+        circuit.failed(None);
+        assert!(circuit.before().is_ok());
+        circuit.failed(None);
+        assert!(circuit.before().is_err());
+        circuit.success();
+        assert!(circuit.before().is_ok());
+    }
+
+    #[test]
+    fn successful_response_body_survives_proxy_headers() {
+        let wire = concat!(
+            "HTTP/1.1 200 Connection established\r\n\r\n",
+            "HTTP/2 200\r\nContent-Type: application/json\r\n\r\n",
+            "{\"answers\":{\"route\":{}}}\n200"
+        );
+        let result = response(wire).unwrap();
+        assert_eq!(result.status, 200);
+        assert_eq!(result.body, "{\"answers\":{\"route\":{}}}");
     }
 
     #[test]
