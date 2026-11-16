@@ -6,11 +6,11 @@
 pub mod apps;
 mod hypr;
 mod i3;
-mod x11;
 pub mod keys;
 pub mod parse;
 mod report;
 mod speech;
+mod x11;
 
 use std::collections::VecDeque;
 use std::fmt;
