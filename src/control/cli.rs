@@ -451,6 +451,13 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Read-only first-run diagnostic report: compositor, helpers, session variables,
+    /// installed applications, keyboard shortcuts, and remote key permissions.
+    /// This runs locally even when X's background service is not running.
+    Doctor {
+        #[arg(long)]
+        json: bool,
+    },
     /// Saved desktop workflows, run by trigger phrase or by id. `list` shows them with their
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
@@ -671,6 +678,21 @@ pub fn run(command: ControlCli) -> u8 {
             command => offline_model(command),
         },
         ControlCli::Agent { command } => {
+            if let AgentCommand::Doctor { json } = &command {
+                let key_path = crate::app_paths::support_dir()
+                    .ok()
+                    .map(|dir| dir.join("openrouter-key"));
+                let report = x_agent::wm::doctor(key_path.as_deref());
+                if *json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).unwrap_or_default()
+                    );
+                } else {
+                    println!("{}", report.lines());
+                }
+                return if report.ready { 0 } else { EXIT_REFUSED };
+            }
             if let AgentCommand::Screenshot { mode, output } = &command {
                 let mode = match x_agent::screenshots::Mode::parse(mode) {
                     Ok(mode) => mode,
@@ -703,6 +725,7 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
+                AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),
                 AgentCommand::Context { output } => (AgentAction::Context, output),
                 AgentCommand::Workflow {
                     command,
