@@ -875,6 +875,17 @@ impl Service {
                 ),
             );
             match result {
+                Ok(msg) if matches!(action, Action::System {
+                    op: crate::sys::Op::SetVolume(_)
+                        | crate::sys::Op::SetMute(_)
+                        | crate::sys::Op::SetBrightness(_)
+                        | crate::sys::Op::Play
+                        | crate::sys::Op::Pause,
+                }) => {
+                    self.emit("result", &msg);
+                    self.set_step(i, "done");
+                    verified += 1;
+                }
                 Ok(msg) if matches!(action, Action::Copy { .. }) => {
                     self.emit("result", &format!("{msg} (confirmed)"));
                     self.set_step(i, "done");
