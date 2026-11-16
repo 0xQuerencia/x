@@ -237,6 +237,10 @@ pub enum AgentAction {
     Approve {
         id: u64,
     },
+    /// Select from a pending compositor window choice (one-based index).
+    Choose {
+        index: u8,
+    },
     /// Reverse the most recent verified, undoable window-manager change.
     Undo,
     Stop,
