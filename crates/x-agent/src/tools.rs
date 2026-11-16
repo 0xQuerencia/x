@@ -266,7 +266,11 @@ impl Action {
     pub fn validate(self) -> Result<Self, String> {
         match &self {
             Self::App { target } => {
-                lookup(APPS, target).ok_or("Unapproved app")?;
+                if lookup(APPS, target).is_none()
+                    && crate::wm::apps::installed(target).is_none()
+                {
+                    return Err("The application is not in the installed app catalog".into());
+                }
             }
             Self::Opencode => {}
             Self::Copy { text } => crate::clipboard::validate(text)?,
@@ -354,7 +358,14 @@ impl Action {
             }
         };
         match self {
-            Self::App { target } => Ok(vec![exe_for(target, resolve)?]),
+            Self::App { target } => {
+                if lookup(APPS, target).is_some() {
+                    return Ok(vec![exe_for(target, resolve)?]);
+                }
+                let app = crate::wm::apps::installed(target)
+                    .ok_or("The application is not installed")?;
+                crate::wm::apps::launch_argv(&app, resolve)
+            },
             Self::Focus { target } => {
                 let names = lookup(APPS, target).ok_or("Unapproved app")?;
                 let class = format!("class:^({})$", names.join("|"));
@@ -922,7 +933,12 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
     if let Some(app) = normalize_app(rest) {
         return Some(vec![Action::App { target: app.into() }]);
     }
+    // Unknown-to-the-hardcoded-list app names can still be genuine installed
+    // apps. Only exact, unique desktop-entry catalog matches are accepted.
     let name = rest.trim().to_ascii_lowercase();
+    if let Some(app) = crate::wm::apps::installed(&name) {
+        return Some(vec![Action::App { target: app.id }]);
+    }
     if let Some(url) = lookup(SITES, &name) {
         return Some(vec![Action::Url {
             target: (*url).into(),
