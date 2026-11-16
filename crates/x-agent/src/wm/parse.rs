@@ -152,11 +152,14 @@ pub fn parse_with(text: &str, entries: &[Entry]) -> Option<Request> {
             None,
         );
     }
-    if let Some(rest) = prefixed(text, &["move", "send"]) {
-        let (who, to) = rest.split_once(" to ")?;
+    if let Some(rest) = prefixed(text, &["move", "send", "put"]) {
+        let (who, to) = rest.split_once(" to ").or_else(|| rest.split_once(" on "))?;
         return req(Op::Move, target(who, entries)?, Some(workspace(to)?));
     }
-    if let Some(rest) = prefixed(text, &["switch to", "go to", "focus"]) {
+    if let Some(rest) = prefixed(
+        text,
+        &["switch to", "go to", "focus", "show", "bring up"],
+    ) {
         if let Some(ws) = workspace(rest).filter(|_| rest.starts_with("workspace")) {
             return req(Op::Workspace, Target::default(), Some(ws));
         }
@@ -165,10 +168,30 @@ pub fn parse_with(text: &str, entries: &[Entry]) -> Option<Request> {
         }
         return req(Op::Focus, target(rest, entries)?, None);
     }
+    // Natural wording for bringing a specific app to the front. The target
+    // still has to match a real installed app or a known window role.
+    if let Some(rest) = prefixed(text, &["bring"]) {
+        let who = rest
+            .strip_suffix(" to the front")
+            .or_else(|| rest.strip_suffix(" to front"))
+            .or_else(|| rest.strip_suffix(" forward"))?;
+        return req(Op::Focus, target(who, entries)?, None);
+    }
+    if let Some(rest) = prefixed(text, &["tuck"])
+        && let Some(who) = rest.strip_suffix(" away")
+    {
+        return req(Op::Minimize, target(who, entries)?, None);
+    }
     for (verb, op) in [
         ("minimize", Op::Minimize),
+        ("hide", Op::Minimize),
         ("maximize", Op::Maximize),
+        ("fullscreen", Op::Maximize),
         ("close", Op::Close),
+        ("quit", Op::Close),
+        ("exit", Op::Close),
+        ("shut", Op::Close),
+        ("shut down", Op::Close),
     ] {
         if let Some(rest) = prefixed(text, &[verb]) {
             return req(op, target(rest, entries)?, None);
