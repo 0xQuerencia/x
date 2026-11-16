@@ -831,7 +831,9 @@ mod tests {
             ws: None,
         }));
         assert!(
-            !actions.iter().any(|action| matches!(action, Action::App { .. })),
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::App { .. })),
             "a focus command must not be reinterpreted as launching another app"
         );
         assert_eq!(
