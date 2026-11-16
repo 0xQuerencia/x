@@ -288,7 +288,10 @@ pub fn launch_argv(
     if entry.id.is_empty()
         || !entry.path.is_absolute()
         || !entry.path.is_file()
-        || !entry.path.extension().is_some_and(|e| e.eq_ignore_ascii_case("lnk"))
+        || !entry
+            .path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("lnk"))
     {
         return Err("Installed Windows app must have a valid .lnk shortcut".into());
     }
