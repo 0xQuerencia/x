@@ -830,6 +830,21 @@ pub fn run(req: &Request) -> Result<Outcome, WmError> {
     with_controller(|c| c.run(req))
 }
 
+/// Whether there is an Undo entry created in the past eight seconds.
+/// Unlike `with_controller`, this read never initializes a backend, touches a
+/// real window, or runs a compositor command from the UI thread.
+pub fn recent_undo_available() -> bool {
+    CONTROLLER
+        .lock()
+        .ok()
+        .and_then(|slot| {
+            slot.as_ref()
+                .and_then(|controller| controller.history.back())
+                .map(|(at, _)| at.elapsed() <= Duration::from_secs(8))
+        })
+        .unwrap_or(false)
+}
+
 pub fn choices() -> Result<Vec<Choice>, WmError> {
     with_controller(|c| Ok(c.choices()))
 }

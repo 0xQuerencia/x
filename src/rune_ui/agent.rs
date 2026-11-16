@@ -34,6 +34,8 @@ pub(super) struct AgentPane {
     snapshot: Option<Snapshot>,
     /// Serialized form of the last snapshot, so polling redraws only on change.
     shown: String,
+    /// The eight-second window Undo affordance is driven by monotonic time.
+    undo_visible: bool,
     /// Whether the workflow manager is showing instead of the command view.
     pub(super) show_workflows: bool,
     pub(super) show_quick: bool,
@@ -55,6 +57,7 @@ impl Default for AgentPane {
             mode: Mode::Actions,
             snapshot: None,
             shown: String::new(),
+            undo_visible: false,
             show_workflows: false,
             show_quick: false,
             workflows: Default::default(),
@@ -77,8 +80,11 @@ impl AgentPane {
         let snapshot = agent_host::service().snapshot(0);
         let serialized = serde_json::to_string(&snapshot).unwrap_or_default();
         let listed = (self.show_workflows || self.show_quick) && self.workflows.refresh();
+        let can_undo = snapshot.phase == Phase::Completed && ::x_agent::wm::recent_undo_available();
+        let undo_changed = can_undo != self.undo_visible;
+        self.undo_visible = can_undo;
         if serialized == self.shown {
-            return listed;
+            return listed || undo_changed;
         }
         if self.workspace.text.is_empty()
             && let Some(path) = &snapshot.workspace
@@ -585,6 +591,17 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
                 },
             ));
         }
+    }
+    if snapshot.phase == Phase::Completed && ::x_agent::wm::recent_undo_available() {
+        card = card.child(button(
+            p,
+            "agent-undo-recent",
+            tr("Undo last window change"),
+            ButtonKind::Secondary,
+            |_: &mut Ui, _| {
+                let _ = agent_host::handle(AgentAction::Undo);
+            },
+        ));
     }
     if snapshot.phase == Phase::Running {
         card = card.child(button(
