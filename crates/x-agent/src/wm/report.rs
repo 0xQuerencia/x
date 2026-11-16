@@ -47,7 +47,9 @@ pub fn detect() -> Result<Box<dyn Backend>, String> {
     // kdotool runs a bounded script over the session D-Bus, then stops it.
     // Never treat a nested XWayland DISPLAY as a native window manager.
     if env("XDG_SESSION_TYPE").eq_ignore_ascii_case("wayland")
-        && env("XDG_CURRENT_DESKTOP").to_ascii_lowercase().contains("kde")
+        && env("XDG_CURRENT_DESKTOP")
+            .to_ascii_lowercase()
+            .contains("kde")
         && has("kdotool")
         && !env("DBUS_SESSION_BUS_ADDRESS").is_empty()
     {
@@ -286,8 +288,16 @@ mod doctor_tests {
     #[test]
     fn kde_requires_kwin_bridge_but_not_hyprland() {
         let checks = probe_with("KDE Plasma 6", |bin| bin != "kdotool");
-        assert!(checks.iter().any(|c| c.dependency == "kdotool" && c.required && !c.installed));
-        assert!(checks.iter().any(|c| c.dependency == "hyprctl" && !c.required));
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.dependency == "kdotool" && c.required && !c.installed)
+        );
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.dependency == "hyprctl" && !c.required)
+        );
     }
 
     #[test]
