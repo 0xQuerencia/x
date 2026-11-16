@@ -49,31 +49,6 @@ impl I3 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_pid_cannot_become_a_reversible_window_identity() {
-        let tree = serde_json::json!({
-            "type":"root",
-            "nodes":[{
-                "type":"workspace", "num":1,
-                "nodes":[
-                    {"type":"con","id":1,"app_id":"foot","name":"untrusted","pid":null,"nodes":[]},
-                    {"type":"con","id":2,"app_id":"foot","name":"safe","pid":1234,"nodes":[]}
-                ]
-            }]
-        });
-        let mut windows = Vec::new();
-        collect(&tree, 0, &mut windows, &mut None);
-        assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].id, "2");
-        assert_eq!(windows[0].pid, 1234);
-        assert_eq!(windows[0].workspace, 1);
-    }
-}
-
 fn numeric(id: &str) -> Result<&str, WmError> {
     if !id.is_empty() && id.len() <= 12 && id.chars().all(|c| c.is_ascii_digit()) {
         Ok(id)
@@ -183,5 +158,30 @@ impl Backend for I3 {
                 Err(WmError::Backend(format!("{} has no minimize", self.label)))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_pid_cannot_become_a_reversible_window_identity() {
+        let tree = serde_json::json!({
+            "type":"root",
+            "nodes":[{
+                "type":"workspace", "num":1,
+                "nodes":[
+                    {"type":"con","id":1,"app_id":"foot","name":"untrusted","pid":null,"nodes":[]},
+                    {"type":"con","id":2,"app_id":"foot","name":"safe","pid":1234,"nodes":[]}
+                ]
+            }]
+        });
+        let mut windows = Vec::new();
+        collect(&tree, 0, &mut windows, &mut None);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].id, "2");
+        assert_eq!(windows[0].pid, 1234);
+        assert_eq!(windows[0].workspace, 1);
     }
 }
