@@ -61,7 +61,7 @@ fn windows_name(title: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
 }
 
 fn entry(link: &Path) -> Option<Entry> {
-    if link.extension()?.to_str()?.to_ascii_lowercase() != "lnk" {
+    if !link.extension()?.to_str()?.eq_ignore_ascii_case("lnk") {
         return None;
     }
     let metadata = std::fs::symlink_metadata(link).ok()?;
