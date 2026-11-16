@@ -3,9 +3,9 @@
 #[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 
-use serde::{Deserialize, Serialize};
 #[cfg(any(target_os = "linux", test))]
 use crate::wm::{self, View, WinInfo};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -52,7 +52,9 @@ pub fn execute(op: Op) -> Result<String, String> {
         let args: &[&str] = match op {
             Op::New => &["-M", "ctrl", "-k", "t", "-m", "ctrl"],
             Op::Close => &["-M", "ctrl", "-k", "w", "-m", "ctrl"],
-            Op::Reopen => &["-M", "ctrl", "-M", "shift", "-k", "t", "-m", "shift", "-m", "ctrl"],
+            Op::Reopen => &[
+                "-M", "ctrl", "-M", "shift", "-k", "t", "-m", "shift", "-m", "ctrl",
+            ],
         };
         let status = Command::new(exe)
             .args(args)
@@ -68,7 +70,8 @@ pub fn execute(op: Op) -> Result<String, String> {
             Op::New => "New tab requested; page loading was not verified",
             Op::Close => "Tab close requested; say reopen tab to reverse it",
             Op::Reopen => "Closed tab restoration requested; page loading was not verified",
-        }.into())
+        }
+        .into())
     }
 }
 
