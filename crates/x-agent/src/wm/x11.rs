@@ -25,7 +25,9 @@ fn output(program: &str, args: &[&str]) -> Result<String, WmError> {
         )));
     }
     if value.stdout.len() > MAX_OUTPUT {
-        return Err(WmError::Backend("X11 window listing exceeded its size limit".into()));
+        return Err(WmError::Backend(
+            "X11 window listing exceeded its size limit".into(),
+        ));
     }
     String::from_utf8(value.stdout)
         .map_err(|_| WmError::Backend("X11 window response is not UTF-8".into()))
@@ -180,17 +182,31 @@ impl Backend for X11 {
                 Self::command(&["-s", &(ws - 1).to_string()])
             }
             Cmd::Workspace(_) => Err(WmError::Backend("Workspace must be 1-10".into())),
-            Cmd::Move { win, to: Place::N(ws) } if (1..=10).contains(ws) => {
+            Cmd::Move {
+                win,
+                to: Place::N(ws),
+            } if (1..=10).contains(ws) => {
                 Self::command(&["-i", "-r", &window_id(win)?, "-t", &(ws - 1).to_string()])
             }
-            Cmd::Move { .. } => Err(WmError::Backend("Only numbered X11 workspaces are supported".into())),
+            Cmd::Move { .. } => Err(WmError::Backend(
+                "Only numbered X11 workspaces are supported".into(),
+            )),
             Cmd::Maximize { win, on } => Self::command(&[
-                "-i", "-r", &window_id(win)?, "-b",
-                if *on { "add,maximized_vert,maximized_horz" } else { "remove,maximized_vert,maximized_horz" },
+                "-i",
+                "-r",
+                &window_id(win)?,
+                "-b",
+                if *on {
+                    "add,maximized_vert,maximized_horz"
+                } else {
+                    "remove,maximized_vert,maximized_horz"
+                },
             ]),
             Cmd::Minimize { win } => {
                 if crate::tools::which("xdotool").is_none() {
-                    return Err(WmError::Unsupported("xdotool is required for X11 minimize".into()));
+                    return Err(WmError::Unsupported(
+                        "xdotool is required for X11 minimize".into(),
+                    ));
                 }
                 let id = window_id(win)?;
                 let num = u32::from_str_radix(&id[2..], 16)
@@ -214,7 +230,15 @@ mod tests {
     fn live_x11_ewmh() {
         use std::time::Duration;
         let mut child = Command::new("xterm")
-            .args(["-class", "XWMLive", "-title", "XWMLiveTest", "-e", "sleep", "90"])
+            .args([
+                "-class",
+                "XWMLive",
+                "-title",
+                "XWMLiveTest",
+                "-e",
+                "sleep",
+                "90",
+            ])
             .stdin(Stdio::null())
             .spawn()
             .expect("xterm available in isolated test session");
@@ -237,10 +261,12 @@ mod tests {
         backend.run(&Cmd::Focus(original.id.clone())).unwrap();
         assert_eq!(backend.focused().unwrap(), Some(original.id.clone()));
 
-        backend.run(&Cmd::Move {
-            win: original.id.clone(),
-            to: Place::N(2),
-        }).unwrap();
+        backend
+            .run(&Cmd::Move {
+                win: original.id.clone(),
+                to: Place::N(2),
+            })
+            .unwrap();
         for _ in 0..20 {
             if own().is_some_and(|w| w.workspace == 2) {
                 break;
@@ -248,10 +274,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert_eq!(own().unwrap().workspace, 2);
-        backend.run(&Cmd::Move {
-            win: original.id.clone(),
-            to: original.place.clone(),
-        }).unwrap();
+        backend
+            .run(&Cmd::Move {
+                win: original.id.clone(),
+                to: original.place.clone(),
+            })
+            .unwrap();
         for _ in 0..20 {
             if own().is_some_and(|w| w.workspace == original.workspace) {
                 break;
@@ -260,10 +288,12 @@ mod tests {
         }
         assert_eq!(own().unwrap().workspace, original.workspace);
 
-        backend.run(&Cmd::Maximize {
-            win: original.id.clone(),
-            on: true,
-        }).unwrap();
+        backend
+            .run(&Cmd::Maximize {
+                win: original.id.clone(),
+                on: true,
+            })
+            .unwrap();
         for _ in 0..20 {
             if own().is_some_and(|w| w.maximized) {
                 break;
@@ -271,10 +301,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(own().unwrap().maximized);
-        backend.run(&Cmd::Maximize {
-            win: original.id.clone(),
-            on: false,
-        }).unwrap();
+        backend
+            .run(&Cmd::Maximize {
+                win: original.id.clone(),
+                on: false,
+            })
+            .unwrap();
         backend.run(&Cmd::Close(original.id.clone())).unwrap();
         for _ in 0..40 {
             if own().is_none() {
@@ -310,17 +342,29 @@ mod tests {
         for id in ["0x1;rm -rf /", "0x", "", "123", "0x0000000000001", "0x0"] {
             assert!(window_id(id).is_err(), "{id}");
         }
-        assert_eq!(parse_active("_NET_ACTIVE_WINDOW(WINDOW): window id # 0x2000007"),
-            Some("0x02000007".into()));
-        assert_eq!(parse_active("_NET_ACTIVE_WINDOW(WINDOW): window id # 0x0"), None);
+        assert_eq!(
+            parse_active("_NET_ACTIVE_WINDOW(WINDOW): window id # 0x2000007"),
+            Some("0x02000007".into())
+        );
+        assert_eq!(
+            parse_active("_NET_ACTIVE_WINDOW(WINDOW): window id # 0x0"),
+            None
+        );
     }
 
     #[test]
     fn detects_state_and_one_based_workspace() {
-        let state = "_NET_WM_STATE(ATOM) = _NET_WM_STATE_MAXIMIZED_HORZ, _NET_WM_STATE_MAXIMIZED_VERT";
+        let state =
+            "_NET_WM_STATE(ATOM) = _NET_WM_STATE_MAXIMIZED_HORZ, _NET_WM_STATE_MAXIMIZED_VERT";
         assert_eq!(property_state(state), (false, true));
-        assert_eq!(property_state("_NET_WM_STATE(ATOM) = _NET_WM_STATE_HIDDEN"), (true, false));
-        assert_eq!(parse_workspace("0  - DG: 1000x600\n1  * DG: 1000x600"), Some(2));
+        assert_eq!(
+            property_state("_NET_WM_STATE(ATOM) = _NET_WM_STATE_HIDDEN"),
+            (true, false)
+        );
+        assert_eq!(
+            parse_workspace("0  - DG: 1000x600\n1  * DG: 1000x600"),
+            Some(2)
+        );
         assert_eq!(parse_workspace("0  - DG: 1000x600"), None);
     }
 }
