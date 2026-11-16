@@ -13,6 +13,11 @@ optdepends=(
   'wl-clipboard: paste on Wayland'
   'nodejs: install agent-desktop for computer use'
   'opencode: Work mode'
+  'grim: screenshot capture and private app vision'
+  'slurp: screenshot region selection'
+  'xdg-utils: default browser and website opening'
+  'python-gobject: Python accessibility bindings'
+  'at-spi2-core: accessibility bus for computer use'
 )
 options=('!strip' '!debug')
 install=x-bin.install
