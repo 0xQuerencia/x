@@ -49,6 +49,56 @@ fn path() -> Result<PathBuf, String> {
         .map_err(|_| "X support directory is unavailable".into())
 }
 
+// The CLI and the voice service may update this owner-only file from different
+// processes. Hold one advisory lock across the entire read-modify-replace cycle.
+fn with_lock<T>(action: impl FnOnce(&std::path::Path) -> Result<T, String>) -> Result<T, String> {
+    let target = path()?;
+    let lock_path = target.with_extension("lock");
+    match std::fs::symlink_metadata(&lock_path) {
+        Ok(meta) if !meta.file_type().is_file() => {
+            return Err("Correction history lock is not a regular file".into());
+        }
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err("Cannot inspect correction history lock".into());
+        }
+        _ => {}
+    }
+    let mut opts = OpenOptions::new();
+    opts.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let lock = opts
+        .open(&lock_path)
+        .map_err(|_| "Cannot open correction history lock")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if lock
+            .metadata()
+            .map_err(|_| "Cannot inspect correction history lock")?
+            .permissions()
+            .mode()
+            & 0o077
+            != 0
+        {
+            return Err("Correction history lock permissions are not private".into());
+        }
+    }
+    fs2::FileExt::lock_exclusive(&lock)
+        .map_err(|_| "Cannot lock correction history")?;
+    let result = action(&target);
+    let unlocked = fs2::FileExt::unlock(&lock)
+        .map_err(|_| "Cannot unlock correction history".to_string());
+    match (result, unlocked) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(value), Ok(())) => Ok(value),
+    }
+}
+
 fn read(path: &std::path::Path) -> Result<Store, String> {
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
@@ -196,38 +246,40 @@ pub(super) fn apply(heard: &str) -> String {
 }
 
 pub(super) fn record_miss(heard: &str) {
-    if let Ok(p) = path()
-        && let Ok(mut store) = read(&p)
-        && store.enabled
-    {
-        store.miss(heard, now());
-        let _ = write(&p, &store);
-    }
+    let _ = with_lock(|path| {
+        let mut store = read(path)?;
+        if store.enabled {
+            store.miss(heard, now());
+            write(path, &store)?;
+        }
+        Ok(())
+    });
 }
 
 pub(super) fn record_success(meant: &str) {
-    if let Ok(p) = path()
-        && let Ok(mut store) = read(&p)
-        && store.enabled
-    {
-        store.succeeded(meant, now());
-        let _ = write(&p, &store);
-    }
+    let _ = with_lock(|path| {
+        let mut store = read(path)?;
+        if store.enabled {
+            store.succeeded(meant, now());
+            write(path, &store)?;
+        }
+        Ok(())
+    });
 }
 
 pub(crate) fn command(command: &str, index: Option<usize>) -> Result<String, String> {
-    let p = path()?;
-    let mut store = read(&p)?;
-    match command {
+    with_lock(|p| {
+        let mut store = read(p)?;
+        match command {
         "on" => {
             store.enabled = true;
-            write(&p, &store)?;
+            write(p, &store)?;
             Ok("Local correction history enabled for explicit Actions speech only".into())
         }
         "off" => {
             store.enabled = false;
             store.pending = None;
-            write(&p, &store)?;
+            write(p, &store)?;
             Ok("Local correction history disabled".into())
         }
         "list" => {
@@ -258,17 +310,18 @@ pub(crate) fn command(command: &str, index: Option<usize>) -> Result<String, Str
                 .filter(|_| n > 0)
                 .ok_or("No correction with that number")?;
             entry.promoted = true;
-            write(&p, &store)?;
+            write(p, &store)?;
             Ok("Correction promoted; only an exact voice match will apply it".into())
         }
         "clear" => {
             store.pending = None;
             store.corrections.clear();
-            write(&p, &store)?;
+            write(p, &store)?;
             Ok("Local correction history cleared".into())
         }
         _ => Err("Choose heard on, off, list, promote N, or clear".into()),
     }
+    })
 }
 
 #[cfg(test)]
