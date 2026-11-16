@@ -179,7 +179,9 @@ impl Action {
         use crate::wm::Op;
         match self {
             Self::Window { op: Op::Close, .. } => Risk::Destructive,
-            Self::BrowserTab { op: crate::browser_tab::Op::Close } => Risk::Consequential,
+            Self::BrowserTab {
+                op: crate::browser_tab::Op::Close,
+            } => Risk::Consequential,
             Self::Window {
                 op: Op::List | Op::Keys,
                 ..
