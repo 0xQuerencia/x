@@ -1795,7 +1795,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("x-private-key-test-{}-{id}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("x-private-key-test-{}-{id}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         let path = dir.join("openrouter-key");
         save_agent_key(&path, b"sk-first\n").unwrap();
