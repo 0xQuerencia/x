@@ -74,28 +74,52 @@ fn write(path: &std::path::Path, store: &Store) -> Result<(), String> {
     if content.len() as u64 > MAX_SIZE {
         return Err("Correction history reached its size limit".into());
     }
-    if std::fs::symlink_metadata(path).is_ok() {
-        let _ = read(path)?; // reject even dangling symlinks before writing
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {
+            let _ = read(path)?; // refuse symlinks, insecure permissions, and corrupt stores
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("Cannot inspect private correction history".into()),
     }
-    let mut opts = OpenOptions::new();
-    opts.create(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut file = opts
-        .open(path)
-        .map_err(|_| "Cannot open private correction history")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| "Cannot protect private correction history")?;
-    }
+
+    // Write to a private, exclusive temporary file in the same directory.
+    // Rename only after a complete sync so a crash cannot leave a truncated log.
     use std::io::Write;
-    file.write_all(&content)
-        .map_err(|_| "Cannot save correction history".to_string())
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    for _ in 0..16 {
+        let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        let temp = path.with_file_name(format!(
+            ".x-heard-{}-{}-{sequence}.tmp",
+            std::process::id(),
+            now()
+        ));
+        let mut opts = OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = match opts.open(&temp) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err("Cannot open private correction history".into()),
+        };
+        let saved = file.write_all(&content).and_then(|_| file.sync_all());
+        drop(file);
+        if saved.is_err() {
+            let _ = std::fs::remove_file(&temp);
+            return Err("Cannot save correction history".into());
+        }
+        let replaced = std::fs::rename(&temp, path);
+        if replaced.is_err() {
+            let _ = std::fs::remove_file(&temp);
+        }
+        return replaced.map_err(|_| "Cannot replace correction history".into());
+    }
+    Err("Cannot allocate private correction history file".into())
 }
 
 fn suitable(text: &str) -> Option<String> {
