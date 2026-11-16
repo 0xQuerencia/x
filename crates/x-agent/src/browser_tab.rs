@@ -3,7 +3,7 @@
 #[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
 use crate::wm::{self, View, WinInfo};
 use serde::{Deserialize, Serialize};
 
@@ -35,10 +35,30 @@ fn browser_focused(view: &View, catalog: &[wm::apps::Entry]) -> Result<WinInfo, 
 }
 
 pub fn execute(op: Op) -> Result<String, String> {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = op;
-        Err("Browser shortcuts require Linux".into())
+        Err("Browser shortcuts are not available on this platform".into())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let catalog = wm::apps::load();
+        let before = browser_focused(&wm::view().map_err(|e| e.to_string())?, &catalog)?;
+        let now = browser_focused(&wm::view().map_err(|e| e.to_string())?, &catalog)?;
+        if (now.id.as_str(), now.pid, now.class.as_str())
+            != (before.id.as_str(), before.pid, before.class.as_str())
+        {
+            return Err("Window focus changed; no browser keys sent".into());
+        }
+        let handle = wm::native_handle(&now.id)
+            .ok_or("The focused window has no valid native Windows identity")?;
+        crate::windows_input::browser_hotkey(op, handle)?;
+        Ok(match op {
+            Op::New => "New tab requested; page loading was not verified",
+            Op::Close => "Tab close requested; say reopen tab to reverse it",
+            Op::Reopen => "Closed tab restoration requested; page loading was not verified",
+        }
+        .into())
     }
     #[cfg(target_os = "linux")]
     {
