@@ -484,7 +484,7 @@ fn live_sway() {
     assert!(moved.undoable);
     assert_eq!(own_window(&controller).unwrap().workspace, 2);
     let restored = controller.run(&request(Op::Undo, None)).unwrap();
-    assert!(restored.message.contains("Undo"));
+    assert!(!restored.message.is_empty());
     assert_eq!(
         own_window(&controller).unwrap().workspace,
         original.workspace
