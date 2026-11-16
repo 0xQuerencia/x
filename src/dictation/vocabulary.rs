@@ -157,9 +157,22 @@ fn bounded_agent_terms(
 ) -> Vec<VocabularyEntry> {
     let mut list = Vec::new();
     for term in [
-        "close", "minimize", "maximize", "focus", "move", "workspace",
-        "window", "terminal", "browser", "screenshot", "undo", "volume",
-        "brightness", "mute", "pause", "play",
+        "close",
+        "minimize",
+        "maximize",
+        "focus",
+        "move",
+        "workspace",
+        "window",
+        "terminal",
+        "browser",
+        "screenshot",
+        "undo",
+        "volume",
+        "brightness",
+        "mute",
+        "pause",
+        "play",
     ]
     .into_iter()
     .map(str::to_string)
@@ -172,7 +185,9 @@ fn bounded_agent_terms(
             || !clean
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '.' | '_'))
-            || list.iter().any(|entry: &VocabularyEntry| entry.term == clean)
+            || list
+                .iter()
+                .any(|entry: &VocabularyEntry| entry.term == clean)
         {
             continue;
         }
