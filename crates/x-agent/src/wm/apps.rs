@@ -7,7 +7,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const TTL: Duration = Duration::from_secs(60);
+#[cfg(not(windows))]
 const MAX_FILES: usize = 4000;
+#[cfg(not(windows))]
 const MAX_FILE: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
