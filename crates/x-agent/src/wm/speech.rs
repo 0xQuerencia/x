@@ -99,8 +99,44 @@ fn replace_phrase(words: Vec<String>, heard: &str, meant: &str) -> Vec<String> {
     out
 }
 
+/// Finds unique one-edit repairs against installed app names, never guessing
+/// between similarly named applications.
+fn runtime_name(word: &str, entries: &[super::apps::Entry]) -> Option<String> {
+    if word.chars().count() < 6 || word.chars().count() > 40 {
+        return None;
+    }
+    let names = entries
+        .iter()
+        .flat_map(|entry| entry.names.iter())
+        .filter(|name| {
+            name.chars().count() >= 6
+                && name.chars().count() <= 40
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        });
+    let mut found = None::<String>;
+    for name in names {
+        if name == word {
+            return None;
+        }
+        if distance(word, name) == 1 {
+            if found.as_deref().is_some_and(|other| other != name) {
+                return None;
+            }
+            found = Some(name.clone());
+        }
+    }
+    found
+}
+
 /// What was probably meant, lowercase, with spoken numbers as digits.
+#[cfg(test)]
 pub fn fix(heard: &str) -> String {
+    fix_with(heard, &[])
+}
+
+pub fn fix_with(heard: &str, entries: &[super::apps::Entry]) -> String {
     let cleaned: String = heard
         .to_ascii_lowercase()
         .chars()
@@ -116,6 +152,34 @@ pub fn fix(heard: &str) -> String {
     for (heard, meant) in HEARD {
         words = replace_phrase(words, heard, meant);
     }
+    // Rejoin split app names only when the joined form is an exact
+    // single-token name from the installed desktop catalog.
+    let known_single: Vec<&str> = entries
+        .iter()
+        .flat_map(|entry| entry.names.iter().map(String::as_str))
+        .filter(|name| {
+            name.chars().count() >= 6
+                && name.chars().count() <= 40
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        })
+        .collect();
+    let mut joined = Vec::with_capacity(words.len());
+    let mut i = 0;
+    while i < words.len() {
+        if let Some(second) = words.get(i + 1) {
+            let pair = format!("{}{}", words[i], second);
+            if known_single.contains(&pair.as_str()) {
+                joined.push(pair);
+                i += 2;
+                continue;
+            }
+        }
+        joined.push(words[i].clone());
+        i += 1;
+    }
+    words = joined;
     let last = words.len().saturating_sub(1);
     for i in 0..words.len() {
         let after_workspace = i > 0 && words[i - 1] == "workspace";
@@ -129,7 +193,8 @@ pub fn fix(heard: &str) -> String {
         } else if let Some((_, digit)) = sounds.filter(|_| after_workspace) {
             words[i] = (*digit).to_string();
         } else {
-            words[i] = near(&words[i]).to_string();
+            let generic = near(&words[i]);
+            words[i] = runtime_name(generic, entries).unwrap_or_else(|| generic.to_string());
         }
     }
     words.join(" ")
@@ -166,6 +231,33 @@ mod tests {
         assert_eq!(fix("minimise this"), "minimize this");
         assert_eq!(fix("maximise the browser"), "maximize the browser");
         assert_eq!(fix("close the termnal"), "close the terminal");
+    }
+
+    #[test]
+    fn catalog_aware_repair_accepts_unique_installed_names_only() {
+        let spotify = super::super::apps::parse_entry(
+            "com.spotify.Client.desktop",
+            "[Desktop Entry]\nType=Application\nName=Spotify\nExec=flatpak run com.spotify.Client\n",
+        )
+        .unwrap();
+        let entries = vec![spotify.clone()];
+        assert_eq!(super::fix_with("close spot ify", &entries), "close spotify");
+        assert_eq!(super::fix_with("focus spotfy", &entries), "focus spotify");
+        assert_eq!(super::fix_with("focus spotify", &entries), "focus spotify");
+        assert_eq!(
+            super::fix_with("I enjoy listening to music", &entries),
+            "i enjoy listening to music"
+        );
+        let other = super::super::apps::parse_entry(
+            "org.example.Spotfyi.desktop",
+            "[Desktop Entry]\nType=Application\nName=Spotfyi\nExec=spotfyi\n",
+        )
+        .unwrap();
+        assert_eq!(
+            super::fix_with("focus spotfy", &[spotify, other]),
+            "focus spotfy",
+            "multiple near matches must never be guessed"
+        );
     }
 
     #[test]
