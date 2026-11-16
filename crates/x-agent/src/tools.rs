@@ -256,7 +256,7 @@ impl Action {
                     crate::wm::Op::Move => match ws {
                         Some(ws) => format!("Move {who} to {}", destination(ws)),
                         None => format!("Move {who} (destination missing)"),
-                    },
+                    }
                     crate::wm::Op::Workspace => match ws {
                         Some(ws) => format!("Switch to {}", destination(ws)),
                         None => "Switch workspace (destination missing)".to_string(),
@@ -570,8 +570,8 @@ fn terminal_argv(
     if run.is_some() {
         return Err("Windows Terminal is required to open an OpenCode session".into());
     }
-    let shell = resolve("powershell.exe")
-        .ok_or("Install Windows Terminal or make PowerShell available")?;
+    let shell =
+        resolve("powershell.exe").ok_or("Install Windows Terminal or make PowerShell available")?;
     Ok(vec![shell, "-NoProfile".into(), "-NoExit".into()])
 }
 
