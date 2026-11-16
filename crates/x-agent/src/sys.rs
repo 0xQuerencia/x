@@ -4,7 +4,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Only explicitly supported actions reach the operating system.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Op {
     SetVolume(u8),
     SetMute(bool),
