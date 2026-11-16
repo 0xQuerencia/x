@@ -7,7 +7,6 @@
 //! process cannot silently close the wrong window.
 
 use std::ffi::c_void;
-use std::ptr;
 
 use super::{Backend, Cap, Cmd, Place, WinInfo, WmError};
 
