@@ -89,6 +89,103 @@ fn drive(screens: Vec<Observation>, replies: &[&str]) -> (Outcome, Vec<UiAct>) {
 }
 
 #[test]
+fn rebinding_never_switches_to_a_different_window_process() {
+    struct Changed;
+    impl Desktop for Changed {
+        fn find_window(&self, app: &str) -> Result<Win, String> {
+            Ok(Win {
+                address: "0x2".into(),
+                pid: 22,
+                class: app.into(),
+                title: "New title".into(),
+                id: "w2".into(),
+            })
+        }
+        fn observe(&self, _: &Win) -> Result<Observation, String> {
+            Ok(Observation::default())
+        }
+        fn act(&self, _: &Win, _: &UiAct) -> Result<(), String> {
+            panic!("different window must never receive actions")
+        }
+    }
+    let original = Win {
+        address: "0x1".into(),
+        pid: 11,
+        class: "firefox".into(),
+        title: "Old title".into(),
+        id: "w1".into(),
+    };
+    assert!(rebind(&Changed, "firefox", &original, &Quiet).is_err());
+}
+
+#[test]
+fn a_stale_control_is_reobserved_once_without_replaying_its_reference() {
+    struct Stale {
+        observations: Mutex<usize>,
+        calls: Mutex<Vec<UiAct>>,
+    }
+    impl Desktop for Stale {
+        fn find_window(&self, app: &str) -> Result<Win, String> {
+            Ok(Win {
+                address: "0x1".into(),
+                pid: 1,
+                class: app.into(),
+                title: "changing page".into(),
+                id: "w".into(),
+            })
+        }
+        fn observe(&self, _: &Win) -> Result<Observation, String> {
+            let mut n = self.observations.lock().unwrap();
+            *n += 1;
+            if *n == 1 {
+                Ok(screen("first", vec![el("old", "link", "Next")]))
+            } else {
+                Ok(screen("finished", vec![el("fresh", "link", "Next")]))
+            }
+        }
+        fn act(&self, _: &Win, action: &UiAct) -> Result<(), String> {
+            self.calls.lock().unwrap().push(action.clone());
+            if matches!(action, UiAct::Click(reference) if reference == "@s:old") {
+                Err("That control changed; observe again".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let desktop = Stale {
+        observations: Mutex::new(0),
+        calls: Mutex::new(Vec::new()),
+    };
+    let outcome = run_with(
+        "firefox",
+        "click Next",
+        &desktop,
+        &|_, _, obs, _| {
+            if obs.element("old").is_some() {
+                Ok(Step::Click("old".into()))
+            } else if desktop.calls.lock().unwrap().len() < 2 {
+                Ok(Step::Click("fresh".into()))
+            } else {
+                Ok(Step::Done {
+                    evidence: "finished".into(),
+                    summary: "Done".into(),
+                })
+            }
+        },
+        &Quiet,
+        &Limits::default(),
+    );
+    assert!(matches!(outcome, Outcome::Done(_)), "{outcome:?}");
+    assert_eq!(
+        *desktop.calls.lock().unwrap(),
+        vec![
+            UiAct::Click("@s:old".into()),
+            UiAct::Click("@s:fresh".into()),
+        ]
+    );
+}
+
+#[test]
 fn click_then_done() {
     let before = screen("idle", vec![el("e1", "link", "Press me")]);
     let after = screen("clicked", vec![el("e1", "link", "Press me")]);
