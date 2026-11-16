@@ -293,18 +293,23 @@ fn run_action(
             let Ok(windows) = host.windows() else {
                 return StepResult::failed("Cannot verify current window identities");
             };
-            if !windows.iter().any(|w| {
-                w.id == original.id && w.pid == original.pid && w.class == original.class
-            }) {
+            if !windows
+                .iter()
+                .any(|w| w.id == original.id && w.pid == original.pid && w.class == original.class)
+            {
                 return StepResult::failed("That exact window is already gone or changed identity");
             }
             if let Err(error) = host.close_window(original) {
                 return StepResult::failed(error);
             }
             match host.windows() {
-                Ok(after) if after.iter().all(|w| {
-                    w.id != original.id || w.pid != original.pid || w.class != original.class
-                }) => StepResult::done("Closed the window opened by this workflow", vec![]),
+                Ok(after)
+                    if after.iter().all(|w| {
+                        w.id != original.id || w.pid != original.pid || w.class != original.class
+                    }) =>
+                {
+                    StepResult::done("Closed the window opened by this workflow", vec![])
+                }
                 _ => StepResult::failed("The previously opened window is still present"),
             }
         }
