@@ -93,6 +93,12 @@ pub enum Action {
         #[serde(default)]
         browser: String,
     },
+    /// Explicit local screenshot request. Never deserialized from a remote
+    /// planner response or sent to the Decider; saved only to the owner disk.
+    #[serde(skip_deserializing)]
+    Screenshot {
+        mode: String,
+    },
     /// Types plain text into the focused window. Never Enter or any control key, so
     /// nothing typed here can run on its own.
     Type {
@@ -200,13 +206,17 @@ impl Action {
             | Self::Copy { .. }
             | Self::Terminal { .. }
             | Self::Folder { .. } => Risk::Reversible,
-            Self::Type { .. } | Self::Session { .. } | Self::Computer { .. } => Risk::Consequential,
+            Self::Screenshot { .. }
+            | Self::Type { .. }
+            | Self::Session { .. }
+            | Self::Computer { .. } => Risk::Consequential,
         }
     }
 
     pub fn describe(&self) -> String {
         match self {
             Self::App { target } => format!("Open {target}"),
+            Self::Screenshot { mode } => format!("Save {mode} screenshot locally"),
             Self::Type { text } => format!("Type \"{text}\" into the focused window"),
             Self::Opencode => "Open OpenCode in a new temporary folder".to_string(),
             Self::Terminal { directory } => format!("Open a terminal in {directory}"),
@@ -271,6 +281,9 @@ impl Action {
                 }
             }
             Self::Opencode => {}
+            Self::Screenshot { mode } => {
+                crate::screenshots::Mode::parse(mode)?;
+            }
             Self::Copy { text } => crate::clipboard::validate(text)?,
             Self::Terminal { directory } | Self::Folder { directory } => {
                 crate::workflows::paths::check(directory, &crate::workflows::paths::home()?)?;
@@ -381,6 +394,9 @@ impl Action {
                 number.to_string(),
             ]),
             Self::Window { .. } => Err("Window commands run through the window controller".into()),
+            Self::Screenshot { .. } => {
+                Err("Screenshots are handled locally, never launched as a command".into())
+            }
             Self::Copy { .. } => Err("Copy runs through the clipboard helper".into()),
             Self::Terminal { directory } => {
                 terminal_argv(std::path::Path::new(directory), None, resolve)
@@ -441,6 +457,11 @@ impl Action {
         }
         if let Self::Copy { text } = &valid {
             return crate::clipboard::copy(text);
+        }
+        if let Self::Screenshot { mode } = &valid {
+            let mode = crate::screenshots::Mode::parse(mode)?;
+            return crate::screenshots::save(mode, None)
+                .map(|file| format!("Screenshot saved to {}", file.display()));
         }
         let argv = if matches!(valid, Self::Opencode) {
             let dir = session_dir("opencode");
@@ -837,6 +858,26 @@ fn strip_prefix_ci<'a>(s: &'a str, prefixes: &[&str]) -> Option<&'a str> {
     })
 }
 
+/// Strict local phrase matching: a screenshot may contain private pixels,
+/// so a sentence merely mentioning screenshots must never trigger capture.
+fn screenshot_request(utterance: &str) -> Option<Action> {
+    let text = utterance.trim().to_ascii_lowercase();
+    let mode = match text.as_str() {
+        "screenshot" | "take screenshot" | "take a screenshot" | "capture screenshot"
+        | "capture the screen" => "screen",
+        "screenshot this window"
+        | "screenshot of this window"
+        | "take a screenshot of this window"
+        | "take screenshot of this window" => "window",
+        "screenshot a region"
+        | "screenshot of a region"
+        | "take a screenshot of a region"
+        | "take a screenshot of the region" => "region",
+        _ => return None,
+    };
+    Some(Action::Screenshot { mode: mode.into() })
+}
+
 fn parse_one(text: &str) -> Option<Vec<Action>> {
     let text = text.trim().trim_end_matches(['?', '.', '!', ' ']);
     if let Some(req) = crate::wm::parse::parse(text) {
@@ -845,6 +886,9 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
             target: req.target,
             ws: req.ws,
         }]);
+    }
+    if let Some(shot) = screenshot_request(text) {
+        return Some(vec![shot]);
     }
     let mut browser = String::new();
     let mut search_text = text.to_string();
