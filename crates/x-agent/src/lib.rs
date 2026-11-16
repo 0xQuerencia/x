@@ -26,6 +26,10 @@ pub mod screenshots;
 pub mod service;
 pub mod sys;
 pub mod tools;
+#[cfg(windows)]
+mod windows_clipboard;
+#[cfg(windows)]
+mod windows_input;
 pub mod wm;
 pub mod workflows;
 

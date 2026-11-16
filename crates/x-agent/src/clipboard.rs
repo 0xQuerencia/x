@@ -1,12 +1,17 @@
-//! Writing text to the Wayland clipboard on the person's explicit request ("copy this").
+//! Writing text to the platform clipboard on an explicit "copy this" request.
 //! X never reads the clipboard except to confirm what it just wrote, and never sends keys
 //! to other apps to copy for it.
 
+#[cfg(not(windows))]
 use std::io::Write;
+#[cfg(not(windows))]
 use std::process::{Command, Stdio};
+#[cfg(not(windows))]
 use std::time::Duration;
 
+#[cfg(not(windows))]
 use crate::desktop::capture;
+#[cfg(not(windows))]
 use crate::tools::which;
 
 pub const MAX_COPY: usize = 8000;
@@ -23,6 +28,12 @@ pub fn validate(text: &str) -> Result<(), String> {
 
 /// Copies `text`, then reads back once to confirm. The previous clipboard is replaced:
 /// that is what "copy" means, and the person asked for it.
+#[cfg(windows)]
+pub fn copy(text: &str) -> Result<String, String> {
+    crate::windows_clipboard::copy(text)
+}
+
+#[cfg(not(windows))]
 pub fn copy(text: &str) -> Result<String, String> {
     validate(text)?;
     let copier = which("wl-copy").ok_or("wl-copy not found (install wl-clipboard)")?;
