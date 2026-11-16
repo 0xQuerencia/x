@@ -352,7 +352,9 @@ fn transcribe_and_act(
         Heard::Armed => super::service().emit("info", "Listening: say the command"),
         Heard::Command(mode, command) => {
             super::service().emit("info", &format!("Heard: {command}"));
-            super::plan_spoken(mode, &command);
+            if let Err(error) = super::service().plan_hands_free(&command, mode) {
+                super::service().emit("error", &error);
+            }
         }
     }
 }

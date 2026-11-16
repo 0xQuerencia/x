@@ -400,7 +400,7 @@ mod validation {
                 StepAction::RunAction {
                     phrase: "start a temporary session to build a todo app".into(),
                 },
-                "own approval",
+                "approval",
             ),
             (
                 StepAction::OpencodeTask {

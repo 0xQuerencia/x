@@ -43,6 +43,25 @@ pub enum AutonomyMode {
     Autonomous,
 }
 
+/// Where the action was constructed. Remote choices are never treated as
+/// an exact local rule for approval-free destructive operations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Origin {
+    Rules,
+    Decider,
+    Workflow,
+    Quick,
+}
+
+/// Typed commands, explicit push-to-talk speech, and ambient wake speech have
+/// different safety properties even when they produce the same transcript.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputSource {
+    Text,
+    PushToTalk,
+    HandsFree,
+}
+
 impl AutonomyMode {
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -195,6 +214,8 @@ struct State {
     seq: u64,
     serial: u64,
     actions: Vec<Action>,
+    origin: Origin,
+    input_source: InputSource,
     canceller: Option<Canceller>,
     stop_requested: bool,
     voice_mode: Mode,
@@ -252,6 +273,8 @@ impl Service {
             seq: 0,
             serial: 0,
             actions: vec![],
+            origin: Origin::Quick,
+            input_source: InputSource::Text,
             canceller: None,
             stop_requested: false,
             trust_actions: false,
@@ -395,6 +418,7 @@ impl Service {
         // always shown for approval, even with Trusted Actions on.
         let from_primary = ctx.selection.source == context::Source::PrimarySelection;
         let task = self.plan_task(text, Mode::Actions, Some(resolved.actions))?;
+        self.lock().origin = Origin::Quick;
         self.lock().guard = Some(Guard {
             ctx,
             strict_focus: false,
@@ -455,16 +479,32 @@ impl Service {
     }
 
     pub fn plan(&self, text: &str, mode: Mode) -> Result<Task, String> {
-        self.plan_with(text, mode, false)
+        self.plan_with(text, mode, false, InputSource::Text)
+    }
+
+    /// Voice recorded by an explicit push-to-talk gesture.
+    pub fn plan_spoken(&self, text: &str, mode: Mode) -> Result<Task, String> {
+        self.plan_with(text, mode, false, InputSource::PushToTalk)
+    }
+
+    /// Ambient audio after the wake word is never treated like push-to-talk.
+    pub fn plan_hands_free(&self, text: &str, mode: Mode) -> Result<Task, String> {
+        self.plan_with(text, mode, false, InputSource::HandsFree)
     }
 
     /// Like `plan`, but the model also decides whether the speech was a command at all;
     /// `Err(NOT_A_COMMAND)` means it was dictation and nothing was planned.
     pub fn plan_smart(&self, text: &str) -> Result<Task, String> {
-        self.plan_with(text, Mode::Actions, true)
+        self.plan_with(text, Mode::Actions, true, InputSource::PushToTalk)
     }
 
-    fn plan_with(&self, text: &str, mode: Mode, smart: bool) -> Result<Task, String> {
+    fn plan_with(
+        &self,
+        text: &str,
+        mode: Mode,
+        smart: bool,
+        source: InputSource,
+    ) -> Result<Task, String> {
         if mode == Mode::Actions {
             if let Some(cmd) = context::commands::parse_utterance(text) {
                 if cmd == context::commands::Command::Explain {
@@ -502,8 +542,14 @@ impl Service {
             return self.plan_workflow(text.trim(), found?);
         }
         let mut preset = None;
+        let mut origin = Origin::Quick;
         if mode == Mode::Actions {
             preset = tools::plan_rules(text);
+            origin = if preset.is_some() {
+                Origin::Rules
+            } else {
+                Origin::Decider
+            };
             if preset.is_none() {
                 preset = self.model_plan(text.trim(), smart)?;
             }
@@ -522,6 +568,11 @@ impl Service {
             self.check_screen_may_leave()?;
         }
         let task = self.plan_task(text, mode, preset)?;
+        {
+            let mut state = self.lock();
+            state.origin = origin;
+            state.input_source = source;
+        }
         if let Some(app) = computer_app {
             let granted = self.lock().computer_apps.contains(&app);
             if granted && self.lock().trust_actions {
@@ -533,8 +584,34 @@ impl Service {
             }
             return Ok(task);
         }
-        let low_risk = tools::is_low_risk(&self.lock().actions);
-        if mode == Mode::Actions && low_risk && self.lock().trust_actions {
+        let (low_risk, exact_close) = {
+            let state = self.lock();
+            let safe = tools::is_low_risk(&state.actions);
+            // Only the focused window, named by an exact local rule, can be
+            // closed without a prompt; numbered/named windows require approval.
+            let close = state.actions.as_slice();
+            let exact = state.origin == Origin::Rules
+                && state.input_source == InputSource::PushToTalk
+                && matches!(
+                    close,
+                    [Action::Window {
+                        op: crate::wm::Op::Close,
+                        target: crate::wm::Target { app, pick: None },
+                        ..
+                    }] if app.is_empty()
+                );
+            (safe, exact)
+        };
+        if mode == Mode::Actions && (low_risk || exact_close) && self.lock().trust_actions {
+            if exact_close {
+                // Prevent a race between hearing "close this" and the action:
+                // a focus change invalidates the automatic close.
+                let ctx = self.context_engine().capture(false);
+                self.lock().guard = Some(Guard {
+                    ctx,
+                    strict_focus: true,
+                });
+            }
             self.emit("info", "Trusted Actions: running without a prompt");
             self.approve(task.id)?;
         }
@@ -1064,7 +1141,7 @@ impl Service {
         match result {
             Ok(text) => {
                 self.emit("heard", &text.chars().take(250).collect::<String>());
-                if let Err(e) = self.plan(&text, mode) {
+                if let Err(e) = self.plan_spoken(&text, mode) {
                     self.emit("error", &e);
                 }
             }
