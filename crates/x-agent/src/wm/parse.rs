@@ -114,7 +114,7 @@ pub fn parse(text: &str) -> Option<Request> {
 
 /// [`parse`] against a given set of installed apps.
 pub fn parse_with(text: &str, entries: &[Entry]) -> Option<Request> {
-    let text = super::speech::fix(text);
+    let text = super::speech::fix_with(text, entries);
     let text = text.as_str();
     match text {
         "undo" | "undo that" | "undo it" => return req(Op::Undo, Target::default(), None),
