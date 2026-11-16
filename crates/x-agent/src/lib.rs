@@ -23,6 +23,7 @@ pub mod planner;
 pub mod quick;
 pub mod screenshots;
 pub mod service;
+pub mod sys;
 pub mod tools;
 pub mod wm;
 pub mod workflows;
