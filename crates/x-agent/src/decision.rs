@@ -512,7 +512,17 @@ fn candidates(utterance: &str) -> Vec<Action> {
                 && let Some(app) = tools::resolve_app(alias)
             {
                 push(&mut options, Action::App { target: app.into() });
-                push(&mut options, Action::Focus { target: app.into() });
+                push(
+                    &mut options,
+                    Action::Window {
+                        op: crate::wm::Op::Focus,
+                        target: crate::wm::Target {
+                            app: app.into(),
+                            pick: None,
+                        },
+                        ws: None,
+                    },
+                );
             }
         }
     }
@@ -536,7 +546,7 @@ fn candidates(utterance: &str) -> Vec<Action> {
     }
 
     // Only an explicit workspace reference is eligible.
-    if mentions(&lower, "workspace") || mentions(&lower, "desktop") {
+    if window.is_empty() && (mentions(&lower, "workspace") || mentions(&lower, "desktop")) {
         for (word, n) in [
             ("one", 1),
             ("two", 2),
@@ -550,7 +560,14 @@ fn candidates(utterance: &str) -> Vec<Action> {
             ("ten", 10),
         ] {
             if mentions(&lower, word) || mentions(&lower, &n.to_string()) {
-                push(&mut options, Action::Workspace { number: n });
+                push(
+                    &mut options,
+                    Action::Window {
+                        op: crate::wm::Op::Workspace,
+                        target: crate::wm::Target::default(),
+                        ws: Some(crate::wm::Ws::N(n)),
+                    },
+                );
             }
         }
     }
@@ -842,8 +859,13 @@ mod tests {
                 Action::App {
                     target: "files".into()
                 },
-                Action::Focus {
-                    target: "files".into()
+                Action::Window {
+                    op: crate::wm::Op::Focus,
+                    target: crate::wm::Target {
+                        app: "files".into(),
+                        pick: None,
+                    },
+                    ws: None,
                 },
             ]
         );
@@ -883,7 +905,11 @@ mod tests {
 
     #[test]
     fn spoken_workspace_number_is_bounded() {
-        assert!(candidates("take me to desktop three").contains(&Action::Workspace { number: 3 }));
+        assert!(candidates("take me to desktop three").contains(&Action::Window {
+            op: crate::wm::Op::Workspace,
+            target: crate::wm::Target::default(),
+            ws: Some(crate::wm::Ws::N(3)),
+        }));
         assert!(candidates("take me to workspace 11").is_empty());
     }
 
