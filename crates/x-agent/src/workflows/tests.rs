@@ -320,6 +320,7 @@ mod validation {
     #[test]
     fn arguments_are_checked() {
         let h = home();
+        let outside_home = if cfg!(windows) { r"C:\Windows" } else { "/etc" };
         let with = |action| Workflow {
             steps: vec![step("s", action)],
             ..coding(h.path())
@@ -338,7 +339,7 @@ mod validation {
             ),
             (
                 StepAction::OpenTerminal {
-                    directory: if cfg!(windows) { r"C:\Windows" } else { "/etc" }.into(),
+                    directory: outside_home.into(),
                     workspace: None,
                 },
                 "home folder",
