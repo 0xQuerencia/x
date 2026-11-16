@@ -161,7 +161,50 @@ const MAX_TYPED: usize = 300;
 
 static LAST_LAUNCHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// Explicitly classify every action: an added action must be reviewed before it
+/// can run without approval. In particular, close is never low-risk by default.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Risk {
+    Safe,
+    Reversible,
+    Destructive,
+    Consequential,
+}
+
 impl Action {
+    pub fn risk(&self) -> Risk {
+        use crate::wm::Op;
+        match self {
+            Self::Window { op: Op::Close, .. } => Risk::Destructive,
+            Self::Window {
+                op: Op::List | Op::Keys,
+                ..
+            } => Risk::Safe,
+            Self::Window {
+                op: Op::Focus
+                    | Op::Back
+                    | Op::Move
+                    | Op::Workspace
+                    | Op::Maximize
+                    | Op::Minimize
+                    | Op::Undo,
+                ..
+            }
+            | Self::App { .. }
+            | Self::Url { .. }
+            | Self::Search { .. }
+            | Self::Focus { .. }
+            | Self::Workspace { .. }
+            | Self::Opencode
+            | Self::Copy { .. }
+            | Self::Terminal { .. }
+            | Self::Folder { .. } => Risk::Reversible,
+            Self::Type { .. } | Self::Session { .. } | Self::Computer { .. } => {
+                Risk::Consequential
+            }
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
             Self::App { target } => format!("Open {target}"),
@@ -973,17 +1016,22 @@ pub fn wait_for_launched_focus() -> Result<(), String> {
     Err("The launched app's window never took focus, so nothing was typed".into())
 }
 
-/// Whether a plan may run without asking once the person trusts Actions: launches,
-/// searches, window changes (a polite close included) and typing only straight after a launch (so the text lands in the new window).
+/// Only exhaustively classified safe/reversible actions can run automatically.
+/// Typing into a freshly opened window is a narrow exception; closes require
+/// additional local-rule, push-to-talk, and exact-focus checks in the service.
 pub fn is_low_risk(actions: &[Action]) -> bool {
-    actions.iter().enumerate().all(|(i, action)| match action {
-        Action::Type { .. } => i > 0 && actions[i - 1].launches_window(),
-        Action::Session { .. } => actions.len() == 1,
-        Action::Computer { .. } => false,
-        Action::Copy { .. } => true,
-        Action::Window { .. } => true,
-        _ => true,
-    })
+    actions
+        .iter()
+        .enumerate()
+        .all(|(i, action)| match action.risk() {
+            Risk::Safe | Risk::Reversible => true,
+            Risk::Destructive => false,
+            Risk::Consequential => {
+                matches!(action, Action::Type { .. })
+                    && i > 0
+                    && actions[i - 1].launches_window()
+            }
+        })
 }
 
 /// Deterministic rule planner. `None` means "not understood": nothing runs.
