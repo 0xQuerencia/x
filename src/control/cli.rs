@@ -715,7 +715,11 @@ pub fn run(command: ControlCli) -> u8 {
                             .is_some_and(|path| path.is_file());
                         println!(
                             "OpenRouter key: {}",
-                            if present { "configured" } else { "not configured" }
+                            if present {
+                                "configured"
+                            } else {
+                                "not configured"
+                            }
                         );
                         0
                     }
@@ -1021,9 +1025,9 @@ fn validate_agent_key(bytes: &[u8]) -> Result<&str, String> {
     let key = text.trim_end_matches(['\r', '\n']);
     if key.is_empty()
         || key.len() > 4096
-        || !key.chars().all(|ch| {
-            ch.is_ascii_graphic() && !matches!(ch, '"' | '\'' | '\\')
-        })
+        || !key
+            .chars()
+            .all(|ch| ch.is_ascii_graphic() && !matches!(ch, '"' | '\'' | '\\'))
     {
         return Err("OpenRouter key has invalid characters or is empty".into());
     }
@@ -1775,7 +1779,10 @@ mod tests {
 
     #[test]
     fn openrouter_key_validation_never_echoes_secret_values() {
-        assert_eq!(validate_agent_key(b"sk-test-valid\n").unwrap(), "sk-test-valid");
+        assert_eq!(
+            validate_agent_key(b"sk-test-valid\n").unwrap(),
+            "sk-test-valid"
+        );
         assert!(validate_agent_key(b"").is_err());
         assert!(validate_agent_key(b"key secret").is_err());
         assert!(validate_agent_key(b"key\\evil").is_err());
@@ -1792,7 +1799,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o077,
+                0
+            );
         }
         assert!(save_agent_key(&path, b"bad key").is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "sk-new");
