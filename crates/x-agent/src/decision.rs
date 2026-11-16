@@ -127,7 +127,9 @@ fn transport(config: &str) -> Result<String, NetworkFailure> {
         let _ = child.wait();
         return Err(NetworkFailure::Offline);
     }
-    let output = child.wait_with_output().map_err(|_| NetworkFailure::Other)?;
+    let output = child
+        .wait_with_output()
+        .map_err(|_| NetworkFailure::Other)?;
     if !output.status.success() {
         return Err(match output.status.code() {
             Some(28) => NetworkFailure::Timeout,
@@ -193,39 +195,40 @@ pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Va
     );
     let wire = match transport(&config) {
         Ok(wire) => wire,
-        Err(kind) => {
-            match kind {
-                NetworkFailure::Offline | NetworkFailure::Timeout => {
-                    CIRCUIT
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .failed(None);
-                    return Err("Remote choice is offline or timed out; exact commands still work.".into());
-                }
-                NetworkFailure::Other => {
-                    return Err("Decision request failed; no action was run.".into());
-                }
+        Err(kind) => match kind {
+            NetworkFailure::Offline | NetworkFailure::Timeout => {
+                CIRCUIT
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .failed(None);
+                return Err(
+                    "Remote choice is offline or timed out; exact commands still work.".into(),
+                );
             }
-        }
+            NetworkFailure::Other => {
+                return Err("Decision request failed; no action was run.".into());
+            }
+        },
     };
     let reply = response(&wire)?;
     match reply.status {
         200 => {
-            CIRCUIT
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .success();
-            serde_json::from_str(reply.body)
-                .map_err(|_| "Decision response was not JSON".into())
+            CIRCUIT.lock().unwrap_or_else(|p| p.into_inner()).success();
+            serde_json::from_str(reply.body).map_err(|_| "Decision response was not JSON".into())
         }
         429 => {
             CIRCUIT
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .failed(Some(reply.retry_after.unwrap_or(Duration::from_secs(40))));
-            Err("Remote choice is rate limited. Exact local commands still work; nothing was run.".into())
+            Err(
+                "Remote choice is rate limited. Exact local commands still work; nothing was run."
+                    .into(),
+            )
         }
-        401 | 403 => Err("Decision provider denied authentication or access. No action was run.".into()),
+        401 | 403 => {
+            Err("Decision provider denied authentication or access. No action was run.".into())
+        }
         500..=599 => Err("Decision provider is unavailable. No fallback was called.".into()),
         other => Err(format!(
             "Decision provider returned HTTP {other}. No fallback model was called."
