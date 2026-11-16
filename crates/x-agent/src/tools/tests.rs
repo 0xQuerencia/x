@@ -89,8 +89,13 @@ fn typing_is_plain_text_only_and_follows_a_launch_to_be_low_risk() {
     );
     assert!(is_low_risk(&plan));
     assert!(!is_low_risk(&plan_rules("type hello").unwrap()));
-    let argv = plan[1].argv(&fake_path).unwrap();
-    assert_eq!(argv, ["/usr/bin/wtype", "--", "welcome back wiki"]);
+    #[cfg(not(windows))]
+    {
+        let argv = plan[1].argv(&fake_path).unwrap();
+        assert_eq!(argv, ["/usr/bin/wtype", "--", "welcome back wiki"]);
+    }
+    #[cfg(windows)]
+    assert!(plan[1].argv(&fake_path).is_err());
     assert!(
         Action::Type {
             text: "a\nb".into()
@@ -110,7 +115,10 @@ fn typing_is_plain_text_only_and_follows_a_launch_to_be_low_risk() {
     let dash = Action::Type {
         text: "--help".into(),
     };
+    #[cfg(not(windows))]
     assert_eq!(dash.argv(&fake_path).unwrap()[1], "--");
+    #[cfg(windows)]
+    assert!(dash.argv(&fake_path).is_err());
 }
 
 #[test]
@@ -128,10 +136,13 @@ fn an_opencode_session_request_opens_opencode_in_a_terminal_not_a_headless_run()
     ));
     let dir = std::path::Path::new("/home/u/x-sessions/s");
     let argv = opencode_argv(dir, &|n| Some(format!("/usr/bin/{n}"))).unwrap();
+    #[cfg(not(windows))]
     assert_eq!(
         argv[..3],
         ["/usr/bin/kitty", "--directory", "/home/u/x-sessions/s"]
     );
+    #[cfg(windows)]
+    assert_eq!(argv[..3], ["/usr/bin/wt.exe", "-d", "/home/u/x-sessions/s"]);
     assert!(is_low_risk(&[Action::Opencode]));
 }
 
@@ -360,10 +371,13 @@ fn planner_json_is_untrusted() {
 
 #[test]
 fn missing_executable_is_reported() {
-    let a = Action::App {
-        target: "firefox".into(),
-    };
-    assert!(a.argv(&|_| None).unwrap_err().contains("not installed"));
+    // Installed Start Menu apps may be present on Windows CI machines even
+    // with an empty PATH resolver. Test the unresolved binary alias directly.
+    assert!(
+        exe_for("firefox", &|_| None)
+            .unwrap_err()
+            .contains("not installed")
+    );
 }
 
 #[test]

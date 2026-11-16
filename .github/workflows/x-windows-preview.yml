@@ -11,6 +11,7 @@ on:
       - ".github/workflows/x-windows-preview.yml"
       - "crates/x-agent/src/browser_tab.rs"
       - "crates/x-agent/src/windows_input.rs"
+      - "crates/x-agent/src/wm/tests.rs"
 
 permissions:
   contents: read
