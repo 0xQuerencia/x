@@ -184,7 +184,9 @@ fn hyprland_signature(runtime: &Path, uid: u32) -> Option<String> {
             Some(name)
         })
         .collect();
-    (candidates.len() == 1).then(|| candidates.into_iter().next()).flatten()
+    (candidates.len() == 1)
+        .then(|| candidates.into_iter().next())
+        .flatten()
 }
 
 /// Called before the listener creates threads, never from an arbitrary voice
