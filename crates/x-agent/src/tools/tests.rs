@@ -373,9 +373,11 @@ fn planner_json_is_untrusted() {
 fn missing_executable_is_reported() {
     // Installed Start Menu apps may be present on Windows CI machines even
     // with an empty PATH resolver. Test the unresolved binary alias directly.
-    assert!(exe_for("firefox", &|_| None)
-        .unwrap_err()
-        .contains("not installed"));
+    assert!(
+        exe_for("firefox", &|_| None)
+            .unwrap_err()
+            .contains("not installed")
+    );
 }
 
 #[test]
