@@ -64,7 +64,9 @@ pub fn service() -> &'static Service {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .map(|model| model.trim().to_string())
             .filter(|model| !model.is_empty());
-        service.set_planner(saved.map(planner_for));
+        // Unsupported legacy settings are disabled, never silently switched
+        // to a different model or endpoint.
+        service.set_planner(saved.as_deref().and_then(planner_for));
         let watched = service.clone();
         thread::spawn(move || watch(&watched));
         service
@@ -85,76 +87,35 @@ fn planner_file() -> Option<PathBuf> {
         .map(|dir| dir.join("x-planner"))
 }
 
-fn gemini_key_file() -> Option<PathBuf> {
-    crate::app_paths::support_dir()
-        .ok()
-        .map(|dir| dir.join("gemini-key"))
-}
-
-/// `decider-flash` and `decider` use OpenRouter's free Perplexity Decider models. A saved
-/// legacy `jev` setting now means `decider-flash`. Gemini and OpenAI-compatible
-/// planners remain optional; all other names select a local Ollama model.
-fn planner_for(model: String) -> Arc<dyn x_agent::service::Planner> {
-    let model = if model == "jev" {
-        "decider-flash".to_string()
-    } else {
-        model
+/// X offers only free, choice-only Perplexity Decider providers. Unknown
+/// saved settings fail closed to OFF; there is no generative fallback.
+fn planner_for(model: &str) -> Option<Arc<dyn x_agent::service::Planner>> {
+    let model = match model {
+        "decider-flash" => x_agent::decider::Model::Flash,
+        "decider" => x_agent::decider::Model::Full,
+        _ => return None,
     };
-    if matches!(model.as_str(), "decider-flash" | "decider") {
-        return Arc::new(x_agent::decider::Decider {
-            model: if model == "decider" {
-                x_agent::decider::Model::Full
-            } else {
-                x_agent::decider::Model::Flash
-            },
-            key_file: crate::app_paths::support_dir()
-                .ok()
-                .map(|dir| dir.join("openrouter-key")),
-            vision_file: computer_vision_file(),
-        });
-    }
-    if let Some(name) = model
-        .strip_prefix("openai:")
-        .filter(|name| !name.is_empty())
-    {
-        let dir = crate::app_paths::support_dir().unwrap_or_default();
-        return Arc::new(x_agent::planner::OpenAi {
-            model: name.to_string(),
-            base_file: dir.join("openai-base"),
-            key_file: dir.join("openai-key"),
-        });
-    }
-    match model.strip_prefix("gemini") {
-        Some(rest) if rest.is_empty() || rest.starts_with(':') => {
-            Arc::new(x_agent::planner::Gemini {
-                model: rest
-                    .strip_prefix(':')
-                    .filter(|m| !m.is_empty())
-                    .unwrap_or(x_agent::planner::GEMINI_DEFAULT)
-                    .to_string(),
-                key_file: gemini_key_file(),
-            })
-        }
-        _ => Arc::new(x_agent::planner::Ollama { model }),
-    }
+    Some(Arc::new(x_agent::decider::Decider {
+        model,
+        key_file: crate::app_paths::support_dir()
+            .ok()
+            .map(|dir| dir.join("openrouter-key")),
+        vision_file: computer_vision_file(),
+    }))
 }
 
 fn set_planner(model: &str) -> ControlReply {
-    let model = match model.trim() {
-        "jev" => "decider-flash",
-        other => other,
-    };
-    if model.is_empty() || model.len() > 100 || model.contains(char::is_whitespace) {
+    let model = model.trim();
+    if !matches!(model, "off" | "decider-flash" | "decider") {
         return ControlReply::error(
-            "usage",
-            "give decider-flash, decider, gemini, openai:<model>, an Ollama model, or off",
+            "unsupported",
+            "Only off, decider-flash and decider are supported. Generative planners (Gemini, OpenAI-compatible, Ollama, Jev) are disabled.",
         );
     }
     let Some(path) = planner_file() else {
         return ControlReply::error("failed", "the data folder is unavailable");
     };
-    let off = model == "off";
-    let saved = if off {
+    let saved = if model == "off" {
         std::fs::remove_file(&path).or_else(ignore_missing)
     } else {
         write_private(&path, model.as_bytes())
@@ -162,30 +123,13 @@ fn set_planner(model: &str) -> ControlReply {
     if let Err(error) = saved {
         return ControlReply::error("failed", format!("couldn't save the setting: {error}"));
     }
-    service().set_planner((!off).then(|| planner_for(model.to_string())));
-    if off {
+    service().set_planner(planner_for(model));
+    if model == "off" {
         return ControlReply::done("Planner off");
     }
-    let note = if matches!(model, "decider-flash" | "decider") {
-        ". Free Perplexity Decider on OpenRouter: set OPENROUTER_API_KEY in X's running service or save its private openrouter-key file. Choice-only, no paid fallback.".to_string()
-    } else if model.starts_with("openai:") {
-        ". What you say is sent to the endpoint saved in X's openai-base file for planning."
-            .to_string()
-    } else if model.starts_with("gemini") {
-        let has_key = std::env::var_os("GEMINI_API_KEY").is_some()
-            || gemini_key_file().is_some_and(|f| f.is_file());
-        format!(
-            ". What you say is sent to Google for planning.{}",
-            if has_key {
-                ""
-            } else {
-                " No key yet: put it in the gemini-key file in X's data folder, or set GEMINI_API_KEY"
-            }
-        )
-    } else {
-        String::new()
-    };
-    ControlReply::done(format!("Planner is {model}{note}"))
+    ControlReply::done(format!(
+        "Planner is {model}. Free Perplexity Decider on OpenRouter: configure OPENROUTER_API_KEY or the owner-only openrouter-key file. Choice-only, no fallback model."
+    ))
 }
 
 fn wake_words_file() -> Option<PathBuf> {
@@ -935,6 +879,28 @@ pub fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_planner_configs_never_select_a_generative_model() {
+        for model in [
+            "jev",
+            "gemini",
+            "gemini:flash",
+            "openai:gpt-5",
+            "llama3",
+            "ollama:llama3",
+            "unknown",
+            "off",
+        ] {
+            assert!(
+                planner_for(model).is_none(),
+                "Unexpected planner for {model}"
+            );
+        }
+        for model in ["decider", "decider-flash"] {
+            assert!(planner_for(model).is_some());
+        }
+    }
 
     #[test]
     fn auto_mode_needs_the_spoken_prefix() {
