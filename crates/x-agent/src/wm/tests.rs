@@ -485,7 +485,10 @@ fn live_sway() {
     assert_eq!(own_window(&controller).unwrap().workspace, 2);
     let restored = controller.run(&request(Op::Undo, None)).unwrap();
     assert!(restored.message.contains("Undo"));
-    assert_eq!(own_window(&controller).unwrap().workspace, original.workspace);
+    assert_eq!(
+        own_window(&controller).unwrap().workspace,
+        original.workspace
+    );
     let maximized = controller.run(&request(Op::Maximize, None)).unwrap();
     assert!(maximized.undoable);
     assert!(own_window(&controller).unwrap().maximized);
