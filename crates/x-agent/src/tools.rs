@@ -181,7 +181,8 @@ impl Action {
                 ..
             } => Risk::Safe,
             Self::Window {
-                op: Op::Focus
+                op:
+                    Op::Focus
                     | Op::Back
                     | Op::Move
                     | Op::Workspace
@@ -199,9 +200,7 @@ impl Action {
             | Self::Copy { .. }
             | Self::Terminal { .. }
             | Self::Folder { .. } => Risk::Reversible,
-            Self::Type { .. } | Self::Session { .. } | Self::Computer { .. } => {
-                Risk::Consequential
-            }
+            Self::Type { .. } | Self::Session { .. } | Self::Computer { .. } => Risk::Consequential,
         }
     }
 
@@ -1027,9 +1026,7 @@ pub fn is_low_risk(actions: &[Action]) -> bool {
             Risk::Safe | Risk::Reversible => true,
             Risk::Destructive => false,
             Risk::Consequential => {
-                matches!(action, Action::Type { .. })
-                    && i > 0
-                    && actions[i - 1].launches_window()
+                matches!(action, Action::Type { .. }) && i > 0 && actions[i - 1].launches_window()
             }
         })
 }
