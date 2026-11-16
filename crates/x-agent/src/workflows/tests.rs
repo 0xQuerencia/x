@@ -195,9 +195,11 @@ impl Host for Fake {
     }
     fn close_window(&self, win: &WinInfo) -> Result<(), String> {
         let mut state = self.w.lock().unwrap();
-        let pos = state.wins.iter().position(|w| {
-            w.id == win.id && w.pid == win.pid && w.class == win.class
-        }).ok_or("The window is gone or its identity changed")?;
+        let pos = state
+            .wins
+            .iter()
+            .position(|w| w.id == win.id && w.pid == win.pid && w.class == win.class)
+            .ok_or("The window is gone or its identity changed")?;
         state.log.push(format!("close exact {}", win.id));
         state.wins.remove(pos);
         Ok(())
@@ -509,7 +511,11 @@ mod running {
         ));
         let out = run(&wf, &host, &cfg(home.path()));
         assert_eq!(out.report.state, RunState::Completed);
-        assert!(host.log().iter().any(|line| line.starts_with("close exact ")));
+        assert!(
+            host.log()
+                .iter()
+                .any(|line| line.starts_with("close exact "))
+        );
         assert!(host.windows_now().iter().all(|w| w.class != "firefox"));
     }
 
@@ -529,7 +535,12 @@ mod running {
         let result = run(&wf, &host, &cfg(home.path()));
         assert_eq!(result.report.state, RunState::Failed);
         assert!(host.windows_now().iter().any(|w| w.id == reused.id));
-        assert!(!host.log().iter().any(|line| line.starts_with("close exact ")));
+        assert!(
+            !host
+                .log()
+                .iter()
+                .any(|line| line.starts_with("close exact "))
+        );
 
         let mut invalid = coding(home.path());
         invalid.steps.push(step(
