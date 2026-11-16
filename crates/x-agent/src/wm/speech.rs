@@ -131,6 +131,7 @@ fn runtime_name(word: &str, entries: &[super::apps::Entry]) -> Option<String> {
 }
 
 /// What was probably meant, lowercase, with spoken numbers as digits.
+#[cfg(test)]
 pub fn fix(heard: &str) -> String {
     fix_with(heard, &[])
 }
