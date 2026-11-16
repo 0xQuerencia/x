@@ -100,6 +100,9 @@ pub(super) struct StepEd {
     id: String,
     kind: Kind,
     app: usize,
+    /// Preserve installed XDG app names that are absent from the legacy quick picker.
+    /// Opening and saving a workflow must never silently change its target.
+    app_custom: Option<String>,
     /// 0 means "no workspace".
     workspace: u8,
     /// 0 means automatic (only safe if a single window matches).
@@ -115,6 +118,7 @@ impl StepEd {
             id,
             kind: Kind::OpenApp,
             app: 0,
+            app_custom: None,
             workspace: 0,
             pick: 0,
             text: TextEdit::default(),
@@ -124,15 +128,18 @@ impl StepEd {
 
     fn from(step: &Step) -> Self {
         let mut ed = Self::new(step.id.clone());
-        let app_index = |app: &str| {
-            ::x_agent::tools::APPS
-                .iter()
-                .position(|(n, _)| *n == app)
-                .unwrap_or(0)
+        let app_index = |ed: &mut Self, app: &str| {
+            match ::x_agent::tools::APPS.iter().position(|(n, _)| *n == app) {
+                Some(index) => {
+                    ed.app = index;
+                    ed.app_custom = None;
+                }
+                None => ed.app_custom = Some(app.to_string()),
+            }
         };
         match &step.action {
             StepAction::OpenApp { app, workspace } => {
-                ed.app = app_index(app);
+                app_index(&mut ed, app);
                 ed.workspace = workspace.unwrap_or(0);
             }
             StepAction::OpenTerminal {
@@ -153,7 +160,7 @@ impl StepEd {
             }
             StepAction::FocusWindow { app, pick } => {
                 ed.kind = Kind::FocusWindow;
-                ed.app = app_index(app);
+                app_index(&mut ed, app);
                 ed.pick = pick.unwrap_or(0);
             }
             StepAction::SwitchWorkspace { workspace } => {
@@ -166,13 +173,13 @@ impl StepEd {
                 pick,
             } => {
                 ed.kind = Kind::MoveWindow;
-                ed.app = app_index(app);
+                app_index(&mut ed, app);
                 ed.workspace = *workspace;
                 ed.pick = pick.unwrap_or(0);
             }
             StepAction::WaitForWindow { app } => {
                 ed.kind = Kind::WaitForWindow;
-                ed.app = app_index(app);
+                app_index(&mut ed, app);
             }
             StepAction::CloseOpenedWindow { opened_by } => {
                 ed.kind = Kind::CloseOpenedWindow;
@@ -192,6 +199,9 @@ impl StepEd {
     }
 
     fn app_name(&self) -> String {
+        if let Some(name) = &self.app_custom {
+            return name.clone();
+        }
         ::x_agent::tools::APPS
             .get(self.app)
             .map_or("vscode", |(n, _)| *n)
@@ -817,7 +827,8 @@ fn step_row(p: Paint, step: &StepEd, i: usize, count: usize) -> El {
             ButtonKind::Secondary,
             move |ui: &mut Ui, _| {
                 with_step(ui, i, |s| {
-                    s.app = (s.app + 1) % ::x_agent::tools::APPS.len()
+                    s.app_custom = None;
+                    s.app = (s.app + 1) % ::x_agent::tools::APPS.len();
                 });
             },
         ));
@@ -965,4 +976,55 @@ fn step_row(p: Paint, step: &StepEd, i: usize, count: usize) -> El {
             }
         },
     ))
+}
+
+#[cfg(test)]
+mod editor_tests {
+    use super::*;
+
+    #[test]
+    fn loading_and_saving_installed_app_name_does_not_replace_it_with_firefox() {
+        let original = Step {
+            id: "open".into(),
+            action: StepAction::OpenApp {
+                app: "org.example.SpecialEditor".into(),
+                workspace: Some(2),
+            },
+            requires: vec![],
+            timeout_secs: None,
+            on_failure: OnFailure::Stop,
+        };
+        let editor = StepEd::from(&original);
+        assert_eq!(editor.app_name(), "org.example.SpecialEditor");
+        assert_eq!(editor.to_step(Some(&original)).action, original.action);
+    }
+
+    #[test]
+    fn dynamic_app_names_survive_focus_move_and_wait_roundtrip() {
+        let actions = vec![
+            StepAction::FocusWindow {
+                app: "org.example.SpecialEditor".into(),
+                pick: Some(1),
+            },
+            StepAction::MoveWindow {
+                app: "org.example.SpecialEditor".into(),
+                workspace: 3,
+                pick: Some(1),
+            },
+            StepAction::WaitForWindow {
+                app: "org.example.SpecialEditor".into(),
+            },
+        ];
+        for action in actions {
+            let original = Step {
+                id: "focus".into(),
+                action,
+                requires: vec![],
+                timeout_secs: None,
+                on_failure: OnFailure::Stop,
+            };
+            let editor = StepEd::from(&original);
+            assert_eq!(editor.to_step(Some(&original)).action, original.action);
+        }
+    }
 }
