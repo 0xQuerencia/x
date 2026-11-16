@@ -15,7 +15,8 @@ not PowerShell, shell commands or text from speech.
 | Close a window | Graceful WM_CLOSE, never force-terminate |
 | Choose between matching windows | Existing stable-id/PID controller; requires smoke |
 | Numbered virtual desktops and moving between them | **Not implemented** (no fake desktop numbers) |
-| Speech, Actions, workflows and app launching | Require separate Windows physical end-to-end verification |
+| Installed Start Menu app launch, default URL opening, folders | Implemented; physical smoke needed |
+| Speech, Actions and saved workflows | Require separate Windows physical end-to-end verification |
 | Screenshots, system control, process management, wake listener | **Not at Linux parity** |
 
 ## Developer build on a Windows 11 machine
