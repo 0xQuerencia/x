@@ -338,7 +338,7 @@ mod validation {
             ),
             (
                 StepAction::OpenTerminal {
-                    directory: "/etc".into(),
+                    directory: if cfg!(windows) { r"C:\Windows" } else { "/etc" }.into(),
                     workspace: None,
                 },
                 "home folder",
