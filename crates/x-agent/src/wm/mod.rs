@@ -392,21 +392,23 @@ impl Controller {
             .take()
             .ok_or_else(|| WmError::NotFound("There is no pending window choice".into()))?;
         if pending.at.elapsed() > CHOICE_TTL {
-            return Err(WmError::NotFound("Window choice expired; repeat the original command".into()));
+            return Err(WmError::NotFound(
+                "Window choice expired; repeat the original command".into(),
+            ));
         }
         let original = pending
             .choices
-            .get(number.checked_sub(1).ok_or_else(|| WmError::NotFound("Choose a number starting at one".into()))?)
+            .get(
+                number
+                    .checked_sub(1)
+                    .ok_or_else(|| WmError::NotFound("Choose a number starting at one".into()))?,
+            )
             .ok_or_else(|| WmError::NotFound("No window has that number".into()))?;
         // Re-observe *after* the person chooses. Never trust mutable list order.
         let all = self.backend.windows()?;
         let win = all
             .iter()
-            .find(|w| {
-                w.id == original.id
-                    && w.pid == original.pid
-                    && w.class == original.class
-            })
+            .find(|w| w.id == original.id && w.pid == original.pid && w.class == original.class)
             .cloned()
             .ok_or_else(|| WmError::NotFound("The selected window is gone".into()))?;
         match pending.request.op {
@@ -421,7 +423,9 @@ impl Controller {
             Op::Maximize => self.maximize(&win),
             Op::Minimize => self.minimize(&win),
             Op::Close => self.close(&win),
-            _ => Err(WmError::Unsupported("This operation cannot have numbered choices".into())),
+            _ => Err(WmError::Unsupported(
+                "This operation cannot have numbered choices".into(),
+            )),
         }
     }
 
