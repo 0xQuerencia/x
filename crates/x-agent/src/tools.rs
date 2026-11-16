@@ -371,14 +371,28 @@ impl Action {
     pub fn argv(&self, resolve: &dyn Fn(&str) -> Option<String>) -> Result<Vec<String>, String> {
         let browser_or_opener = |browser: &str, url: String| -> Result<Vec<String>, String> {
             if browser.is_empty() {
-                let opener = resolve("xdg-open").ok_or("xdg-open not found (install xdg-utils)")?;
-                Ok(vec![opener, url])
+                #[cfg(windows)]
+                {
+                    Ok(vec![windows_explorer(resolve)?, url])
+                }
+                #[cfg(not(windows))]
+                {
+                    let opener =
+                        resolve("xdg-open").ok_or("xdg-open not found (install xdg-utils)")?;
+                    Ok(vec![opener, url])
+                }
             } else {
                 Ok(vec![exe_for(browser, resolve)?, url])
             }
         };
         match self {
             Self::App { target } => {
+                // On Windows, installed Start Menu shortcuts take precedence
+                // over Linux-oriented built-in PATH aliases.
+                #[cfg(windows)]
+                if let Some(app) = crate::wm::apps::installed(target) {
+                    return crate::wm::apps::launch_argv(&app, resolve);
+                }
                 if lookup(APPS, target).is_some() {
                     return Ok(vec![exe_for(target, resolve)?]);
                 }
@@ -396,7 +410,16 @@ impl Action {
             Self::Terminal { directory } => {
                 terminal_argv(std::path::Path::new(directory), None, resolve)
             }
-            Self::Folder { directory } => Ok(vec![exe_for("files", resolve)?, directory.clone()]),
+            Self::Folder { directory } => {
+                #[cfg(windows)]
+                {
+                    Ok(vec![windows_explorer(resolve)?, directory.clone()])
+                }
+                #[cfg(not(windows))]
+                {
+                    Ok(vec![exe_for("files", resolve)?, directory.clone()])
+                }
+            }
             Self::Session { .. } => Err("A session runs as Work, not as an Action".into()),
             Self::Computer { .. } => Err("Computer steps run through the observe loop".into()),
             Self::Opencode => opencode_argv(&session_dir("opencode"), resolve),
@@ -486,6 +509,10 @@ impl Action {
             };
         }
         let mut cmd = Command::new(exe);
+        #[cfg(windows)]
+        if let Self::Terminal { directory } = &valid {
+            cmd.current_dir(directory);
+        }
         cmd.args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -526,6 +553,29 @@ fn session_dir(prefix: &str) -> std::path::PathBuf {
 /// A terminal that starts in `dir`, optionally running one program. The terminals listed
 /// here are the ones whose "start in this folder" flag is known; any other is refused,
 /// not guessed.
+#[cfg(windows)]
+fn terminal_argv(
+    dir: &std::path::Path,
+    run: Option<String>,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Result<Vec<String>, String> {
+    let dir = dir.to_string_lossy().to_string();
+    if let Some(terminal) = resolve("wt.exe") {
+        let mut argv = vec![terminal, "-d".into(), dir];
+        if let Some(run) = run {
+            argv.push(run);
+        }
+        return Ok(argv);
+    }
+    if run.is_some() {
+        return Err("Windows Terminal is required to open an OpenCode session".into());
+    }
+    let shell =
+        resolve("powershell.exe").ok_or("Install Windows Terminal or make PowerShell available")?;
+    Ok(vec![shell, "-NoProfile".into(), "-NoExit".into()])
+}
+
+#[cfg(not(windows))]
 fn terminal_argv(
     dir: &std::path::Path,
     run: Option<String>,
@@ -611,6 +661,20 @@ fn check_browser(browser: &str) -> Result<(), String> {
     } else {
         Err("Unapproved browser".into())
     }
+}
+
+#[cfg(windows)]
+fn windows_explorer(resolve: &dyn Fn(&str) -> Option<String>) -> Result<String, String> {
+    resolve("explorer.exe")
+        .or_else(|| {
+            std::env::var_os("SystemRoot").map(|root| {
+                std::path::PathBuf::from(root)
+                    .join("explorer.exe")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+        })
+        .ok_or_else(|| "Windows Explorer is unavailable".into())
 }
 
 fn exe_for(alias: &str, resolve: &dyn Fn(&str) -> Option<String>) -> Result<String, String> {

@@ -16,6 +16,8 @@ mod report;
 mod speech;
 #[cfg(windows)]
 mod win11;
+#[cfg(windows)]
+mod windows_apps;
 #[cfg(not(windows))]
 mod x11;
 
