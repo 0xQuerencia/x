@@ -24,7 +24,7 @@ pub fn parse(text: &str) -> Option<Op> {
     })
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
 fn browser_focused(view: &View, catalog: &[wm::apps::Entry]) -> Result<WinInfo, String> {
     let win = view.focused.as_ref().ok_or("No focused window")?;
     let classes = wm::apps::evidence("browser", catalog);
