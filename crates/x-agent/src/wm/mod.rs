@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 pub use report::{Doctor, Report, detect, doctor, report};
 
+const CHOICE_TTL: Duration = Duration::from_secs(30);
 const UNDO_DEPTH: usize = 16;
 const UNDO_TTL: Duration = Duration::from_secs(600);
 const VERIFY_TRIES: u32 = 12;
@@ -105,7 +106,15 @@ pub trait Backend: Send {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Choice {
     pub id: String,
+    pub pid: u32,
+    pub class: String,
     pub label: String,
+}
+
+struct PendingChoice {
+    at: Instant,
+    request: Request,
+    choices: Vec<Choice>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -133,7 +142,7 @@ impl fmt::Display for WmError {
                     .collect();
                 write!(
                     f,
-                    "Several windows match. Say the name with a number, like \"terminal 2\": {}",
+                    "Several windows match. Say the number (or use `hex agent choose N`) within 30 seconds: {}",
                     list.join("; ")
                 )
             }
@@ -227,6 +236,7 @@ pub struct Controller {
     catalog: fn() -> Vec<apps::Entry>,
     binds: fn() -> Vec<keys::Bind>,
     history: VecDeque<(Instant, Undo)>,
+    pending: Option<PendingChoice>,
     seen: Option<WinInfo>,
     previous: Option<WinInfo>,
 }
@@ -238,6 +248,7 @@ impl Controller {
             catalog: apps::load,
             binds: keys::load,
             history: VecDeque::new(),
+            pending: None,
             seen: None,
             previous: None,
         }
@@ -313,10 +324,11 @@ impl Controller {
     }
 
     pub fn run(&mut self, req: &Request) -> Result<Outcome, WmError> {
+        self.pending = None; // a newer task invalidates every old choice
         let all = self.backend.windows()?;
         let focused = self.focused_in(&all)?;
         self.note_focus(focused.as_ref());
-        match req.op {
+        let result = match req.op {
             Op::List => Ok(list(&all)),
             Op::Keys => Ok(Outcome {
                 message: keys::answer(&(self.binds)(), &req.target.app),
@@ -354,6 +366,62 @@ impl Controller {
                 out.message.push_str(&keys::hint("close", &(self.binds)()));
                 Ok(out)
             }
+        };
+        if let Err(WmError::Ambiguous(ref choices)) = result {
+            self.pending = Some(PendingChoice {
+                at: Instant::now(),
+                request: req.clone(),
+                choices: choices.clone(),
+            });
+        }
+        result
+    }
+
+    /// Stored options retain original id, pid and class. A subsequent window
+    /// opening or reordering cannot change the meaning of "two".
+    pub fn choices(&self) -> Vec<Choice> {
+        self.pending
+            .as_ref()
+            .filter(|p| p.at.elapsed() <= CHOICE_TTL)
+            .map_or_else(Vec::new, |p| p.choices.clone())
+    }
+
+    pub fn choose(&mut self, number: usize) -> Result<Outcome, WmError> {
+        let pending = self
+            .pending
+            .take()
+            .ok_or_else(|| WmError::NotFound("There is no pending window choice".into()))?;
+        if pending.at.elapsed() > CHOICE_TTL {
+            return Err(WmError::NotFound("Window choice expired; repeat the original command".into()));
+        }
+        let original = pending
+            .choices
+            .get(number.checked_sub(1).ok_or_else(|| WmError::NotFound("Choose a number starting at one".into()))?)
+            .ok_or_else(|| WmError::NotFound("No window has that number".into()))?;
+        // Re-observe *after* the person chooses. Never trust mutable list order.
+        let all = self.backend.windows()?;
+        let win = all
+            .iter()
+            .find(|w| {
+                w.id == original.id
+                    && w.pid == original.pid
+                    && w.class == original.class
+            })
+            .cloned()
+            .ok_or_else(|| WmError::NotFound("The selected window is gone".into()))?;
+        match pending.request.op {
+            Op::Focus => {
+                let focused = self.focused_in(&all)?;
+                self.focus(&win, focused)
+            }
+            Op::Move => {
+                let dest = self.target_ws(pending.request.ws.as_ref())?;
+                self.move_to(&win, dest)
+            }
+            Op::Maximize => self.maximize(&win),
+            Op::Minimize => self.minimize(&win),
+            Op::Close => self.close(&win),
+            _ => Err(WmError::Unsupported("This operation cannot have numbered choices".into())),
         }
     }
 
@@ -445,6 +513,8 @@ impl Controller {
                     .iter()
                     .map(|w| Choice {
                         id: w.id.clone(),
+                        pid: w.pid,
+                        class: w.class.clone(),
                         label: label(w),
                     })
                     .collect(),
@@ -750,6 +820,14 @@ fn with_controller<T>(f: impl FnOnce(&mut Controller) -> Result<T, WmError>) -> 
 
 pub fn run(req: &Request) -> Result<Outcome, WmError> {
     with_controller(|c| c.run(req))
+}
+
+pub fn choices() -> Result<Vec<Choice>, WmError> {
+    with_controller(|c| Ok(c.choices()))
+}
+
+pub fn choose(index: usize) -> Result<Outcome, WmError> {
+    with_controller(|c| c.choose(index))
 }
 
 pub fn focus_exact(id: &str, pid: u32, class: &str) -> Result<(), WmError> {
