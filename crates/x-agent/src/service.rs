@@ -14,11 +14,25 @@ use crate::context::{self, Context, Engine};
 use crate::hexcli::{Stt, SttError};
 use crate::opencode::{self, Canceller, Run, RunConfig, RunStatus};
 use crate::phase::Phase;
-use crate::tools::{self, Action};
+use crate::tools::{self, Action, Risk};
 
 mod edit;
 mod workflow;
 pub use edit::Preview;
+
+/// Human-facing impact is derived from the exact same exhaustive risk model
+/// that gates autonomous execution. A close must never be labelled a launch.
+fn action_risk_label(action: &Action) -> &'static str {
+    if matches!(action, Action::Computer { .. }) {
+        return "reads this app's screen, then may click or type";
+    }
+    match action.risk() {
+        Risk::Safe => "reads local desktop state",
+        Risk::Reversible => "changes desktop state; may be undoable",
+        Risk::Destructive => "closes a window; cannot be undone",
+        Risk::Consequential => "may type or act inside an application",
+    }
+}
 
 pub const MAX_INPUT: usize = 1500;
 const MAX_EVENTS: usize = 400;
@@ -677,11 +691,7 @@ impl Service {
                     .map(|a| Step {
                         title: a.describe(),
                         status: "pending".into(),
-                        risk: if matches!(a, Action::Computer { .. }) {
-                            "reads this app's screen, then clicks and types in it".into()
-                        } else {
-                            "launches an app".into()
-                        },
+                        risk: action_risk_label(a).into(),
                         detail: String::new(),
                     })
                     .collect();
@@ -843,6 +853,20 @@ impl Service {
             match result {
                 Ok(msg) if matches!(action, Action::Copy { .. }) => {
                     self.emit("result", &format!("{msg} (confirmed)"));
+                    self.set_step(i, "done");
+                    verified += 1;
+                }
+                Ok(msg) if matches!(action, Action::Window { .. }) => {
+                    if msg.contains("still open") {
+                        self.set_step(i, "failed");
+                        return self.finish(
+                            Phase::Failed,
+                            Some(format!("Window action was not verified: {msg}")),
+                            None,
+                            None,
+                        );
+                    }
+                    self.emit("result", &format!("{msg} (verified)"));
                     self.set_step(i, "done");
                     verified += 1;
                 }
