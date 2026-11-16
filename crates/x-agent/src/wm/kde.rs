@@ -19,7 +19,11 @@ const MAX_WINDOWS: usize = 200;
 
 /// Only the identity returned by KWin may reach a subsequent action.
 fn valid_id(id: &str) -> Result<&str, WmError> {
-    let bare = id.trim_start_matches('{').trim_end_matches('}');
+    let bare = match (id.strip_prefix('{'), id.strip_suffix('}')) {
+        (Some(_), Some(_)) => &id[1..id.len() - 1],
+        (None, None) => id,
+        _ => return Err(WmError::Backend("Invalid KWin window UUID".into())),
+    };
     let parts: Vec<&str> = bare.split('-').collect();
     let sizes = [8, 4, 4, 4, 12];
     if parts.len() != sizes.len()
@@ -143,16 +147,14 @@ fn request(cmd: &Cmd) -> Result<String, WmError> {
         Cmd::Close(id) => (select(id)?, "target.closeWindow();".to_string()),
     };
     // A no-op or an absent window must never be reported as success.
-    let guard = if prefix.is_empty() {
-        operation
+    if prefix.is_empty() {
+        Ok(format!("{operation}\noutput_result(JSON.stringify({{ok:true}}));"))
     } else {
-        format!(
-            "{prefix}\nif (!target) {{ output_error('Window is gone'); }} else {{ {operation} }}"
-        )
-    };
-    Ok(format!(
-        "{guard}\noutput_result(JSON.stringify({{ok:true}}));"
-    ))
+        // Never claim success after an invalid/stale KWin window target.
+        Ok(format!(
+            "{prefix}\nif (!target) {{ output_error('Window is gone'); }} else {{ {operation} output_result(JSON.stringify({{ok:true}})); }}"
+        ))
+    }
 }
 
 impl Backend for Kde {
@@ -230,6 +232,8 @@ mod tests {
             assert!(valid_id(bad).is_err(), "{bad:?}");
             assert!(request(&Cmd::Close(bad.into())).is_err());
         }
+        assert!(valid_id("{12345678-1234-1234-1234-123456789abc").is_err());
+        assert!(valid_id("12345678-1234-1234-1234-123456789abc}").is_err());
         assert!(valid_id(ID).is_ok());
         let code = request(&Cmd::Close(ID.into())).unwrap();
         assert!(code.contains("closeWindow"));
