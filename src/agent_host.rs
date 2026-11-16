@@ -531,10 +531,48 @@ pub fn intercept(text: &str) -> bool {
     plan_spoken(mode, &command)
 }
 
+/// A bare numbered answer is treated as a choice only during a pending
+/// owner-approved window disambiguation. Ordinary dictation stays untouched.
+fn spoken_window_number(text: &str) -> Option<usize> {
+    let lower = text.trim().trim_end_matches(['.', '!', '?']).to_ascii_lowercase();
+    let index = match lower.as_str() {
+        "1" | "one" | "first" | "number one" => 1,
+        "2" | "two" | "second" | "number two" => 2,
+        "3" | "three" | "third" | "number three" => 3,
+        "4" | "four" | "fourth" | "number four" => 4,
+        "5" | "five" | "fifth" | "number five" => 5,
+        "6" | "six" | "sixth" | "number six" => 6,
+        "7" | "seven" | "seventh" | "number seven" => 7,
+        "8" | "eight" | "eighth" | "number eight" => 8,
+        "9" | "nine" | "ninth" | "number nine" => 9,
+        "10" | "ten" | "tenth" | "number ten" => 10,
+        _ => return None,
+    };
+    Some(index)
+}
+
+fn follow_up_window_choice(text: &str) -> Option<Result<String, String>> {
+    let index = spoken_window_number(text)?;
+    let choices = x_agent::wm::choices().ok()?;
+    if choices.is_empty() {
+        return None;
+    }
+    Some(x_agent::wm::choose(index).map(|out| out.message).map_err(|e| e.to_string()))
+}
+
 /// Plans a spoken command. True when X took it; false when it was not a command X knows
 /// (the caller then types it as dictation, or drops it when it was heard hands-free).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn plan_spoken(mode: Mode, command: &str) -> bool {
+    if mode == Mode::Actions
+        && let Some(result) = follow_up_window_choice(command)
+    {
+        match result {
+            Ok(message) => service().emit("result", &message),
+            Err(error) => service().emit("error", &error),
+        }
+        return true;
+    }
     match service().plan_spoken(command, mode) {
         Ok(_) => true,
         Err(error) if error.starts_with("Not understood") && mode == Mode::Actions => {
@@ -745,7 +783,19 @@ pub fn handle(action: AgentAction) -> ControlReply {
                 })
             }
         },
-        AgentAction::Say { text, mode } => match Mode::parse(&mode) {
+        AgentAction::Say { text, mode } => {
+            if mode == "actions"
+                && let Some(result) = follow_up_window_choice(&text)
+            {
+                return match result {
+                    Ok(message) => {
+                        svc.emit("result", &message);
+                        ControlReply::done(message)
+                    }
+                    Err(error) => ControlReply::error("refused", error),
+                };
+            }
+            match Mode::parse(&mode) {
             Err(error) => ControlReply::error("usage", error),
             Ok(mode) if mode == Mode::Actions && svc.needs_model(&text) => {
                 background(move |svc| {
@@ -759,14 +809,21 @@ pub fn handle(action: AgentAction) -> ControlReply {
                 Ok(_) => snapshot(0),
                 Err(error) => ControlReply::error("refused", error),
             },
-        },
+            }
+        }
         AgentAction::Approve { id } => match svc.approve(id) {
             Ok(()) => ControlReply::done("Approved; running"),
             Err(error) => ControlReply::error("refused", error),
         },
         AgentAction::Choose { index } => match x_agent::wm::choose(usize::from(index)) {
-            Ok(outcome) => ControlReply::done(outcome.message),
-            Err(error) => ControlReply::error("refused", error.to_string()),
+            Ok(outcome) => {
+                svc.emit("result", &outcome.message);
+                ControlReply::done(outcome.message)
+            }
+            Err(error) => {
+                svc.emit("error", &error.to_string());
+                ControlReply::error("refused", error.to_string())
+            }
         },
         AgentAction::Undo => {
             use x_agent::wm::{Op, Request, Target};
@@ -915,6 +972,16 @@ mod tests {
         }
         for model in ["decider", "decider-flash"] {
             assert!(planner_for(model).is_some());
+        }
+    }
+
+    #[test]
+    fn spoken_choice_only_accepts_a_bare_number_not_prose() {
+        assert_eq!(spoken_window_number("two"), Some(2));
+        assert_eq!(spoken_window_number("number three."), Some(3));
+        assert_eq!(spoken_window_number("second"), Some(2));
+        for text in ["the number two", "I saw two terminals", "close the second window"] {
+            assert_eq!(spoken_window_number(text), None);
         }
     }
 
