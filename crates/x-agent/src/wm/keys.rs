@@ -223,10 +223,18 @@ fn parse_live_hyprland(text: &str) -> Vec<Bind> {
             let mask = entry.get("modmask")?.as_u64()?;
             let key = entry.get("key")?.as_str()?.trim();
             let action = entry.get("dispatcher")?.as_str()?.trim();
-            let arg = entry.get("arg").and_then(serde_json::Value::as_str).unwrap_or("");
-            if key.is_empty() || key.chars().count() > 64
-                || action.is_empty() || action.starts_with("__")
-                || entry.get("submap").and_then(serde_json::Value::as_str).is_some_and(|s| !s.is_empty())
+            let arg = entry
+                .get("arg")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            if key.is_empty()
+                || key.chars().count() > 64
+                || action.is_empty()
+                || action.starts_with("__")
+                || entry
+                    .get("submap")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|s| !s.is_empty())
             {
                 return None;
             }
