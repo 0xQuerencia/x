@@ -109,6 +109,13 @@ fn check_windows_split() {
 
 fn build_version() {
     println!("cargo:rerun-if-env-changed=HEX_VERSION");
+    println!("cargo:rerun-if-env-changed=X_BUILD");
+    let x = std::env::var("X_BUILD").as_deref() == Ok("1");
+    let (product, original_name, internal_name) = if x {
+        ("X", "x.exe", "x")
+    } else {
+        ("Hex", "hex.exe", "hex")
+    };
     let version = std::env::var("CARGO_PKG_VERSION").unwrap();
     // CI builds name their version in HEX_VERSION and check `hex --version`
     // against it, test builds included (they name the crate version).
@@ -223,12 +230,12 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "FileDescription", "Hex"
-      VALUE "ProductName", "Hex"
+      VALUE "FileDescription", "{product}"
+      VALUE "ProductName", "{product}"
       VALUE "FileVersion", "{version}"
       VALUE "ProductVersion", "{version}"
-      VALUE "OriginalFilename", "hex.exe"
-      VALUE "InternalName", "hex"
+      VALUE "OriginalFilename", "{original_name}"
+      VALUE "InternalName", "{internal_name}"
     END
   END
   BLOCK "VarFileInfo"
@@ -238,6 +245,9 @@ BEGIN
 END
 "#,
         icon = icon.display().to_string().replace('\\', "/"),
+        product = product,
+        original_name = original_name,
+        internal_name = internal_name,
     );
     let resource = output_dir.join("hex.rc");
     std::fs::write(&resource, script).expect("write the Windows resource script");
