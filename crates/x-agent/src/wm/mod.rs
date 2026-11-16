@@ -11,9 +11,9 @@ pub mod keys;
 pub mod parse;
 mod report;
 mod speech;
-mod x11;
 #[cfg(windows)]
 mod win11;
+mod x11;
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -616,7 +616,9 @@ impl Controller {
                 std::thread::sleep(Duration::from_millis(60));
             }
             if !restored {
-                return Err(WmError::Unverified("Restoring the window did not take effect".into()));
+                return Err(WmError::Unverified(
+                    "Restoring the window did not take effect".into(),
+                ));
             }
         }
         let id = win.id.clone();
@@ -758,7 +760,10 @@ impl Controller {
                 self.backend.restore_minimized(&old)?;
                 let mut restored = false;
                 for _ in 0..VERIFY_TRIES {
-                    if self.window(&old.id).is_some_and(|w| !w.minimized && w.place == old.place) {
+                    if self
+                        .window(&old.id)
+                        .is_some_and(|w| !w.minimized && w.place == old.place)
+                    {
                         restored = true;
                         break;
                     }
