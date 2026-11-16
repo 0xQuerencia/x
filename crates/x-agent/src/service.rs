@@ -586,7 +586,10 @@ impl Service {
         let task = self.plan_task(text, mode, preset)?;
         self.emit(
             "timing",
-            &format!("phase=plan elapsed_ms={}", planning_started.elapsed().as_millis()),
+            &format!(
+                "phase=plan elapsed_ms={}",
+                planning_started.elapsed().as_millis()
+            ),
         );
         {
             let mut state = self.lock();
