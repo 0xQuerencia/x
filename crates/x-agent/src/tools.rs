@@ -104,14 +104,6 @@ pub enum Action {
     Type {
         text: String,
     },
-    /// Brings an already-open allowlisted app's window to the front (Hyprland).
-    Focus {
-        target: String,
-    },
-    /// Switches to workspace 1-10 (Hyprland).
-    Workspace {
-        number: u8,
-    },
     /// Focus, move, maximize, minimize, close or list real windows through the desktop's
     /// window manager, verified and undoable where the desktop allows.
     Window {
@@ -200,8 +192,6 @@ impl Action {
             | Self::App { .. }
             | Self::Url { .. }
             | Self::Search { .. }
-            | Self::Focus { .. }
-            | Self::Workspace { .. }
             | Self::Opencode
             | Self::Copy { .. }
             | Self::Terminal { .. }
@@ -227,8 +217,6 @@ impl Action {
                     text.chars().count()
                 )
             }
-            Self::Focus { target } => format!("Switch to {target}"),
-            Self::Workspace { number } => format!("Go to workspace {number}"),
             Self::Window { op, target, ws } => {
                 let who = if target.app.is_empty() {
                     "the focused window".to_string()
@@ -287,14 +275,6 @@ impl Action {
             Self::Copy { text } => crate::clipboard::validate(text)?,
             Self::Terminal { directory } | Self::Folder { directory } => {
                 crate::workflows::paths::check(directory, &crate::workflows::paths::home()?)?;
-            }
-            Self::Focus { target } => {
-                lookup(APPS, target).ok_or("Unapproved app")?;
-            }
-            Self::Workspace { number } => {
-                if !(1..=10).contains(number) {
-                    return Err("Workspace must be 1-10".into());
-                }
             }
             Self::Window { op, target, ws } => {
                 // A name or role such as "browser", matched only against open windows.
@@ -377,22 +357,6 @@ impl Action {
                     crate::wm::apps::installed(target).ok_or("The application is not installed")?;
                 crate::wm::apps::launch_argv(&app, resolve)
             }
-            Self::Focus { target } => {
-                let names = lookup(APPS, target).ok_or("Unapproved app")?;
-                let class = format!("class:^({})$", names.join("|"));
-                Ok(vec![
-                    resolve("hyprctl").ok_or("hyprctl not found")?,
-                    "dispatch".into(),
-                    "focuswindow".into(),
-                    class,
-                ])
-            }
-            Self::Workspace { number } => Ok(vec![
-                resolve("hyprctl").ok_or("hyprctl not found")?,
-                "dispatch".into(),
-                "workspace".into(),
-                number.to_string(),
-            ]),
             Self::Window { .. } => Err("Window commands run through the window controller".into()),
             Self::Screenshot { .. } => {
                 Err("Screenshots are handled locally, never launched as a command".into())
@@ -483,18 +447,6 @@ impl Action {
             } else {
                 Err("wtype could not type into the focused window".into())
             };
-        }
-        if let Self::Focus { target } = &valid {
-            let names = lookup(APPS, target).ok_or("Unapproved app")?;
-            let lua = format!(
-                "hl.dsp.focus({{ window = \"class:^({})$\" }})",
-                names.join("|")
-            );
-            return desktop_step(exe, args, &lua).and_then(|()| confirm_focus(target));
-        }
-        if let Self::Workspace { number } = &valid {
-            let lua = format!("hl.dsp.focus({{ workspace = \"{number}\" }})");
-            return desktop_step(exe, args, &lua).and_then(|()| confirm_workspace(*number));
         }
         let mut cmd = Command::new(exe);
         cmd.args(args)
@@ -606,35 +558,6 @@ pub(crate) fn desktop_step(exe: &str, legacy: &[String], lua: &str) -> Result<()
         }
     }
     Err(format!("The desktop refused: {last}"))
-}
-
-fn hypr_json(args: &[&str]) -> Option<serde_json::Value> {
-    crate::desktop::hypr(args).ok()
-}
-
-/// Polls up to two seconds so the answer reflects the desktop, not just the dispatch.
-fn confirm_focus(target: &str) -> Result<String, String> {
-    let names = lookup(APPS, target).ok_or("Unapproved app")?;
-    for _ in 0..10 {
-        let class = hypr_json(&["activewindow", "-j"])
-            .and_then(|j| j.get("class")?.as_str().map(str::to_ascii_lowercase));
-        if class.is_some_and(|c| names.iter().any(|n| c.contains(&n.to_ascii_lowercase()))) {
-            return Ok(format!("Switched to {target}"));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-    Err(format!("No open {target} window took focus"))
-}
-
-fn confirm_workspace(number: u8) -> Result<String, String> {
-    for _ in 0..10 {
-        let id = hypr_json(&["activeworkspace", "-j"]).and_then(|j| j.get("id")?.as_u64());
-        if id == Some(u64::from(number)) {
-            return Ok(format!("Now on workspace {number}"));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-    Err(format!("Workspace {number} did not become active"))
 }
 
 fn with_browser(base: String, browser: &str) -> String {
@@ -955,12 +878,25 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
         if let Some(number) =
             strip_prefix_ci(rest, &["workspace"]).and_then(|n| n.trim().parse::<u8>().ok())
         {
-            return Action::Workspace { number }
-                .validate()
-                .ok()
-                .map(|a| vec![a]);
+            return Action::Window {
+                op: crate::wm::Op::Workspace,
+                target: crate::wm::Target::default(),
+                ws: Some(crate::wm::Ws::N(number)),
+            }
+            .validate()
+            .ok()
+            .map(|a| vec![a]);
         }
-        return normalize_app(rest).map(|app| vec![Action::Focus { target: app.into() }]);
+        return normalize_app(rest).map(|app| {
+            vec![Action::Window {
+                op: crate::wm::Op::Focus,
+                target: crate::wm::Target {
+                    app: app.into(),
+                    pick: None,
+                },
+                ws: None,
+            }]
+        });
     }
     if let Some(rest) = strip_prefix_ci(text, &["type", "write"]) {
         let typed = rest.trim().trim_matches(['"', '\'', '“', '”']).trim();
@@ -1043,9 +979,9 @@ fn split_steps(text: &str) -> Vec<String> {
 }
 
 fn focused() -> Option<(String, u32)> {
-    let json = hypr_json(&["activewindow", "-j"])?;
-    let address = json.get("address")?.as_str()?.to_string();
-    Some((address, u32::try_from(json.get("pid")?.as_u64()?).ok()?))
+    let view = crate::wm::view().ok()?;
+    let focused = view.focused?;
+    Some((focused.id, focused.pid))
 }
 
 /// Waits up to six seconds for the window of the process X just started to take focus.
@@ -1134,8 +1070,9 @@ pub fn parse_reply(raw: &str) -> Result<Reply, String> {
 /// Parse untrusted planner JSON (`{"steps":[...]}`) into validated actions.
 pub fn parse_plan_json(raw: &str) -> Result<Vec<Action>, String> {
     #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct Plan {
-        steps: Vec<Action>,
+        steps: Vec<serde_json::Value>,
     }
     if raw.len() > 100_000 {
         return Err("Planner output too large".into());
@@ -1145,7 +1082,54 @@ pub fn parse_plan_json(raw: &str) -> Result<Vec<Action>, String> {
     if plan.steps.len() > MAX_STEPS {
         return Err("Planner exceeded maximum allowed steps".into());
     }
-    plan.steps.into_iter().map(Action::validate).collect()
+    plan.steps
+        .into_iter()
+        .map(|step| {
+            use crate::wm::{Op, Target, Ws};
+            let action = match step.get("kind").and_then(serde_json::Value::as_str) {
+                Some("focus") => {
+                    if step.as_object().is_none_or(|fields| fields.len() != 2) {
+                        return Err("Legacy focus has unexpected fields".into());
+                    }
+                    let app = step
+                        .get("target")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or("Legacy focus lacks a target")?;
+                    if lookup(APPS, app).is_none() {
+                        return Err("Unapproved legacy focus target".into());
+                    }
+                    Action::Window {
+                        op: Op::Focus,
+                        target: Target {
+                            app: app.into(),
+                            pick: None,
+                        },
+                        ws: None,
+                    }
+                }
+                Some("workspace") => {
+                    if step.as_object().is_none_or(|fields| fields.len() != 2) {
+                        return Err("Legacy workspace has unexpected fields".into());
+                    }
+                    let number = step
+                        .get("number")
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|n| u8::try_from(n).ok())
+                        .filter(|n| (1..=10).contains(n))
+                        .ok_or("Legacy workspace must be 1-10")?;
+                    Action::Window {
+                        op: Op::Workspace,
+                        target: Target::default(),
+                        ws: Some(Ws::N(number)),
+                    }
+                }
+                _ => {
+                    serde_json::from_value(step).map_err(|e| format!("Unsupported action: {e}"))?
+                }
+            };
+            action.validate()
+        })
+        .collect()
 }
 
 #[cfg(test)]
