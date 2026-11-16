@@ -265,17 +265,25 @@ mod tests {
     #[test]
     fn refuses_symlinks_and_world_readable_logs() {
         use std::os::unix::fs::{symlink, PermissionsExt};
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("target.json");
-        let link = tmp.path().join("link.json");
+        let tmp = std::env::temp_dir().join(format!(
+            "x-heard-test-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let target = tmp.join("target.json");
+        let link = tmp.join("link.json");
         symlink(&target, &link).unwrap();
         assert!(read(&link).is_err());
         assert!(write(&link, &Store::default()).is_err());
-        let file = tmp.path().join("private.json");
+        let file = tmp.join("private.json");
         write(&file, &Store::default()).unwrap();
         assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o077, 0);
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(read(&file).is_err());
+        std::fs::remove_file(&link).unwrap();
+        std::fs::remove_file(&file).unwrap();
+        std::fs::remove_dir(&tmp).unwrap();
     }
 
     #[test]
