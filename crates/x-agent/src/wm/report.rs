@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::hypr::Hypr;
 use super::i3::I3;
+use super::kde::Kde;
 use super::x11::X11;
 use super::{Backend, Cap};
 
@@ -42,6 +43,19 @@ pub fn detect() -> Result<Box<dyn Backend>, String> {
             label: "i3",
         }));
     }
+    // KDE Plasma 6's window API is exposed only through KWin scripting.
+    // kdotool runs a bounded script over the session D-Bus, then stops it.
+    // Never treat a nested XWayland DISPLAY as a native window manager.
+    if env("XDG_SESSION_TYPE").eq_ignore_ascii_case("wayland")
+        && env("XDG_CURRENT_DESKTOP")
+            .to_ascii_lowercase()
+            .contains("kde")
+        && has("kdotool")
+        && !env("DBUS_SESSION_BUS_ADDRESS").is_empty()
+        && env("X_ENABLE_EXPERIMENTAL_KDE") == "1"
+    {
+        return Ok(Box::new(Kde));
+    }
     // Avoid mistaking XWayland's DISPLAY for the real window-management
     // session. Only a native X11 session gets this EWMH backend.
     if env("XDG_SESSION_TYPE").eq_ignore_ascii_case("x11")
@@ -59,7 +73,7 @@ fn unsupported_note() -> String {
     let why = if env("XDG_SESSION_TYPE").eq_ignore_ascii_case("x11") {
         "X11 window control requires an active DISPLAY and the wmctrl and xprop helpers"
     } else if desktop.contains("kde") {
-        "KDE Plasma needs a KWin scripting backend, which X does not have yet"
+        "KDE Plasma 6 Wayland control is experimental and disabled by default; install kdotool, ensure session D-Bus is active, then explicitly set X_ENABLE_EXPERIMENTAL_KDE=1 to test"
     } else if desktop.contains("gnome") {
         "GNOME Wayland exposes no window control to other apps; X has no extension backend yet"
     } else {
@@ -106,12 +120,14 @@ fn probe_with(backend: &str, has: impl Fn(&str) -> bool) -> Vec<DoctorCheck> {
     let hyprland = backend == "Hyprland";
     let wayland = hyprland || backend == "Sway";
     let x11 = backend == "X11 EWMH";
+    let kde = backend == "KDE Plasma 6";
     [
         (
             "hyprctl",
             "Hyprland window inspection and control",
             hyprland,
         ),
+        ("kdotool", "KWin Plasma 6 scripting over D-Bus", kde),
         ("wmctrl", "EWMH X11 window control", x11),
         ("xprop", "X11 window identity and state verification", x11),
         ("xdotool", "Optional X11 window minimization", false),
@@ -271,9 +287,24 @@ mod doctor_tests {
     }
 
     #[test]
+    fn kde_requires_kwin_bridge_but_not_hyprland() {
+        let checks = probe_with("KDE Plasma 6", |bin| bin != "kdotool");
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.dependency == "kdotool" && c.required && !c.installed)
+        );
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.dependency == "hyprctl" && !c.required)
+        );
+    }
+
+    #[test]
     fn probe_lists_all_known_helpers_without_running_them() {
         let checks = probe_with("Hyprland", |_| true);
-        assert_eq!(checks.len(), 11);
+        assert_eq!(checks.len(), 12);
         assert!(checks.iter().all(|c| c.installed));
         assert!(checks.iter().any(|c| c.dependency == "curl"));
     }

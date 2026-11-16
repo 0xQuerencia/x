@@ -6,6 +6,7 @@
 pub mod apps;
 mod hypr;
 mod i3;
+mod kde;
 pub mod keys;
 pub mod parse;
 mod report;
