@@ -99,6 +99,11 @@ pub enum Action {
     Screenshot {
         mode: String,
     },
+    /// Validated local system control. Remote models cannot deserialize it.
+    #[serde(skip_deserializing)]
+    System {
+        op: crate::sys::Op,
+    },
     /// Types plain text into the focused window. Never Enter or any control key, so
     /// nothing typed here can run on its own.
     Type {
@@ -174,6 +179,9 @@ impl Action {
         use crate::wm::Op;
         match self {
             Self::Window { op: Op::Close, .. } => Risk::Destructive,
+            Self::System {
+                op: crate::sys::Op::Next | crate::sys::Op::Previous,
+            } => Risk::Consequential,
             Self::Window {
                 op: Op::List | Op::Keys,
                 ..
@@ -195,7 +203,8 @@ impl Action {
             | Self::Opencode
             | Self::Copy { .. }
             | Self::Terminal { .. }
-            | Self::Folder { .. } => Risk::Reversible,
+            | Self::Folder { .. }
+            | Self::System { .. } => Risk::Reversible,
             Self::Screenshot { .. }
             | Self::Type { .. }
             | Self::Session { .. }
@@ -207,6 +216,7 @@ impl Action {
         match self {
             Self::App { target } => format!("Open {target}"),
             Self::Screenshot { mode } => format!("Save {mode} screenshot locally"),
+            Self::System { op } => format!("System control {op:?}"),
             Self::Type { text } => format!("Type \"{text}\" into the focused window"),
             Self::Opencode => "Open OpenCode in a new temporary folder".to_string(),
             Self::Terminal { directory } => format!("Open a terminal in {directory}"),
@@ -271,6 +281,14 @@ impl Action {
             Self::Opencode => {}
             Self::Screenshot { mode } => {
                 crate::screenshots::Mode::parse(mode)?;
+            }
+            Self::System { op } => {
+                if matches!(
+                    op,
+                    crate::sys::Op::SetVolume(v) | crate::sys::Op::SetBrightness(v) if *v > 100
+                ) {
+                    return Err("System percentage must be 0-100".into());
+                }
             }
             Self::Copy { text } => crate::clipboard::validate(text)?,
             Self::Terminal { directory } | Self::Folder { directory } => {
@@ -361,6 +379,7 @@ impl Action {
             Self::Screenshot { .. } => {
                 Err("Screenshots are handled locally, never launched as a command".into())
             }
+            Self::System { .. } => Err("System controls run locally".into()),
             Self::Copy { .. } => Err("Copy runs through the clipboard helper".into()),
             Self::Terminal { directory } => {
                 terminal_argv(std::path::Path::new(directory), None, resolve)
@@ -418,6 +437,9 @@ impl Action {
                     }
                 })
                 .map_err(|e| e.to_string());
+        }
+        if let Self::System { op } = &valid {
+            return crate::sys::execute(*op, &crate::sys::Local);
         }
         if let Self::Copy { text } = &valid {
             return crate::clipboard::copy(text);
@@ -812,6 +834,9 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
     }
     if let Some(shot) = screenshot_request(text) {
         return Some(vec![shot]);
+    }
+    if let Some(op) = crate::sys::parse(text) {
+        return Some(vec![Action::System { op }]);
     }
     let mut browser = String::new();
     let mut search_text = text.to_string();
