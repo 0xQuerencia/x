@@ -1,7 +1,6 @@
-//! What is installed, from the XDG desktop entries every Linux desktop already keeps, so
-//! "the browser", "the terminal" or "spotify" reach the right windows without an app list
-//! baked into X. Entry text is data only: it is matched against window classes and never
-//! executed or shown as a command.
+//! Installed applications: XDG desktop entries on Linux and Start Menu links on Windows.
+//! Names map to actual installed apps, not a list baked into X. Catalog strings
+//! are evidence only; neither speech nor filenames are executed as shell code.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -168,6 +167,7 @@ pub fn parse_entry(id: &str, text: &str) -> Option<Entry> {
     Some(entry)
 }
 
+#[cfg(not(windows))]
 fn dirs() -> Vec<PathBuf> {
     let home = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -204,6 +204,7 @@ fn dirs() -> Vec<PathBuf> {
 
 /// Scan paths with a global cap, including one level of real subdirectories.
 /// Follow desktop-entry *file* symlinks, but never recursively follow directories.
+#[cfg(not(windows))]
 fn scan_paths(paths: &[PathBuf]) -> Vec<Entry> {
     fn walk(dir: &std::path::Path, depth: u8, out: &mut Vec<Entry>, seen: &mut usize) {
         let Ok(read) = std::fs::read_dir(dir) else {
@@ -248,6 +249,12 @@ fn scan_paths(paths: &[PathBuf]) -> Vec<Entry> {
     out
 }
 
+#[cfg(windows)]
+fn scan() -> Vec<Entry> {
+    super::windows_apps::scan()
+}
+
+#[cfg(not(windows))]
 fn scan() -> Vec<Entry> {
     scan_paths(&dirs())
 }
@@ -270,8 +277,34 @@ fn installed_in(name: &str, entries: &[Entry]) -> Option<Entry> {
     matches.next().is_none().then_some(found)
 }
 
-/// GLib parses Exec, file placeholders, quoting and Flatpak launch wrappers
-/// according to the Desktop Entry specification. Nothing reaches a shell.
+/// Windows resolves a .lnk through Explorer, not through a command shell.
+#[cfg(windows)]
+pub fn launch_argv(
+    entry: &Entry,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Result<Vec<String>, String> {
+    if entry.id.is_empty()
+        || !entry.path.is_absolute()
+        || !entry.path.is_file()
+        || !entry.path.extension().is_some_and(|e| e.eq_ignore_ascii_case("lnk"))
+    {
+        return Err("Installed Windows app must have a valid .lnk shortcut".into());
+    }
+    let explorer = resolve("explorer.exe")
+        .or_else(|| {
+            std::env::var_os("SystemRoot").map(|root| {
+                PathBuf::from(root)
+                    .join("explorer.exe")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+        })
+        .ok_or("Windows Explorer could not be found")?;
+    Ok(vec![explorer, entry.path.to_string_lossy().into_owned()])
+}
+
+/// GLib parses Exec and Flatpak launch wrappers on Linux; no shell is used.
+#[cfg(not(windows))]
 pub fn launch_argv(
     entry: &Entry,
     resolve: &dyn Fn(&str) -> Option<String>,
