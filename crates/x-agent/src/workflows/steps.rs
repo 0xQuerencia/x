@@ -303,10 +303,7 @@ fn run_phrase(phrase: &str, host: &dyn Host) -> StepResult {
         if let Err(e) = action.clone().validate() {
             return StepResult::failed(e);
         }
-        if !matches!(
-            action,
-            Action::Window { .. } | Action::Workspace { .. } | Action::Focus { .. }
-        ) {
+        if !matches!(action, Action::Window { .. }) {
             verified = false;
         }
         if let Err(e) = host.launch(action) {
