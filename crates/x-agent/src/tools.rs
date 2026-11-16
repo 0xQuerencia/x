@@ -424,8 +424,16 @@ impl Action {
             Self::Computer { .. } => Err("Computer steps run through the observe loop".into()),
             Self::Opencode => opencode_argv(&session_dir("opencode"), resolve),
             Self::Type { text } => {
-                let typer = resolve("wtype").ok_or("wtype not found (install wtype)")?;
-                Ok(vec![typer, "--".into(), text.clone()])
+                #[cfg(windows)]
+                {
+                    let _ = text;
+                    Err("Windows typing is a native action and has no command argv".into())
+                }
+                #[cfg(not(windows))]
+                {
+                    let typer = resolve("wtype").ok_or("wtype not found (install wtype)")?;
+                    Ok(vec![typer, "--".into(), text.clone()])
+                }
             }
             Self::Url { target, browser } => {
                 browser_or_opener(browser, safe_url(target)?.to_string())
@@ -486,6 +494,10 @@ impl Action {
             let mode = crate::screenshots::Mode::parse(mode)?;
             return crate::screenshots::save(mode, None)
                 .map(|file| format!("Screenshot saved to {}", file.display()));
+        }
+        #[cfg(windows)]
+        if let Self::Type { text } = &valid {
+            return crate::windows_input::type_text(text);
         }
         let argv = if matches!(valid, Self::Opencode) {
             let dir = session_dir("opencode");
