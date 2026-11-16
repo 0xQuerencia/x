@@ -29,6 +29,10 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 pub use report::{Doctor, Report, detect, doctor, report};
+#[cfg(windows)]
+pub(crate) fn native_handle(id: &str) -> Option<usize> {
+    win11::parse_id(id).map(|(handle, _)| handle)
+}
 
 const CHOICE_TTL: Duration = Duration::from_secs(30);
 const UNDO_DEPTH: usize = 16;

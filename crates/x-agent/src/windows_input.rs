@@ -38,6 +38,83 @@ unsafe extern "system" {
     fn GetForegroundWindow() -> *mut c_void;
 }
 
+fn virtual_key(key: u16, up: bool) -> Input {
+    Input {
+        kind: INPUT_KEYBOARD,
+        data: InputData {
+            keyboard: KeybdInput {
+                vk: key,
+                scan: 0,
+                flags: if up { KEYEVENTF_KEYUP } else { 0 },
+                time: 0,
+                extra: 0,
+            },
+        },
+    }
+}
+
+pub(crate) fn browser_hotkey(
+    op: crate::browser_tab::Op,
+    expected_hwnd: usize,
+) -> Result<(), String> {
+    const CTRL: u16 = 0x11;
+    const SHIFT: u16 = 0x10;
+    const T: u16 = 0x54;
+    const W: u16 = 0x57;
+
+    // The caller validated the foreground window against an installed
+    // browser and re-observed its exact identity. Recheck immediately before
+    // input is injected; no arbitrary key strings can reach this function.
+    if (unsafe { GetForegroundWindow() } as usize) != expected_hwnd || expected_hwnd == 0 {
+        return Err("Focus changed before the browser shortcut".into());
+    }
+    let events = match op {
+        crate::browser_tab::Op::New => vec![
+            virtual_key(CTRL, false),
+            virtual_key(T, false),
+            virtual_key(T, true),
+            virtual_key(CTRL, true),
+        ],
+        crate::browser_tab::Op::Close => vec![
+            virtual_key(CTRL, false),
+            virtual_key(W, false),
+            virtual_key(W, true),
+            virtual_key(CTRL, true),
+        ],
+        crate::browser_tab::Op::Reopen => vec![
+            virtual_key(CTRL, false),
+            virtual_key(SHIFT, false),
+            virtual_key(T, false),
+            virtual_key(T, true),
+            virtual_key(SHIFT, true),
+            virtual_key(CTRL, true),
+        ],
+    };
+    // SAFETY: one bounded, fixed-key shortcut batch; SendInput inserts the
+    // events serially. The OS refuses inaccessible elevated applications.
+    let sent = unsafe {
+        SendInput(
+            events.len() as u32,
+            events.as_ptr(),
+            std::mem::size_of::<Input>() as i32,
+        )
+    };
+    if sent != events.len() as u32 {
+        // Best effort to release modifiers if Windows partially accepted
+        // a shortcut. Never send a text/Enter/action key as a fallback.
+        let release = [virtual_key(SHIFT, true), virtual_key(CTRL, true)];
+        unsafe {
+            SendInput(
+                release.len() as u32,
+                release.as_ptr(),
+                std::mem::size_of::<Input>() as i32,
+            )
+        };
+        return Err("Windows did not accept the complete browser shortcut".into());
+    }
+    Ok(())
+}
+
 fn stroke(unit: u16, key_up: bool) -> Input {
     Input {
         kind: INPUT_KEYBOARD,
