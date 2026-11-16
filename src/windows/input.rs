@@ -18,13 +18,14 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG,
     MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, SetWindowsHookExW,
-    UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN,
-    WM_SYSKEYUP,
+    UnhookWindowsHookEx, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 use crate::app_settings::{HotkeyBinding, HotkeyKey, HotkeyModifiers, ModifierSide};
 use crate::audio::CaptureInstant;
 use crate::dictation::ShortcutMode;
+
+mod rearm;
 
 /// The focused application's executable stem (e.g. "chrome"), lowercased,
 /// for per-application dictation modes and history entries.
@@ -577,9 +578,8 @@ fn run_hook(mut initial: CallbackState, ready: SyncSender<Result<u32, String>>) 
         *state = Some(initial);
     }
 
-    let hook =
-        unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), ptr::null_mut(), 0) };
-    if hook.is_null() {
+    let hooks = rearm::KeyboardHooks::install();
+    if hooks.keyboard().is_null() {
         CALLBACK_STATE
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -593,9 +593,7 @@ fn run_hook(mut initial: CallbackState, ready: SyncSender<Result<u32, String>>) 
     let mouse = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), ptr::null_mut(), 0) };
     if mouse.is_null() {
         let error = std::io::Error::last_os_error();
-        unsafe {
-            UnhookWindowsHookEx(hook);
-        }
+        hooks.uninstall();
         CALLBACK_STATE
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -606,8 +604,8 @@ fn run_hook(mut initial: CallbackState, ready: SyncSender<Result<u32, String>>) 
         return;
     }
     if ready.send(Ok(thread_id)).is_err() {
+        hooks.uninstall();
         unsafe {
-            UnhookWindowsHookEx(hook);
             UnhookWindowsHookEx(mouse);
         }
         CALLBACK_STATE
@@ -629,11 +627,12 @@ fn run_hook(mut initial: CallbackState, ready: SyncSender<Result<u32, String>>) 
             ));
             break;
         }
+        rearm::KeyboardHooks::on_message(&message);
     }
     unsafe {
-        UnhookWindowsHookEx(hook);
         UnhookWindowsHookEx(mouse);
     }
+    hooks.uninstall();
     CALLBACK_STATE
         .lock()
         .unwrap_or_else(|error| error.into_inner())
