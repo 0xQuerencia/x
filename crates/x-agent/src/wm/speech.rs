@@ -111,7 +111,9 @@ fn runtime_name(word: &str, entries: &[super::apps::Entry]) -> Option<String> {
         .filter(|name| {
             name.chars().count() >= 6
                 && name.chars().count() <= 40
-                && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
         });
     let mut found = None::<String>;
     for name in names {
@@ -157,7 +159,9 @@ pub fn fix_with(heard: &str, entries: &[super::apps::Entry]) -> String {
         .filter(|name| {
             name.chars().count() >= 6
                 && name.chars().count() <= 40
-                && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
         })
         .collect();
     let mut joined = Vec::with_capacity(words.len());
