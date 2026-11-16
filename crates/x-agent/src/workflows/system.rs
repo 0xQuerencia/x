@@ -60,6 +60,10 @@ impl Host for SystemHost {
         wm::move_exact(&w.id, w.pid, &w.class, to).map_err(text)
     }
 
+    fn close_window(&self, w: &WinInfo) -> Result<(), String> {
+        wm::close_exact(&w.id, w.pid, &w.class).map_err(text)
+    }
+
     fn permit(&self, _action: &crate::workflows::StepAction) -> bool {
         // Only the command line and live tests use this host, and both are explicit runs.
         true

@@ -24,11 +24,12 @@ pub(super) enum Kind {
     SwitchWorkspace,
     MoveWindow,
     WaitForWindow,
+    CloseOpenedWindow,
     RunAction,
     Opencode,
 }
 
-const KINDS: [Kind; 10] = [
+const KINDS: [Kind; 11] = [
     Kind::OpenApp,
     Kind::OpenTerminal,
     Kind::OpenDirectory,
@@ -37,6 +38,7 @@ const KINDS: [Kind; 10] = [
     Kind::SwitchWorkspace,
     Kind::MoveWindow,
     Kind::WaitForWindow,
+    Kind::CloseOpenedWindow,
     Kind::RunAction,
     Kind::Opencode,
 ];
@@ -52,6 +54,7 @@ impl Kind {
             Self::SwitchWorkspace => "Switch workspace",
             Self::MoveWindow => "Move window",
             Self::WaitForWindow => "Wait for window",
+            Self::CloseOpenedWindow => "Close window opened by earlier step",
             Self::RunAction => "Run X action",
             Self::Opencode => "OpenCode task",
         }
@@ -86,6 +89,7 @@ impl Kind {
             Self::OpenTerminal | Self::OpenDirectory => Some("~/projects/my-project"),
             Self::OpenUrl => Some("https://github.com"),
             Self::RunAction => Some("search github for rust lifetimes"),
+            Self::CloseOpenedWindow => Some("step-1 (earlier opening step ID)"),
             Self::Opencode => Some("What OpenCode should do"),
             _ => None,
         }
@@ -170,6 +174,10 @@ impl StepEd {
                 ed.kind = Kind::WaitForWindow;
                 ed.app = app_index(app);
             }
+            StepAction::CloseOpenedWindow { opened_by } => {
+                ed.kind = Kind::CloseOpenedWindow;
+                ed.text.text = opened_by.clone();
+            }
             StepAction::RunAction { phrase } => {
                 ed.kind = Kind::RunAction;
                 ed.text.text = phrase.clone();
@@ -221,6 +229,9 @@ impl StepEd {
             },
             Kind::WaitForWindow => StepAction::WaitForWindow {
                 app: self.app_name(),
+            },
+            Kind::CloseOpenedWindow => StepAction::CloseOpenedWindow {
+                opened_by: self.text.text.trim().into(),
             },
             Kind::RunAction => StepAction::RunAction {
                 phrase: self.text.text.trim().into(),

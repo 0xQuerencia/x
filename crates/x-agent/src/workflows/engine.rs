@@ -8,6 +8,7 @@
 //! and leave a half-built session behind. Launches are never retried; only the polling for
 //! a window to appear repeats, and it has a deadline.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -117,6 +118,8 @@ pub trait Host: Send + Sync {
     fn focus(&self, window: &WinInfo) -> Result<(), String>;
     fn switch_workspace(&self, n: i64) -> Result<(), String>;
     fn move_window(&self, window: &WinInfo, to: i64) -> Result<(), String>;
+    /// Close only an exact previously observed id+pid+class, with verification.
+    fn close_window(&self, window: &WinInfo) -> Result<(), String>;
     fn opencode_ready(&self) -> Result<(), String>;
     fn opencode(&self, goal: &str, dir: &Path) -> Result<String, String>;
     /// Whether this step may run. The person approved the workflow as a whole; this is the
@@ -132,14 +135,21 @@ pub(super) struct StepResult {
     pub status: StepStatus,
     pub detail: String,
     pub reversals: Vec<Reversal>,
+    pub opened: Option<WinInfo>,
 }
 
 impl StepResult {
+    pub fn with_opened(mut self, win: WinInfo) -> Self {
+        self.opened = Some(win);
+        self
+    }
+
     pub fn done(detail: impl Into<String>, reversals: Vec<Reversal>) -> Self {
         Self {
             status: StepStatus::Done,
             detail: detail.into(),
             reversals,
+            opened: None,
         }
     }
     pub fn unverified(detail: impl Into<String>, reversals: Vec<Reversal>) -> Self {
@@ -147,6 +157,7 @@ impl StepResult {
             status: StepStatus::Unverified,
             detail: detail.into(),
             reversals,
+            opened: None,
         }
     }
     pub fn failed(detail: impl Into<String>) -> Self {
@@ -154,6 +165,7 @@ impl StepResult {
             status: StepStatus::Failed,
             detail: detail.into(),
             reversals: vec![],
+            opened: None,
         }
     }
     pub fn cancelled() -> Self {
@@ -161,6 +173,7 @@ impl StepResult {
             status: StepStatus::Cancelled,
             detail: "Stopped".into(),
             reversals: vec![],
+            opened: None,
         }
     }
 }
@@ -172,6 +185,7 @@ struct Run<'a> {
     state: RunState,
     steps: Vec<StepReport>,
     reversals: Vec<Reversal>,
+    opened: HashMap<String, WinInfo>,
 }
 
 impl Run<'_> {
@@ -257,7 +271,7 @@ impl Run<'_> {
                 self.go(RunState::Running);
             }
             self.set(i, StepStatus::Running, "");
-            let result = steps::run_step(step, self.host, self.cfg, &mut |waiting| {
+            let result = steps::run_step(step, self.host, self.cfg, &self.opened, &mut |waiting| {
                 let state = if waiting {
                     RunState::Waiting
                 } else {
@@ -267,6 +281,11 @@ impl Run<'_> {
                     self.state = state;
                 }
             });
+            if result.status == StepStatus::Done
+                && let Some(win) = &result.opened
+            {
+                self.opened.insert(step.id.clone(), win.clone());
+            }
             self.reversals.extend(result.reversals);
             self.set(i, result.status, &result.detail);
             match result.status {
@@ -345,6 +364,7 @@ pub fn run(wf: &Workflow, host: &dyn Host, cfg: &Config) -> Outcome {
         state: RunState::Idle,
         steps,
         reversals: vec![],
+        opened: HashMap::new(),
     };
     r.execute();
     let undoable = r.reversals.len();

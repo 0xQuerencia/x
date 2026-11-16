@@ -54,6 +54,9 @@ impl Host for Bridge {
     fn move_window(&self, w: &WinInfo, to: i64) -> Result<(), String> {
         self.inner.move_window(w, to)
     }
+    fn close_window(&self, w: &WinInfo) -> Result<(), String> {
+        self.inner.close_window(w)
+    }
     /// The per-step gate. The person approved a snapshot of the workflow; a step runs only
     /// if the task is still approved and running, Stop was not pressed, and the step is one
     /// of the approved ones. Anything else (a stale or edited workflow, a run that was
