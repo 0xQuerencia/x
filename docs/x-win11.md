@@ -17,6 +17,7 @@ not PowerShell, shell commands or text from speech.
 | Numbered virtual desktops and moving between them | **Not implemented** (no fake desktop numbers) |
 | Installed Start Menu app launch, default URL opening, folders | Implemented; physical smoke needed |
 | Speech, Actions and saved workflows | Require separate Windows physical end-to-end verification |
+| Explicit Unicode typing and clipboard copy | Native SendInput / CF_UNICODETEXT implementations; physical smoke needed |
 | Screenshots, system control, process management, wake listener | **Not at Linux parity** |
 
 ## Developer build on a Windows 11 machine
