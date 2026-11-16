@@ -104,6 +104,11 @@ pub enum Action {
     BrowserTab {
         op: crate::browser_tab::Op,
     },
+    /// Fixed local control of audio, brightness and media. Not remotely deserializable.
+    #[serde(skip_deserializing)]
+    System {
+        op: crate::sys::Op,
+    },
     /// Types plain text into the focused window. Never Enter or any control key, so
     /// nothing typed here can run on its own.
     Type {
@@ -179,6 +184,9 @@ impl Action {
         use crate::wm::Op;
         match self {
             Self::Window { op: Op::Close, .. } => Risk::Destructive,
+            Self::System {
+                op: crate::sys::Op::Next | crate::sys::Op::Previous,
+            } => Risk::Consequential,
             Self::BrowserTab {
                 op: crate::browser_tab::Op::Close,
             } => Risk::Consequential,
@@ -204,7 +212,8 @@ impl Action {
             | Self::Copy { .. }
             | Self::Terminal { .. }
             | Self::Folder { .. }
-            | Self::BrowserTab { .. } => Risk::Reversible,
+            | Self::BrowserTab { .. }
+            | Self::System { .. } => Risk::Reversible,
             Self::Screenshot { .. }
             | Self::Type { .. }
             | Self::Session { .. }
@@ -217,6 +226,7 @@ impl Action {
             Self::App { target } => format!("Open {target}"),
             Self::Screenshot { mode } => format!("Save {mode} screenshot locally"),
             Self::BrowserTab { op } => format!("Browser tab {op:?}"),
+            Self::System { op } => format!("System control {op:?}"),
             Self::Type { text } => format!("Type \"{text}\" into the focused window"),
             Self::Opencode => "Open OpenCode in a new temporary folder".to_string(),
             Self::Terminal { directory } => format!("Open a terminal in {directory}"),
@@ -283,6 +293,14 @@ impl Action {
                 crate::screenshots::Mode::parse(mode)?;
             }
             Self::BrowserTab { .. } => {}
+            Self::System { op } => {
+                if matches!(
+                    op,
+                    crate::sys::Op::SetVolume(v) | crate::sys::Op::SetBrightness(v) if *v > 100
+                ) {
+                    return Err("System percentage must be 0-100".into());
+                }
+            }
             Self::Copy { text } => crate::clipboard::validate(text)?,
             Self::Terminal { directory } | Self::Folder { directory } => {
                 crate::workflows::paths::check(directory, &crate::workflows::paths::home()?)?;
@@ -373,6 +391,7 @@ impl Action {
                 Err("Screenshots are handled locally, never launched as a command".into())
             }
             Self::BrowserTab { .. } => Err("Browser tab shortcuts run locally".into()),
+            Self::System { .. } => Err("System controls run locally".into()),
             Self::Copy { .. } => Err("Copy runs through the clipboard helper".into()),
             Self::Terminal { directory } => {
                 terminal_argv(std::path::Path::new(directory), None, resolve)
@@ -433,6 +452,9 @@ impl Action {
         }
         if let Self::BrowserTab { op } = &valid {
             return crate::browser_tab::execute(*op);
+        }
+        if let Self::System { op } = &valid {
+            return crate::sys::execute(*op, &crate::sys::Local);
         }
         if let Self::Copy { text } = &valid {
             return crate::clipboard::copy(text);
@@ -830,6 +852,9 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
     }
     if let Some(op) = crate::browser_tab::parse(text) {
         return Some(vec![Action::BrowserTab { op }]);
+    }
+    if let Some(op) = crate::sys::parse(text) {
+        return Some(vec![Action::System { op }]);
     }
     let mut browser = String::new();
     let mut search_text = text.to_string();
