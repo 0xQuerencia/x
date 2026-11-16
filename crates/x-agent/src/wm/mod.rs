@@ -4,13 +4,19 @@
 //! become commands: backends only ever receive ids that came from their own window list.
 
 pub mod apps;
+#[cfg(not(windows))]
 mod hypr;
+#[cfg(not(windows))]
 mod i3;
+#[cfg(not(windows))]
 mod kde;
 pub mod keys;
 pub mod parse;
 mod report;
 mod speech;
+#[cfg(windows)]
+mod win11;
+#[cfg(not(windows))]
 mod x11;
 
 use std::collections::VecDeque;
@@ -103,6 +109,14 @@ pub trait Backend: Send {
     fn focused(&self) -> Result<Option<String>, WmError>;
     fn workspace(&self) -> Result<i64, WmError>;
     fn run(&self, cmd: &Cmd) -> Result<(), WmError>;
+    /// Restore a minimized window without fabricating a virtual-desktop index.
+    /// Compositor backends restore via their existing move semantics.
+    fn restore_minimized(&self, win: &WinInfo) -> Result<(), WmError> {
+        self.run(&Cmd::Move {
+            win: win.id.clone(),
+            to: win.place.clone(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -592,15 +606,24 @@ impl Controller {
             return Ok(done(format!("{} already has focus", label(win)), false));
         }
         if win.minimized {
-            let ws = self.backend.workspace()?;
-            self.apply(
-                &Cmd::Move {
-                    win: win.id.clone(),
-                    to: Place::N(ws),
-                },
-                "Restoring the window",
-                |c| c.window(&win.id).is_some_and(|w| !w.minimized),
-            )?;
+            let mut restore = win.clone();
+            if let Ok(ws) = self.backend.workspace() {
+                restore.place = Place::N(ws);
+            }
+            self.backend.restore_minimized(&restore)?;
+            let mut restored = false;
+            for _ in 0..VERIFY_TRIES {
+                if self.window(&win.id).is_some_and(|w| !w.minimized) {
+                    restored = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(60));
+            }
+            if !restored {
+                return Err(WmError::Unverified(
+                    "Restoring the window did not take effect".into(),
+                ));
+            }
         }
         let id = win.id.clone();
         self.apply(&Cmd::Focus(id.clone()), "Focus", |c| {
@@ -738,15 +761,21 @@ impl Controller {
                 format!("Restored {}", label(&old))
             }
             (Undo::Minimize(old), Some(_)) => {
-                let (id, to) = (old.id.clone(), old.place.clone());
-                self.apply(
-                    &Cmd::Move {
-                        win: id.clone(),
-                        to: to.clone(),
-                    },
-                    "Restore",
-                    |c| c.window(&id).is_some_and(|w| !w.minimized && w.place == to),
-                )?;
+                self.backend.restore_minimized(&old)?;
+                let mut restored = false;
+                for _ in 0..VERIFY_TRIES {
+                    if self
+                        .window(&old.id)
+                        .is_some_and(|w| !w.minimized && w.place == old.place)
+                    {
+                        restored = true;
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(60));
+                }
+                if !restored {
+                    return Err(WmError::Unverified("Restore did not take effect".into()));
+                }
                 format!("Restored {}", label(&old))
             }
             _ => return Err(WmError::StaleUndo("the window changed".into())),
