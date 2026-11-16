@@ -8,6 +8,7 @@
 //! * [`hexcli`]: Hex's own speech-to-text over its control CLI (never pastes).
 //! * [`service`]: the one-task-at-a-time state machine the UI drives.
 
+pub mod browser_tab;
 pub mod clipboard;
 pub mod computer;
 pub mod context;
@@ -22,7 +23,6 @@ pub mod phase;
 pub mod planner;
 pub mod quick;
 pub mod screenshots;
-pub mod browser_tab;
 pub mod service;
 pub mod tools;
 pub mod wm;
