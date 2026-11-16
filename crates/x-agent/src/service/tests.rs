@@ -160,6 +160,59 @@ fn autonomous_computer_still_requires_scoped_screen_and_remote_consent() {
 }
 
 #[test]
+fn destructive_actions_are_gated_by_origin_and_speech_source() {
+    use crate::wm::{Op, Target};
+    let close = Action::Window {
+        op: Op::Close,
+        target: Target::default(),
+        ws: None,
+    };
+    let (s, _, launcher) = rig();
+    s.set_autonomy_mode(AutonomyMode::Autonomous);
+    // Ambient wake speech cannot close a window without approval.
+    s.plan_hands_free("close this window", Mode::Actions).unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
+    s.cancel();
+
+    // Typed commands need approval for a close too.
+    s.plan("close this window", Mode::Actions).unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    s.cancel();
+
+    // Even a model's offered close is not promoted to an exact local rule.
+    s.set_planner(Some(Arc::new(FakePlanner(Ok(tools::Reply::Steps(
+        vec![close],
+    ))))));
+    s.plan_spoken("please shut the window over there", Mode::Actions)
+        .unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
+    s.cancel();
+}
+
+#[test]
+fn named_closes_do_not_auto_run_even_from_push_to_talk() {
+    use crate::wm::{Op, Target};
+    let (s, _, launcher) = rig();
+    s.set_autonomy_mode(AutonomyMode::Autonomous);
+    s.set_planner(Some(Arc::new(FakePlanner(Ok(tools::Reply::Steps(
+        vec![Action::Window {
+            op: Op::Close,
+            target: Target {
+                app: "firefox".into(),
+                pick: None,
+            },
+            ws: None,
+        }],
+    ))))));
+    s.plan_spoken("please close my firefox window", Mode::Actions)
+        .unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
+}
+
+#[test]
 fn autonomous_does_not_approve_generated_work_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let (s, _work, _exe) = work_rig("echo test > out.txt");
