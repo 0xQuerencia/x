@@ -13,6 +13,7 @@ pub fn win(id: &str, pid: u32, class: &str, title: &str, ws: i64) -> WinInfo {
         place: Place::N(ws),
         minimized: false,
         maximized: false,
+        recent: u32::MAX,
     }
 }
 

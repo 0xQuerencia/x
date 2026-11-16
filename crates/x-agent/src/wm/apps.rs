@@ -232,6 +232,16 @@ pub fn evidence(words: &str, entries: &[Entry]) -> Vec<String> {
     if let Some(seed) = crate::tools::resolve_app(&q).and_then(crate::tools::app_classes) {
         classes.extend(seed.iter().map(|c| c.to_ascii_lowercase()));
     }
+    // An app that is started inside a terminal (`Exec=foot nvim`) shows up as that
+    // terminal's window, so the terminal's class must not make it an editor or a browser.
+    if role(&q) != Some("terminalemulator") {
+        let launchers: Vec<&String> = entries
+            .iter()
+            .filter(|e| e.categories.iter().any(|c| c == "terminalemulator"))
+            .flat_map(|e| &e.classes)
+            .collect();
+        classes.retain(|c| !launchers.contains(&c));
+    }
     classes.sort();
     classes.dedup();
     classes

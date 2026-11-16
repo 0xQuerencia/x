@@ -37,6 +37,8 @@ pub struct WinInfo {
     pub place: Place,
     pub minimized: bool,
     pub maximized: bool,
+    /// 0 is the window used most recently, larger is older; `u32::MAX` when unknown.
+    pub recent: u32,
 }
 
 impl WinInfo {
@@ -130,7 +132,7 @@ impl fmt::Display for WmError {
                     .collect();
                 write!(
                     f,
-                    "Several windows match, say a number: {}",
+                    "Several windows match. Say the name with a number, like \"terminal 2\": {}",
                     list.join("; ")
                 )
             }
@@ -329,24 +331,24 @@ impl Controller {
                 self.focus(&prev, focused)
             }
             Op::Focus => {
-                let win = self.resolve(&req.target, &all, focused.as_ref())?;
+                let win = self.resolve(&req.target, &all, focused.as_ref(), true)?;
                 self.focus(&win, focused)
             }
             Op::Move => {
-                let win = self.resolve(&req.target, &all, focused.as_ref())?;
+                let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
                 let ws = self.target_ws(req.ws.as_ref())?;
                 self.move_to(&win, ws)
             }
             Op::Maximize => {
-                let win = self.resolve(&req.target, &all, focused.as_ref())?;
+                let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
                 self.maximize(&win)
             }
             Op::Minimize => {
-                let win = self.resolve(&req.target, &all, focused.as_ref())?;
+                let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
                 self.minimize(&win)
             }
             Op::Close => {
-                let win = self.resolve(&req.target, &all, focused.as_ref())?;
+                let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
                 let mut out = self.close(&win)?;
                 out.message.push_str(&keys::hint("close", &(self.binds)()));
                 Ok(out)
@@ -398,11 +400,14 @@ impl Controller {
             .ok_or_else(|| WmError::NotFound(format!("{} is gone", label(&old))))
     }
 
+    /// `prefer_recent` lets a harmless command (focus) take the most recently used match
+    /// instead of asking; anything that changes or closes a window still asks.
     fn resolve(
         &self,
         target: &Target,
         all: &[WinInfo],
         focused: Option<&WinInfo>,
+        prefer_recent: bool,
     ) -> Result<WinInfo, WmError> {
         if target.app.is_empty() {
             return focused
@@ -419,6 +424,16 @@ impl Controller {
             (1, _) => Ok(found.remove(0)),
             (n, Some(p)) if (1..=n).contains(&usize::from(p)) => {
                 Ok(found.remove(usize::from(p) - 1))
+            }
+            (_, None) if prefer_recent && found.iter().any(|w| w.recent != u32::MAX) => {
+                // Not the window already in front: the one used just before it.
+                let current = focused.map(|f| f.id.clone());
+                found.retain(|w| Some(&w.id) != current.as_ref());
+                if found.is_empty() {
+                    return Err(WmError::NotFound("That window already has focus".into()));
+                }
+                found.sort_by_key(|w| w.recent);
+                Ok(found.remove(0))
             }
             _ => Err(WmError::Ambiguous(
                 found

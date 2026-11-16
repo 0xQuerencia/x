@@ -28,6 +28,7 @@ fn win(id: &str, class: &str, title: &str, ws: i64) -> WinInfo {
         place: Place::N(ws),
         minimized: false,
         maximized: false,
+        recent: u32::MAX,
     }
 }
 
@@ -487,4 +488,43 @@ fn shortcut_questions_are_answered_from_the_persons_config() {
         "questions never touch a window"
     );
     assert!(p("what does this do").is_none());
+}
+
+#[test]
+fn focus_takes_the_most_recent_match_instead_of_asking() {
+    let fake = world(vec![
+        win("0x1", "firefox", "now", 1),
+        win("0x2", "foot", "old", 1),
+        win("0x3", "foot", "newer", 1),
+    ]);
+    {
+        let mut w = fake.0.lock().unwrap();
+        w.wins[0].recent = 0;
+        w.wins[1].recent = 5;
+        w.wins[2].recent = 2;
+    }
+    let mut c = Controller::new(Box::new(fake.clone()))
+        .with_catalog(catalog)
+        .with_binds(binds);
+    ask(&mut c, "focus the terminal").unwrap();
+    assert_eq!(fake.0.lock().unwrap().focus.as_deref(), Some("0x3"));
+    // Closing is never guessed.
+    assert!(matches!(
+        ask(&mut c, "close the terminal"),
+        Err(WmError::Ambiguous(_))
+    ));
+}
+
+#[test]
+fn an_app_launched_inside_a_terminal_is_not_the_terminals_window() {
+    let mut entries = catalog();
+    entries.push(
+        apps::parse_entry(
+            "nvim.desktop",
+            "[Desktop Entry]\nType=Application\nName=Neovim\nExec=foot nvim\nCategories=TextEditor;\n",
+        )
+        .unwrap(),
+    );
+    assert!(!apps::evidence("editor", &entries).contains(&"foot".to_string()));
+    assert!(apps::evidence("terminal", &entries).contains(&"foot".to_string()));
 }
