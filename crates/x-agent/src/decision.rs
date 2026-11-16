@@ -185,8 +185,8 @@ pub(crate) fn send_with(endpoint: &str, key: &str, request: &Value) -> Result<Va
         circuit.before()?;
     }
     let config = format!(
-        "url = \"{endpoint}\"\nheader = \"Authorization: Bearer {}\"\n\\
-         header = \"Content-Type: application/json\"\n\\
+        "url = \"{endpoint}\"\nheader = \"Authorization: Bearer {}\"\n\
+         header = \"Content-Type: application/json\"\n\
          data-binary = {}\n",
         key,
         quote(&request.to_string()),
