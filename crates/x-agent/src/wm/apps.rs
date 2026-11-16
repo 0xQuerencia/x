@@ -420,12 +420,14 @@ mod tests {
 
     #[test]
     fn desktop_exec_is_kept_as_data_not_a_shell_command() {
-        let mut app = parse_entry(
+        let app = parse_entry(
             "com.spotify.Client.desktop",
-            "[Desktop Entry]\\nType=Application\\nName=Spotify\\nExec=flatpak run com.spotify.Client %U\\nTerminal=false\\nStartupWMClass=spotify\\n",
-        );
-        // The launcher does not interpret a Flatpak Exec or generate a shell command.
-        assert!(app.take().is_some());
+            "[Desktop Entry]\nType=Application\nName=Spotify\nExec=flatpak run com.spotify.Client %U\nTerminal=false\nStartupWMClass=spotify\n",
+        )
+        .unwrap();
+        assert_eq!(app.exec, "flatpak run com.spotify.Client %U");
+        assert!(!app.names.contains(&"flatpak".into()));
+        assert!(!app.terminal);
     }
 
     #[cfg(unix)]
@@ -435,7 +437,7 @@ mod tests {
         let desktop = temp.path().join("com.spotify.Client.desktop");
         std::fs::write(
             &desktop,
-            "[Desktop Entry]\\nType=Application\\nName=Spotify\\nExec=flatpak run com.spotify.Client %U\\n",
+            "[Desktop Entry]\nType=Application\nName=Spotify\nExec=flatpak run com.spotify.Client %U\n",
         )
         .unwrap();
         let mut entry =
