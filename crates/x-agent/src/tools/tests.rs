@@ -65,7 +65,6 @@ fn system_controls_are_exact_local_actions_with_fail_closed_risk() {
     );
 }
 
-
 fn fake_path(name: &str) -> Option<String> {
     Some(format!("/usr/bin/{name}"))
 }
