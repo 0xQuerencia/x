@@ -266,9 +266,7 @@ impl Action {
     pub fn validate(self) -> Result<Self, String> {
         match &self {
             Self::App { target } => {
-                if lookup(APPS, target).is_none()
-                    && crate::wm::apps::installed(target).is_none()
-                {
+                if lookup(APPS, target).is_none() && crate::wm::apps::installed(target).is_none() {
                     return Err("The application is not in the installed app catalog".into());
                 }
             }
@@ -362,10 +360,10 @@ impl Action {
                 if lookup(APPS, target).is_some() {
                     return Ok(vec![exe_for(target, resolve)?]);
                 }
-                let app = crate::wm::apps::installed(target)
-                    .ok_or("The application is not installed")?;
+                let app =
+                    crate::wm::apps::installed(target).ok_or("The application is not installed")?;
                 crate::wm::apps::launch_argv(&app, resolve)
-            },
+            }
             Self::Focus { target } => {
                 let names = lookup(APPS, target).ok_or("Unapproved app")?;
                 let class = format!("class:^({})$", names.join("|"));
