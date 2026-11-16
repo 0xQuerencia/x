@@ -21,6 +21,9 @@ on:
       - "scripts/smoke-x/**"
       - "packaging/aur-x/PKGBUILD"
       - ".github/workflows/compile.yml"
+      - ".github/workflows/check-linux.yml"
+      - ".github/workflows/check-macos.yml"
+      - ".github/workflows/check-windows.yml"
   workflow_dispatch:
 
 permissions:
