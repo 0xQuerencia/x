@@ -202,12 +202,18 @@ fn window_action_is_reported_verified_instead_of_launched() {
     let result = wait_for(&service, |s| s.phase == Phase::Completed);
     let task = result.task.unwrap();
     assert_eq!(task.steps[0].status, "done");
-    assert!(result.events.iter().any(|event| {
-        event.kind == "result" && event.text.ends_with("(verified)")
-    }));
-    assert!(!result.events.iter().any(|event| {
-        event.text.contains("launched; outcome not verified")
-    }));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| { event.kind == "result" && event.text.ends_with("(verified)") })
+    );
+    assert!(
+        !result
+            .events
+            .iter()
+            .any(|event| { event.text.contains("launched; outcome not verified") })
+    );
 }
 
 #[test]
