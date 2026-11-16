@@ -180,10 +180,7 @@ mod tests {
         unsafe {
             assert_eq!(down.data.keyboard.scan, 0x0061);
             assert_eq!(down.data.keyboard.flags, KEYEVENTF_UNICODE);
-            assert_eq!(
-                up.data.keyboard.flags,
-                KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
-            );
+            assert_eq!(up.data.keyboard.flags, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
         }
     }
 }
