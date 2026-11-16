@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-pub use report::{Report, detect, report};
+pub use report::{Doctor, Report, detect, doctor, report};
 
 const UNDO_DEPTH: usize = 16;
 const UNDO_TTL: Duration = Duration::from_secs(600);
