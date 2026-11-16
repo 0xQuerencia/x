@@ -109,13 +109,6 @@ fn check_windows_split() {
 
 fn build_version() {
     println!("cargo:rerun-if-env-changed=HEX_VERSION");
-    println!("cargo:rerun-if-env-changed=X_BUILD");
-    let x = std::env::var("X_BUILD").as_deref() == Ok("1");
-    let (product, original_name, internal_name) = if x {
-        ("X", "x.exe", "x")
-    } else {
-        ("Hex", "hex.exe", "hex")
-    };
     let version = std::env::var("CARGO_PKG_VERSION").unwrap();
     // CI builds name their version in HEX_VERSION and check `hex --version`
     // against it, test builds included (they name the crate version).
@@ -208,6 +201,13 @@ fn embed_windows_resources() {
     let output_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let icon = manifest_dir.join("resources/windows/hex.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
+    println!("cargo:rerun-if-env-changed=X_BUILD");
+    let (product, original_name, internal_name) =
+        if std::env::var("X_BUILD").as_deref() == Ok("1") {
+            ("X", "x.exe", "x")
+        } else {
+            ("Hex", "hex.exe", "hex")
+        };
     let version = std::env::var("CARGO_PKG_VERSION").unwrap();
     let numeric = version
         .split(['.', '-'])
