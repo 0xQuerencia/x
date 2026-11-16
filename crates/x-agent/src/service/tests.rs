@@ -160,6 +160,57 @@ fn autonomous_computer_still_requires_scoped_screen_and_remote_consent() {
 }
 
 #[test]
+fn action_risk_labels_agree_with_autonomy_policy() {
+    use crate::wm::{Op, Target};
+    assert_eq!(
+        action_risk_label(&Action::Window {
+            op: Op::Close,
+            target: Target::default(),
+            ws: None,
+        }),
+        "closes a window; cannot be undone"
+    );
+    assert_eq!(
+        action_risk_label(&Action::Window {
+            op: Op::List,
+            target: Target::default(),
+            ws: None,
+        }),
+        "reads local desktop state"
+    );
+    assert_eq!(
+        action_risk_label(&Action::Computer {
+            app: "firefox".into(),
+            goal: "navigate".into(),
+        }),
+        "may type or act inside an application"
+    );
+    assert_eq!(
+        action_risk_label(&Action::App {
+            target: "firefox".into(),
+        }),
+        "changes desktop state; may be undoable"
+    );
+}
+
+#[test]
+fn window_action_is_reported_verified_instead_of_launched() {
+    let (service, _, _) = rig();
+    let task = service.plan("list windows", Mode::Actions).unwrap();
+    assert_eq!(task.steps[0].risk, "reads local desktop state");
+    service.approve(task.id).unwrap();
+    let result = wait_for(&service, |s| s.phase == Phase::Completed);
+    let task = result.task.unwrap();
+    assert_eq!(task.steps[0].status, "done");
+    assert!(result.events.iter().any(|event| {
+        event.kind == "result" && event.text.ends_with("(verified)")
+    }));
+    assert!(!result.events.iter().any(|event| {
+        event.text.contains("launched; outcome not verified")
+    }));
+}
+
+#[test]
 fn destructive_actions_are_gated_by_origin_and_speech_source() {
     use crate::wm::{Op, Target};
     let close = Action::Window {
