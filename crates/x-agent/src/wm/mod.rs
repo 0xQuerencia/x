@@ -325,10 +325,13 @@ impl Controller {
 
     pub fn run(&mut self, req: &Request) -> Result<Outcome, WmError> {
         self.pending = None; // a newer task invalidates every old choice
-        let all = self.backend.windows()?;
-        let focused = self.focused_in(&all)?;
-        self.note_focus(focused.as_ref());
-        let result = match req.op {
+        // Keep all fallible matching inside the closure: a `?` in a match
+        // arm must not return before we record an ambiguity for follow-up.
+        let result = (|| {
+            let all = self.backend.windows()?;
+            let focused = self.focused_in(&all)?;
+            self.note_focus(focused.as_ref());
+            match req.op {
             Op::List => Ok(list(&all)),
             Op::Keys => Ok(Outcome {
                 message: keys::answer(&(self.binds)(), &req.target.app),
@@ -366,7 +369,8 @@ impl Controller {
                 out.message.push_str(&keys::hint("close", &(self.binds)()));
                 Ok(out)
             }
-        };
+            }
+        })();
         if let Err(WmError::Ambiguous(ref choices)) = result {
             self.pending = Some(PendingChoice {
                 at: Instant::now(),
