@@ -565,6 +565,23 @@ fn an_app_launched_inside_a_terminal_is_not_the_terminals_window() {
 }
 
 #[test]
+fn a_split_installed_app_name_resolves_from_catalog() {
+    let mut entries = catalog();
+    entries.push(
+        apps::parse_entry(
+            "com.spotify.Client.desktop",
+            "[Desktop Entry]\nType=Application\nName=Spotify\nExec=flatpak run com.spotify.Client\n",
+        )
+        .unwrap(),
+    );
+    let focus = parse::parse_with("focus spot ify", &entries).unwrap();
+    assert_eq!(focus.op, Op::Focus);
+    assert_eq!(focus.target.app, "spotify");
+    assert!(parse::parse_with("focus spotfy", &entries).is_some());
+    assert!(parse::parse_with("I thought about spotfy", &entries).is_none());
+}
+
+#[test]
 fn a_misheard_workspace_command_still_parses() {
     let r = p("go to works wish to").unwrap();
     assert_eq!(r.op, Op::Workspace);
