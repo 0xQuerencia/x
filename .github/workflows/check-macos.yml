@@ -43,5 +43,7 @@ jobs:
       - run: scripts/test-app-identity.sh
       - run: cargo clippy --locked -p "$(cargo pkgid)" -p scrawl-capture --bin hex --lib --tests -- -D warnings
       - run: cargo nextest run --locked --profile ci -p "$(cargo pkgid)" -p scrawl-capture --bin hex --lib
+      - run: cargo clippy --locked -p x-agent --all-targets -- -D warnings
+      - run: cargo nextest run --locked --profile ci -p x-agent --all-targets
       - name: No compromised eMudhra CA roots
         run: cargo build --locked --bin hex && scripts/check-ca-roots.sh target/debug/hex

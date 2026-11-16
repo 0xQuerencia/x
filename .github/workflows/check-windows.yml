@@ -54,6 +54,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --release --all-targets -- -D warnings
       - run: cargo nextest run --release --profile ci
+      - run: cargo nextest run --locked --release --profile ci -p x-agent --all-targets
       - run: cargo build --locked --release
       - name: Check the executable needs no Visual C++ Redistributable
         shell: pwsh
