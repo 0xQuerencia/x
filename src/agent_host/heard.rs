@@ -76,19 +76,16 @@ fn with_lock<T>(action: impl FnOnce(&std::path::Path) -> Result<T, String>) -> R
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if lock
+        let mode = lock
             .metadata()
             .map_err(|_| "Cannot inspect correction history lock")?
             .permissions()
-            .mode()
-            & 0o077
-            != 0
-        {
+            .mode();
+        if mode & 0o077 != 0 {
             return Err("Correction history lock permissions are not private".into());
         }
     }
-    fs2::FileExt::lock_exclusive(&lock)
-        .map_err(|_| "Cannot lock correction history")?;
+    fs2::FileExt::lock_exclusive(&lock).map_err(|_| "Cannot lock correction history")?;
     let result = action(&target);
     let unlocked = fs2::FileExt::unlock(&lock)
         .map_err(|_| "Cannot unlock correction history".to_string());
@@ -271,56 +268,56 @@ pub(crate) fn command(command: &str, index: Option<usize>) -> Result<String, Str
     with_lock(|p| {
         let mut store = read(p)?;
         match command {
-        "on" => {
-            store.enabled = true;
-            write(p, &store)?;
-            Ok("Local correction history enabled for explicit Actions speech only".into())
-        }
-        "off" => {
-            store.enabled = false;
-            store.pending = None;
-            write(p, &store)?;
-            Ok("Local correction history disabled".into())
-        }
-        "list" => {
-            if store.corrections.is_empty() {
-                return Ok("No local corrections recorded".into());
+            "on" => {
+                store.enabled = true;
+                write(p, &store)?;
+                Ok("Local correction history enabled for explicit Actions speech only".into())
             }
-            Ok(store
-                .corrections
-                .iter()
-                .enumerate()
-                .map(|(i, row)| {
-                    format!(
-                        "{}. {:?} -> {:?}{}",
-                        i + 1,
-                        row.heard,
-                        row.meant,
-                        if row.promoted { " [promoted]" } else { "" }
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n"))
+            "off" => {
+                store.enabled = false;
+                store.pending = None;
+                write(p, &store)?;
+                Ok("Local correction history disabled".into())
+            }
+            "list" => {
+                if store.corrections.is_empty() {
+                    return Ok("No local corrections recorded".into());
+                }
+                Ok(store
+                    .corrections
+                    .iter()
+                    .enumerate()
+                    .map(|(i, row)| {
+                        format!(
+                            "{}. {:?} -> {:?}{}",
+                            i + 1,
+                            row.heard,
+                            row.meant,
+                            if row.promoted { " [promoted]" } else { "" }
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"))
+            }
+            "promote" => {
+                let n = index.ok_or("Specify the correction number")?;
+                let entry = store
+                    .corrections
+                    .get_mut(n.saturating_sub(1))
+                    .filter(|_| n > 0)
+                    .ok_or("No correction with that number")?;
+                entry.promoted = true;
+                write(p, &store)?;
+                Ok("Correction promoted; only an exact voice match will apply it".into())
+            }
+            "clear" => {
+                store.pending = None;
+                store.corrections.clear();
+                write(p, &store)?;
+                Ok("Local correction history cleared".into())
+            }
+            _ => Err("Choose heard on, off, list, promote N, or clear".into()),
         }
-        "promote" => {
-            let n = index.ok_or("Specify the correction number")?;
-            let entry = store
-                .corrections
-                .get_mut(n.saturating_sub(1))
-                .filter(|_| n > 0)
-                .ok_or("No correction with that number")?;
-            entry.promoted = true;
-            write(p, &store)?;
-            Ok("Correction promoted; only an exact voice match will apply it".into())
-        }
-        "clear" => {
-            store.pending = None;
-            store.corrections.clear();
-            write(p, &store)?;
-            Ok("Local correction history cleared".into())
-        }
-        _ => Err("Choose heard on, off, list, promote N, or clear".into()),
-    }
     })
 }
 
