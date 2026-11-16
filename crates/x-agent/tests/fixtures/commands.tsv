@@ -1,0 +1,255 @@
+# Heard speech (TSV)\tclassification: ACTION or NONE
+open Firefox	ACTION
+launch VS Code	ACTION
+open github	ACTION
+open example.org	ACTION
+search YouTube for cats	ACTION
+search Google for salt and pepper	ACTION
+open a terminal	ACTION
+open Chrome	ACTION
+open Chromium	ACTION
+open Brave	ACTION
+open Wikipedia	ACTION
+go to workspace 3	ACTION
+list windows	ACTION
+what windows are open	ACTION
+I was thinking about the moon earlier today.	NONE
+Yesterday I learned something interesting about the moon.	NONE
+My teacher was talking about the moon in class.	NONE
+I might write a paragraph about the moon tomorrow.	NONE
+I have a few questions about the moon for later.	NONE
+One of my friends enjoys talking about the moon.	NONE
+I want to remember what I read about the moon.	NONE
+I wonder whether the moon could be explained differently.	NONE
+I was thinking about the planet Mars earlier today.	NONE
+Yesterday I learned something interesting about the planet Mars.	NONE
+My teacher was talking about the planet Mars in class.	NONE
+I might write a paragraph about the planet Mars tomorrow.	NONE
+I have a few questions about the planet Mars for later.	NONE
+One of my friends enjoys talking about the planet Mars.	NONE
+I want to remember what I read about the planet Mars.	NONE
+I wonder whether the planet Mars could be explained differently.	NONE
+I was thinking about robotics earlier today.	NONE
+Yesterday I learned something interesting about robotics.	NONE
+My teacher was talking about robotics in class.	NONE
+I might write a paragraph about robotics tomorrow.	NONE
+I have a few questions about robotics for later.	NONE
+One of my friends enjoys talking about robotics.	NONE
+I want to remember what I read about robotics.	NONE
+I wonder whether robotics could be explained differently.	NONE
+I was thinking about flight earlier today.	NONE
+Yesterday I learned something interesting about flight.	NONE
+My teacher was talking about flight in class.	NONE
+I might write a paragraph about flight tomorrow.	NONE
+I have a few questions about flight for later.	NONE
+One of my friends enjoys talking about flight.	NONE
+I want to remember what I read about flight.	NONE
+I wonder whether flight could be explained differently.	NONE
+I was thinking about electric cars earlier today.	NONE
+Yesterday I learned something interesting about electric cars.	NONE
+My teacher was talking about electric cars in class.	NONE
+I might write a paragraph about electric cars tomorrow.	NONE
+I have a few questions about electric cars for later.	NONE
+One of my friends enjoys talking about electric cars.	NONE
+I want to remember what I read about electric cars.	NONE
+I wonder whether electric cars could be explained differently.	NONE
+I was thinking about space travel earlier today.	NONE
+Yesterday I learned something interesting about space travel.	NONE
+My teacher was talking about space travel in class.	NONE
+I might write a paragraph about space travel tomorrow.	NONE
+I have a few questions about space travel for later.	NONE
+One of my friends enjoys talking about space travel.	NONE
+I want to remember what I read about space travel.	NONE
+I wonder whether space travel could be explained differently.	NONE
+I was thinking about the ocean earlier today.	NONE
+Yesterday I learned something interesting about the ocean.	NONE
+My teacher was talking about the ocean in class.	NONE
+I might write a paragraph about the ocean tomorrow.	NONE
+I have a few questions about the ocean for later.	NONE
+One of my friends enjoys talking about the ocean.	NONE
+I want to remember what I read about the ocean.	NONE
+I wonder whether the ocean could be explained differently.	NONE
+I was thinking about old computers earlier today.	NONE
+Yesterday I learned something interesting about old computers.	NONE
+My teacher was talking about old computers in class.	NONE
+I might write a paragraph about old computers tomorrow.	NONE
+I have a few questions about old computers for later.	NONE
+One of my friends enjoys talking about old computers.	NONE
+I want to remember what I read about old computers.	NONE
+I wonder whether old computers could be explained differently.	NONE
+I was thinking about winter weather earlier today.	NONE
+Yesterday I learned something interesting about winter weather.	NONE
+My teacher was talking about winter weather in class.	NONE
+I might write a paragraph about winter weather tomorrow.	NONE
+I have a few questions about winter weather for later.	NONE
+One of my friends enjoys talking about winter weather.	NONE
+I want to remember what I read about winter weather.	NONE
+I wonder whether winter weather could be explained differently.	NONE
+I was thinking about history earlier today.	NONE
+Yesterday I learned something interesting about history.	NONE
+My teacher was talking about history in class.	NONE
+I might write a paragraph about history tomorrow.	NONE
+I have a few questions about history for later.	NONE
+One of my friends enjoys talking about history.	NONE
+I want to remember what I read about history.	NONE
+I wonder whether history could be explained differently.	NONE
+I was thinking about mathematics earlier today.	NONE
+Yesterday I learned something interesting about mathematics.	NONE
+My teacher was talking about mathematics in class.	NONE
+I might write a paragraph about mathematics tomorrow.	NONE
+I have a few questions about mathematics for later.	NONE
+One of my friends enjoys talking about mathematics.	NONE
+I want to remember what I read about mathematics.	NONE
+I wonder whether mathematics could be explained differently.	NONE
+I was thinking about science fiction earlier today.	NONE
+Yesterday I learned something interesting about science fiction.	NONE
+My teacher was talking about science fiction in class.	NONE
+I might write a paragraph about science fiction tomorrow.	NONE
+I have a few questions about science fiction for later.	NONE
+One of my friends enjoys talking about science fiction.	NONE
+I want to remember what I read about science fiction.	NONE
+I wonder whether science fiction could be explained differently.	NONE
+I was thinking about garden plants earlier today.	NONE
+Yesterday I learned something interesting about garden plants.	NONE
+My teacher was talking about garden plants in class.	NONE
+I might write a paragraph about garden plants tomorrow.	NONE
+I have a few questions about garden plants for later.	NONE
+One of my friends enjoys talking about garden plants.	NONE
+I want to remember what I read about garden plants.	NONE
+I wonder whether garden plants could be explained differently.	NONE
+I was thinking about recycling earlier today.	NONE
+Yesterday I learned something interesting about recycling.	NONE
+My teacher was talking about recycling in class.	NONE
+I might write a paragraph about recycling tomorrow.	NONE
+I have a few questions about recycling for later.	NONE
+One of my friends enjoys talking about recycling.	NONE
+I want to remember what I read about recycling.	NONE
+I wonder whether recycling could be explained differently.	NONE
+I was thinking about my homework earlier today.	NONE
+Yesterday I learned something interesting about my homework.	NONE
+My teacher was talking about my homework in class.	NONE
+I might write a paragraph about my homework tomorrow.	NONE
+I have a few questions about my homework for later.	NONE
+One of my friends enjoys talking about my homework.	NONE
+I want to remember what I read about my homework.	NONE
+I wonder whether my homework could be explained differently.	NONE
+I was thinking about weekend plans earlier today.	NONE
+Yesterday I learned something interesting about weekend plans.	NONE
+My teacher was talking about weekend plans in class.	NONE
+I might write a paragraph about weekend plans tomorrow.	NONE
+I have a few questions about weekend plans for later.	NONE
+One of my friends enjoys talking about weekend plans.	NONE
+I want to remember what I read about weekend plans.	NONE
+I wonder whether weekend plans could be explained differently.	NONE
+I was thinking about music theory earlier today.	NONE
+Yesterday I learned something interesting about music theory.	NONE
+My teacher was talking about music theory in class.	NONE
+I might write a paragraph about music theory tomorrow.	NONE
+I have a few questions about music theory for later.	NONE
+One of my friends enjoys talking about music theory.	NONE
+I want to remember what I read about music theory.	NONE
+I wonder whether music theory could be explained differently.	NONE
+I was thinking about photography earlier today.	NONE
+Yesterday I learned something interesting about photography.	NONE
+My teacher was talking about photography in class.	NONE
+I might write a paragraph about photography tomorrow.	NONE
+I have a few questions about photography for later.	NONE
+One of my friends enjoys talking about photography.	NONE
+I want to remember what I read about photography.	NONE
+I wonder whether photography could be explained differently.	NONE
+I was thinking about astronomy earlier today.	NONE
+Yesterday I learned something interesting about astronomy.	NONE
+My teacher was talking about astronomy in class.	NONE
+I might write a paragraph about astronomy tomorrow.	NONE
+I have a few questions about astronomy for later.	NONE
+One of my friends enjoys talking about astronomy.	NONE
+I want to remember what I read about astronomy.	NONE
+I wonder whether astronomy could be explained differently.	NONE
+I was thinking about public transport earlier today.	NONE
+Yesterday I learned something interesting about public transport.	NONE
+My teacher was talking about public transport in class.	NONE
+I might write a paragraph about public transport tomorrow.	NONE
+I have a few questions about public transport for later.	NONE
+One of my friends enjoys talking about public transport.	NONE
+I want to remember what I read about public transport.	NONE
+I wonder whether public transport could be explained differently.	NONE
+I was thinking about reading books earlier today.	NONE
+Yesterday I learned something interesting about reading books.	NONE
+My teacher was talking about reading books in class.	NONE
+I might write a paragraph about reading books tomorrow.	NONE
+I have a few questions about reading books for later.	NONE
+One of my friends enjoys talking about reading books.	NONE
+I want to remember what I read about reading books.	NONE
+I wonder whether reading books could be explained differently.	NONE
+I was thinking about drawing sketches earlier today.	NONE
+Yesterday I learned something interesting about drawing sketches.	NONE
+My teacher was talking about drawing sketches in class.	NONE
+I might write a paragraph about drawing sketches tomorrow.	NONE
+I have a few questions about drawing sketches for later.	NONE
+One of my friends enjoys talking about drawing sketches.	NONE
+I want to remember what I read about drawing sketches.	NONE
+I wonder whether drawing sketches could be explained differently.	NONE
+I was thinking about school projects earlier today.	NONE
+Yesterday I learned something interesting about school projects.	NONE
+My teacher was talking about school projects in class.	NONE
+I might write a paragraph about school projects tomorrow.	NONE
+I have a few questions about school projects for later.	NONE
+One of my friends enjoys talking about school projects.	NONE
+I want to remember what I read about school projects.	NONE
+I wonder whether school projects could be explained differently.	NONE
+I was thinking about the summer holidays earlier today.	NONE
+Yesterday I learned something interesting about the summer holidays.	NONE
+My teacher was talking about the summer holidays in class.	NONE
+I might write a paragraph about the summer holidays tomorrow.	NONE
+I have a few questions about the summer holidays for later.	NONE
+One of my friends enjoys talking about the summer holidays.	NONE
+I want to remember what I read about the summer holidays.	NONE
+I wonder whether the summer holidays could be explained differently.	NONE
+I was thinking about a film I watched earlier today.	NONE
+Yesterday I learned something interesting about a film I watched.	NONE
+My teacher was talking about a film I watched in class.	NONE
+I might write a paragraph about a film I watched tomorrow.	NONE
+I have a few questions about a film I watched for later.	NONE
+One of my friends enjoys talking about a film I watched.	NONE
+I want to remember what I read about a film I watched.	NONE
+I wonder whether a film I watched could be explained differently.	NONE
+I was thinking about a fascinating article earlier today.	NONE
+Yesterday I learned something interesting about a fascinating article.	NONE
+My teacher was talking about a fascinating article in class.	NONE
+I might write a paragraph about a fascinating article tomorrow.	NONE
+I have a few questions about a fascinating article for later.	NONE
+One of my friends enjoys talking about a fascinating article.	NONE
+I want to remember what I read about a fascinating article.	NONE
+I wonder whether a fascinating article could be explained differently.	NONE
+I was thinking about making breakfast earlier today.	NONE
+Yesterday I learned something interesting about making breakfast.	NONE
+My teacher was talking about making breakfast in class.	NONE
+I might write a paragraph about making breakfast tomorrow.	NONE
+I have a few questions about making breakfast for later.	NONE
+One of my friends enjoys talking about making breakfast.	NONE
+I want to remember what I read about making breakfast.	NONE
+I wonder whether making breakfast could be explained differently.	NONE
+I was thinking about a conversation earlier today.	NONE
+Yesterday I learned something interesting about a conversation.	NONE
+My teacher was talking about a conversation in class.	NONE
+I might write a paragraph about a conversation tomorrow.	NONE
+I have a few questions about a conversation for later.	NONE
+One of my friends enjoys talking about a conversation.	NONE
+I want to remember what I read about a conversation.	NONE
+I wonder whether a conversation could be explained differently.	NONE
+I was thinking about the color blue earlier today.	NONE
+Yesterday I learned something interesting about the color blue.	NONE
+My teacher was talking about the color blue in class.	NONE
+I might write a paragraph about the color blue tomorrow.	NONE
+I have a few questions about the color blue for later.	NONE
+One of my friends enjoys talking about the color blue.	NONE
+I want to remember what I read about the color blue.	NONE
+I wonder whether the color blue could be explained differently.	NONE
+I was thinking about a new idea earlier today.	NONE
+Yesterday I learned something interesting about a new idea.	NONE
+My teacher was talking about a new idea in class.	NONE
+I might write a paragraph about a new idea tomorrow.	NONE
+I have a few questions about a new idea for later.	NONE
+One of my friends enjoys talking about a new idea.	NONE
+I want to remember what I read about a new idea.	NONE
+I wonder whether a new idea could be explained differently.	NONE
