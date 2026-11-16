@@ -193,14 +193,21 @@ fn test_build_commit() {
     }
 }
 
-/// Gives the executable its icon and the "Hex" name Explorer and Task
-/// Manager show, whatever the file is called.
+/// Embeds Windows Explorer/Task Manager product metadata. X preview builds
+/// carry an X identity; upstream Hex builds keep their existing identity.
 #[cfg(windows)]
 fn embed_windows_resources() {
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let output_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let icon = manifest_dir.join("resources/windows/hex.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
+    println!("cargo:rerun-if-env-changed=X_BUILD");
+    let (product, original_name, internal_name) = if std::env::var("X_BUILD").as_deref() == Ok("1")
+    {
+        ("X", "x.exe", "x")
+    } else {
+        ("Hex", "hex.exe", "hex")
+    };
     let version = std::env::var("CARGO_PKG_VERSION").unwrap();
     let numeric = version
         .split(['.', '-'])
@@ -223,12 +230,12 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "FileDescription", "Hex"
-      VALUE "ProductName", "Hex"
+      VALUE "FileDescription", "{product}"
+      VALUE "ProductName", "{product}"
       VALUE "FileVersion", "{version}"
       VALUE "ProductVersion", "{version}"
-      VALUE "OriginalFilename", "hex.exe"
-      VALUE "InternalName", "hex"
+      VALUE "OriginalFilename", "{original_name}"
+      VALUE "InternalName", "{internal_name}"
     END
   END
   BLOCK "VarFileInfo"
@@ -238,6 +245,9 @@ BEGIN
 END
 "#,
         icon = icon.display().to_string().replace('\\', "/"),
+        product = product,
+        original_name = original_name,
+        internal_name = internal_name,
     );
     let resource = output_dir.join("hex.rc");
     std::fs::write(&resource, script).expect("write the Windows resource script");
