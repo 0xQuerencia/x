@@ -347,7 +347,21 @@ pub enum OnboardingCommand {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum AgentKeyCommand {
+    /// Read one OpenRouter key from stdin; use a pipe to avoid argv and shell history.
+    Set,
+    /// Show whether the owner-only key file exists, without revealing its contents.
+    Status,
+}
+
+#[derive(Subcommand, Debug)]
 pub enum AgentCommand {
+    /// Store the Decider key securely from standard input, or show whether
+    /// one is configured. The actual credential is never printed or passed in argv.
+    Key {
+        #[command(subcommand)]
+        command: AgentKeyCommand,
+    },
     /// Show X's phase, the current task, and recent events.
     Status {
         /// Only events after this number.
@@ -682,6 +696,35 @@ pub fn run(command: ControlCli) -> u8 {
             command => offline_model(command),
         },
         ControlCli::Agent { command } => {
+            if let AgentCommand::Key { command } = &command {
+                return match command {
+                    AgentKeyCommand::Set => match set_agent_key() {
+                        Ok(()) => {
+                            println!("OpenRouter key stored in X's private data folder");
+                            0
+                        }
+                        Err(error) => {
+                            eprintln!("{error}");
+                            EXIT_REFUSED
+                        }
+                    },
+                    AgentKeyCommand::Status => {
+                        let present = crate::app_paths::support_dir()
+                            .ok()
+                            .map(|dir| dir.join("openrouter-key"))
+                            .is_some_and(|path| path.is_file());
+                        println!(
+                            "OpenRouter key: {}",
+                            if present {
+                                "configured"
+                            } else {
+                                "not configured"
+                            }
+                        );
+                        0
+                    }
+                };
+            }
             if let AgentCommand::Doctor { json } = &command {
                 let key_path = crate::app_paths::support_dir()
                     .ok()
@@ -731,6 +774,7 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
                 AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),
+                AgentCommand::Key { .. } => unreachable!("key handled locally"),
                 AgentCommand::Context { output } => (AgentAction::Context, output),
                 AgentCommand::Workflow {
                     command,
@@ -971,6 +1015,59 @@ fn offline_model(_: ModelCommand) -> u8 {
 }
 
 /// The exit code of a command that runs here rather than in Hex.
+/// Reject control characters, shell/curl metacharacters and oversized keys
+/// before writing anything to disk. The bytes are never included in errors.
+fn validate_agent_key(bytes: &[u8]) -> Result<&str, String> {
+    if bytes.len() > 4096 {
+        return Err("OpenRouter key exceeds 4096 bytes".into());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "OpenRouter key must be UTF-8")?;
+    let key = text.trim_end_matches(['\r', '\n']);
+    if key.is_empty()
+        || key.len() > 4096
+        || !key
+            .chars()
+            .all(|ch| ch.is_ascii_graphic() && !matches!(ch, '"' | '\'' | '\\'))
+    {
+        return Err("OpenRouter key has invalid characters or is empty".into());
+    }
+    Ok(key)
+}
+
+fn save_agent_key(path: &std::path::Path, contents: &[u8]) -> Result<(), String> {
+    let key = validate_agent_key(contents)?;
+    let pending = path.with_extension(format!("pending-{}", std::process::id()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let result = (|| -> std::io::Result<()> {
+        let mut file = options.open(&pending)?;
+        file.write_all(key.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&pending, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&pending);
+    }
+    result.map_err(|_| "Could not securely save the OpenRouter key".into())
+}
+
+fn set_agent_key() -> Result<(), String> {
+    let dir = crate::app_paths::support_dir()
+        .map_err(|_| "X's application data folder is unavailable")?;
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(4097)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read key from standard input")?;
+    save_agent_key(&dir.join("openrouter-key"), &bytes)
+}
+
 fn report(result: color_eyre::Result<()>) -> u8 {
     match result {
         Ok(()) => 0,
@@ -1679,6 +1776,45 @@ mod tests {
     use super::*;
     use crate::control::{StatusReport, settings::SettingValue};
     use crate::dictation::vocabulary::VocabularyEntry;
+
+    #[test]
+    fn openrouter_key_validation_never_echoes_secret_values() {
+        assert_eq!(
+            validate_agent_key(b"sk-test-valid\n").unwrap(),
+            "sk-test-valid"
+        );
+        assert!(validate_agent_key(b"").is_err());
+        assert!(validate_agent_key(b"key secret").is_err());
+        assert!(validate_agent_key(b"key\\evil").is_err());
+        assert!(validate_agent_key(&vec![b'x'; 4097]).is_err());
+    }
+
+    #[test]
+    fn key_storage_is_private_and_replaces_atomically() {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("x-private-key-test-{}-{id}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("openrouter-key");
+        save_agent_key(&path, b"sk-first\n").unwrap();
+        save_agent_key(&path, b"sk-new\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "sk-new");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o077,
+                0
+            );
+        }
+        assert!(save_agent_key(&path, b"bad key").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "sk-new");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
 
     #[test]
     fn exit_codes_are_stable() {
