@@ -4,8 +4,11 @@
 //! become commands: backends only ever receive ids that came from their own window list.
 
 pub mod apps;
+#[cfg(not(windows))]
 mod hypr;
+#[cfg(not(windows))]
 mod i3;
+#[cfg(not(windows))]
 mod kde;
 pub mod keys;
 pub mod parse;
@@ -15,6 +18,7 @@ mod speech;
 mod win11;
 #[cfg(windows)]
 mod windows_apps;
+#[cfg(not(windows))]
 mod x11;
 
 use std::collections::VecDeque;
