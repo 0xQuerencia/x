@@ -423,9 +423,11 @@ mod tests {
                 "2":[{"x":450,"y":310,"w":800,"h":75}]
             }}
         });
-        assert!(check_overlaps(&window, &serde_json::json!([]), &obstructed)
-            .unwrap_err()
-            .contains("notification"));
+        assert!(
+            check_overlaps(&window, &serde_json::json!([]), &obstructed)
+                .unwrap_err()
+                .contains("notification")
+        );
         assert!(layer_rectangle(&serde_json::json!({"x":10,"y":10,"w":0,"h":40})).is_err());
     }
 
