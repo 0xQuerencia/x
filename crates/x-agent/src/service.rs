@@ -23,6 +23,9 @@ pub use edit::Preview;
 /// Human-facing impact is derived from the exact same exhaustive risk model
 /// that gates autonomous execution. A close must never be labelled a launch.
 fn action_risk_label(action: &Action) -> &'static str {
+    if matches!(action, Action::Computer { .. }) {
+        return "reads this app's screen, then may click or type";
+    }
     match action.risk() {
         Risk::Safe => "reads local desktop state",
         Risk::Reversible => "changes desktop state; may be undoable",
