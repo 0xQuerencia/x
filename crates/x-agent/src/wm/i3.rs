@@ -83,6 +83,7 @@ fn collect(node: &Value, ws: i64, out: &mut Vec<WinInfo>, focus: &mut Option<Str
             place: Place::N(ws),
             minimized: false,
             maximized: node["fullscreen_mode"].as_i64().unwrap_or(0) > 0,
+            recent: u32::MAX,
         });
     }
     for key in ["nodes", "floating_nodes"] {

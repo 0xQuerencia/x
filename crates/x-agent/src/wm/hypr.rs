@@ -51,6 +51,11 @@ fn parse(client: &serde_json::Value) -> Option<WinInfo> {
         place: place_of(ws),
         minimized,
         maximized: client.get("fullscreen").and_then(|v| v.as_i64()) == Some(1),
+        recent: client
+            .get("focusHistoryID")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(u32::MAX),
     })
     .filter(|w| {
         client
