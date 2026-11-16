@@ -213,6 +213,9 @@ fn numbered_ambiguity_uses_stable_identity_not_recomputed_position() {
 #[test]
 fn ambiguity_choice_refuses_vanished_or_reused_identity() {
     let (mut controller, fake) = setup();
+    // Closing a focused Firefox is intentionally unambiguous. Focus the
+    // terminal so the two Firefox windows require an explicit choice.
+    fake.0.lock().unwrap().focus = Some("0x2".into());
     controller.run(&p("close firefox").unwrap()).unwrap_err();
     let choices = controller.choices();
     assert_eq!(choices.len(), 2);
