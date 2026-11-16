@@ -199,14 +199,26 @@ enum Undo {
     Brightness(u8),
 }
 
-static HISTORY: Mutex<Vec<Undo>> = Mutex::new(Vec::new());
+static HISTORY: Mutex<Vec<(Instant, Undo)>> = Mutex::new(Vec::new());
 
 fn remember(previous: Undo) {
     let mut history = HISTORY.lock().unwrap_or_else(|p| p.into_inner());
     if history.len() == 16 {
         history.remove(0);
     }
-    history.push(previous);
+    history.push((Instant::now(), previous));
+}
+
+/// Most recently verified and undoable system control, without touching IO.
+pub fn latest_undo_at() -> Option<Instant> {
+    HISTORY
+        .lock()
+        .ok()
+        .and_then(|history| history.last().map(|(at, _)| *at))
+}
+
+pub fn recent_undo_available() -> bool {
+    latest_undo_at().is_some_and(|at| at.elapsed() <= Duration::from_secs(8))
 }
 
 pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
@@ -260,9 +272,15 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
 }
 
 /// Reverses only a verified volume, mute or brightness change.
+/// As with window Undo, a stale state must not rewrite a current setting.
 pub fn undo(runner: &dyn Runner) -> Result<String, String> {
     let previous = HISTORY.lock().unwrap_or_else(|p| p.into_inner()).pop();
-    match previous.ok_or("There is no system-control change to undo")? {
+    let (at, previous) = previous.ok_or("There is no system-control change to undo")?;
+    if at.elapsed() > Duration::from_secs(600) {
+        HISTORY.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        return Err("System change is too old to undo".into());
+    }
+    match previous {
         Undo::Volume(value) => {
             set_volume(runner, value)?;
             Ok(format!("Restored volume to {value}%"))

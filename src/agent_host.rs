@@ -834,14 +834,26 @@ pub fn handle(action: AgentAction) -> ControlReply {
         },
         AgentAction::Undo => {
             use x_agent::wm::{Op, Request, Target};
-            let request = Request {
-                op: Op::Undo,
-                target: Target::default(),
-                ws: None,
-            };
-            match x_agent::wm::run(&request) {
-                Ok(outcome) => ControlReply::done(outcome.message),
-                Err(error) => ControlReply::error("refused", error.to_string()),
+            // The two controllers maintain separate bounded histories; choose
+            // the newest verified change rather than arbitrarily undoing an
+            // older window action after the person changed volume.
+            let window_at = x_agent::wm::latest_undo_at();
+            let system_at = x_agent::sys::latest_undo_at();
+            if system_at.is_some_and(|time| window_at.is_none_or(|window| time > window)) {
+                match x_agent::sys::undo(&x_agent::sys::Local) {
+                    Ok(message) => ControlReply::done(message),
+                    Err(error) => ControlReply::error("refused", error),
+                }
+            } else {
+                let request = Request {
+                    op: Op::Undo,
+                    target: Target::default(),
+                    ws: None,
+                };
+                match x_agent::wm::run(&request) {
+                    Ok(outcome) => ControlReply::done(outcome.message),
+                    Err(error) => ControlReply::error("refused", error.to_string()),
+                }
             }
         }
         AgentAction::Stop => {
