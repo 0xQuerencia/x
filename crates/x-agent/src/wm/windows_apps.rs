@@ -32,12 +32,20 @@ fn windows_name(title: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
         classes.push("cabinetwclass".into());
     }
     let mut categories = Vec::new();
-    if ["chrome", "firefox", "msedge", "brave", "opera", "vivaldi", "chromium"]
-        .contains(&exe)
+    if [
+        "chrome", "firefox", "msedge", "brave", "opera", "vivaldi", "chromium",
+    ]
+    .contains(&exe)
     {
         categories.push("webbrowser".into());
-    } else if ["windowsterminal", "powershell", "pwsh", "cmd", "command prompt"]
-        .contains(&exe)
+    } else if [
+        "windowsterminal",
+        "powershell",
+        "pwsh",
+        "cmd",
+        "command prompt",
+    ]
+    .contains(&exe)
     {
         categories.push("terminalemulator".into());
     } else if exe == "explorer" {
@@ -94,8 +102,7 @@ fn start_menu_paths() -> Vec<PathBuf> {
 fn scan_dirs(dirs: &[PathBuf]) -> Vec<Entry> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    let mut stack: Vec<(PathBuf, usize)> =
-        dirs.iter().cloned().map(|path| (path, 0)).collect();
+    let mut stack: Vec<(PathBuf, usize)> = dirs.iter().cloned().map(|path| (path, 0)).collect();
     let mut checked = 0;
     while let Some((directory, depth)) = stack.pop() {
         let Ok(contents) = std::fs::read_dir(&directory) else {
