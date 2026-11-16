@@ -18,6 +18,21 @@ unsafe extern "system" {
     fn EmptyClipboard() -> i32;
     fn SetClipboardData(format: u32, data: Handle) -> Handle;
     fn GetClipboardData(format: u32) -> Handle;
+    fn CreateWindowExW(
+        extended_style: u32,
+        class: *const u16,
+        title: *const u16,
+        style: u32,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        parent: Handle,
+        menu: Handle,
+        instance: Handle,
+        param: Handle,
+    ) -> Handle;
+    fn DestroyWindow(window: Handle) -> i32;
 }
 
 #[link(name = "kernel32")]
@@ -29,23 +44,41 @@ unsafe extern "system" {
     fn GlobalSize(memory: Handle) -> usize;
 }
 
-struct ClipboardGuard;
+struct ClipboardGuard {
+    owner: Handle,
+}
 
 impl Drop for ClipboardGuard {
     fn drop(&mut self) {
-        // SAFETY: the guard exists only after a successful OpenClipboard.
-        unsafe { CloseClipboard() };
+        // SAFETY: close the clipboard before destroying our hidden owner
+        // window; a null owner would make SetClipboardData fail after EmptyClipboard.
+        unsafe {
+            CloseClipboard();
+            DestroyWindow(self.owner);
+        };
     }
 }
 
 fn open_clipboard() -> Result<ClipboardGuard, String> {
+    let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+    // SAFETY: STATIC is a registered Windows class. A style=0 window is
+    // invisible, belongs to this process, and owns this clipboard transaction.
+    let owner = unsafe {
+        CreateWindowExW(
+            0, class.as_ptr(), ptr::null(), 0, 0, 0, 0, 0,
+            ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
+        )
+    };
+    if owner.is_null() {
+        return Err("Cannot create private Windows clipboard owner".into());
+    }
     for _ in 0..10 {
-        // SAFETY: null owner is valid for an explicit clipboard write.
-        if unsafe { OpenClipboard(ptr::null_mut()) } != 0 {
-            return Ok(ClipboardGuard);
+        if unsafe { OpenClipboard(owner) } != 0 {
+            return Ok(ClipboardGuard { owner });
         }
         std::thread::sleep(Duration::from_millis(40));
     }
+    unsafe { DestroyWindow(owner) };
     Err("Windows clipboard is busy".into())
 }
 
@@ -92,7 +125,7 @@ pub(crate) fn copy(text: &str) -> Result<String, String> {
         if read.is_null() {
             return Err("Cannot verify Windows clipboard text".into());
         }
-        let matches = std::slice::from_raw_parts(read, encoded.len()) == encoded;
+        let matches = std::slice::from_raw_parts(read, encoded.len()) == encoded.as_slice();
         GlobalUnlock(current);
         if !matches {
             return Err("Clipboard changed during verification".into());
