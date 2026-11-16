@@ -395,6 +395,12 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Choose one of the numbered windows X listed in the last 30 seconds.
+    Choose {
+        index: u8,
+        #[command(flatten)]
+        output: Output,
+    },
     /// Undo X's most recent verified reversible window change, when still fresh.
     Undo {
         #[command(flatten)]
@@ -770,6 +776,7 @@ pub fn run(command: ControlCli) -> u8 {
                     output,
                 ),
                 AgentCommand::Approve { id, output } => (AgentAction::Approve { id }, output),
+                AgentCommand::Choose { index, output } => (AgentAction::Choose { index }, output),
                 AgentCommand::Undo { output } => (AgentAction::Undo, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
