@@ -25,6 +25,7 @@ on:
       - ".github/workflows/check-macos.yml"
       - ".github/workflows/check-windows.yml"
       - ".github/workflows/x-windows-preview.yml"
+      - ".github/workflows/x-linux-preview.yml"
   workflow_dispatch:
 
 permissions:
