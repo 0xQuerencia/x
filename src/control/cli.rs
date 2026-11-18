@@ -356,6 +356,13 @@ pub enum AgentKeyCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum AgentCommand {
+    /// Opt-in local correction history for explicitly recorded Actions speech.
+    /// Unknown phrases are never applied automatically; use promote N.
+    Heard {
+        #[arg(value_parser = ["on", "off", "list", "promote", "clear"])]
+        command: String,
+        index: Option<usize>,
+    },
     /// Store the Decider key securely from standard input, or show whether
     /// one is configured. The actual credential is never printed or passed in argv.
     Key {
@@ -731,6 +738,18 @@ pub fn run(command: ControlCli) -> u8 {
                     }
                 };
             }
+            if let AgentCommand::Heard { command, index } = &command {
+                return match crate::agent_host::heard::command(command, *index) {
+                    Ok(message) => {
+                        println!("{message}");
+                        0
+                    }
+                    Err(error) => {
+                        eprintln!("{error}");
+                        EXIT_REFUSED
+                    }
+                };
+            }
             if let AgentCommand::Doctor { json } = &command {
                 let key_path = crate::app_paths::support_dir()
                     .ok()
@@ -780,6 +799,7 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Undo { output } => (AgentAction::Undo, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
+                AgentCommand::Heard { .. } => unreachable!("heard handled locally"),
                 AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),
                 AgentCommand::Key { .. } => unreachable!("key handled locally"),
                 AgentCommand::Context { output } => (AgentAction::Context, output),
