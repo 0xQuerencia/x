@@ -295,8 +295,7 @@ mod windows {
             assert!(parse_row(line, "firefox").is_none());
             assert!(parse_row("\"bad\",\"4\",\"Console\",\"1\",\"44 K", "").is_none());
             assert_eq!(
-                csv_cells("\"A \"\"quoted\"\" app.exe\",\"4\",\"C\",\"1\",\"4 K\"")
-                    .unwrap()[0],
+                csv_cells("\"A \"\"quoted\"\" app.exe\",\"4\",\"C\",\"1\",\"4 K\"").unwrap()[0],
                 "A \"quoted\" app.exe"
             );
         }
