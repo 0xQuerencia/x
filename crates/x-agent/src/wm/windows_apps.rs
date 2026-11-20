@@ -129,8 +129,10 @@ fn scan_dirs(dirs: &[PathBuf]) -> Vec<Entry> {
             }
             checked += 1;
             if let Some(app) = entry(&path) {
-                let name = app.names.first().cloned().unwrap_or_default();
-                if seen.insert(name) {
+                // Keep distinct links even when they share a display name.
+                // The catalog's exact-name resolver must see the ambiguity
+                // instead of silently choosing whichever link was scanned first.
+                if seen.insert(app.path.clone()) {
                     out.push(app);
                 }
             }
@@ -156,6 +158,21 @@ mod tests {
         let (names, classes, _) = windows_name("Visual Studio Code");
         assert!(names.contains(&"vscode".to_string()));
         assert_eq!(classes, ["code"]);
+    }
+
+    #[test]
+    fn duplicate_shortcut_names_remain_ambiguous() {
+        let temp = tempfile::tempdir().unwrap();
+        let user = temp.path().join("user");
+        let machine = temp.path().join("machine");
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::create_dir_all(&machine).unwrap();
+        std::fs::write(user.join("Example App.lnk"), b"user link").unwrap();
+        std::fs::write(machine.join("Example App.lnk"), b"machine link").unwrap();
+        let found = scan_dirs(&[user, machine]);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].names, found[1].names);
+        assert_ne!(found[0].path, found[1].path);
     }
 
     #[test]
