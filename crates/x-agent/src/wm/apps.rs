@@ -285,7 +285,10 @@ fn scan_macos_paths(roots: &[PathBuf]) -> Vec<Entry> {
             if !metadata.file_type().is_dir() {
                 continue;
             }
-            if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("app")) {
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+            {
                 *seen += 1;
                 if !path.join("Contents/Info.plist").is_file() {
                     continue;
@@ -417,7 +420,11 @@ pub fn launch_argv(
         return Err("Installed macOS app must be a valid .app bundle".into());
     }
     let open = resolve("open")
-        .or_else(|| std::path::Path::new("/usr/bin/open").is_file().then(|| "/usr/bin/open".into()))
+        .or_else(|| {
+            std::path::Path::new("/usr/bin/open")
+                .is_file()
+                .then(|| "/usr/bin/open".into())
+        })
         .ok_or("macOS open utility is unavailable")?;
     Ok(vec![open, "-a".into(), entry.path.display().to_string()])
 }
@@ -606,10 +613,14 @@ mod tests {
         std::fs::create_dir_all(apps.join("Fake.app")).unwrap();
         let entry = scan_macos_paths(&[apps]).pop().unwrap();
         assert_eq!(entry.names, ["visual studio code"]);
-        assert_eq!(installed_in("Visual Studio Code", &[entry.clone()]), Some(entry.clone()));
         assert_eq!(
-            launch_argv(&entry, &|program| (program == "open").then(|| "/usr/bin/open".into()))
-                .unwrap(),
+            installed_in("Visual Studio Code", &[entry.clone()]),
+            Some(entry.clone())
+        );
+        assert_eq!(
+            launch_argv(&entry, &|program| (program == "open")
+                .then(|| "/usr/bin/open".into()))
+            .unwrap(),
             ["/usr/bin/open", "-a", bundle.to_str().unwrap()]
         );
         assert!(installed_in("not installed", &[entry]).is_none());
