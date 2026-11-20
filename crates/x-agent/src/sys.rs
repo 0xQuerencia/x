@@ -403,24 +403,54 @@ mod tests {
     #[test]
     fn undo_refuses_external_changes_instead_of_overwriting_them() {
         let probe = Probe;
-        assert!(Undo::Volume { before: 10, after: 30 }
+        assert!(
+            Undo::Volume {
+                before: 10,
+                after: 30
+            }
             .verify_current(&probe)
-            .is_ok());
-        assert!(Undo::Volume { before: 10, after: 80 }
+            .is_ok()
+        );
+        assert!(
+            Undo::Volume {
+                before: 10,
+                after: 80
+            }
             .verify_current(&probe)
-            .is_err());
-        assert!(Undo::Mute { before: false, after: true }
+            .is_err()
+        );
+        assert!(
+            Undo::Mute {
+                before: false,
+                after: true
+            }
             .verify_current(&probe)
-            .is_ok());
-        assert!(Undo::Mute { before: false, after: false }
+            .is_ok()
+        );
+        assert!(
+            Undo::Mute {
+                before: false,
+                after: false
+            }
             .verify_current(&probe)
-            .is_err());
-        assert!(Undo::Brightness { before: 10, after: 30 }
+            .is_err()
+        );
+        assert!(
+            Undo::Brightness {
+                before: 10,
+                after: 30
+            }
             .verify_current(&probe)
-            .is_ok());
-        assert!(Undo::Brightness { before: 10, after: 80 }
+            .is_ok()
+        );
+        assert!(
+            Undo::Brightness {
+                before: 10,
+                after: 80
+            }
             .verify_current(&probe)
-            .is_err());
+            .is_err()
+        );
     }
 
     #[test]
