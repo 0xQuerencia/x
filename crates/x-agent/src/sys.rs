@@ -167,7 +167,7 @@ fn percent_from_macos(text: &str) -> Result<(u8, bool), String> {
 fn volume(runner: &dyn Runner) -> Result<(u8, bool), String> {
     #[cfg(target_os = "macos")]
     {
-        percent_from_macos(&runner.run("osascript", &["-e", "get volume settings"])? )
+        percent_from_macos(&runner.run("osascript", &["-e", "get volume settings"])?)
     }
     #[cfg(not(target_os = "macos"))]
     {
