@@ -89,11 +89,11 @@ impl Runner for Local {
 pub fn capabilities(runner: &dyn Runner) -> Vec<Capability> {
     #[cfg(target_os = "macos")]
     {
-        return if runner.exists("osascript") {
+        if runner.exists("osascript") {
             vec![Capability::Audio]
         } else {
             Vec::new()
-        };
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -111,6 +111,7 @@ pub fn capabilities(runner: &dyn Runner) -> Vec<Capability> {
     }
 }
 
+#[cfg(any(test, not(target_os = "macos")))]
 fn percent_from_wpctl(text: &str) -> Result<(u8, bool), String> {
     let value = text
         .strip_prefix("Volume:")
@@ -124,6 +125,7 @@ fn percent_from_wpctl(text: &str) -> Result<(u8, bool), String> {
     ))
 }
 
+#[cfg(any(test, not(target_os = "macos")))]
 fn percent_from_pactl(text: &str) -> Result<u8, String> {
     text.split_whitespace()
         .find_map(|part| {
@@ -142,7 +144,11 @@ fn percent_from_macos(text: &str) -> Result<(u8, bool), String> {
     let mut muted = None;
     for part in text.split(',').map(str::trim) {
         if let Some(value) = part.strip_prefix("output volume:") {
-            level = value.trim().parse::<u8>().ok().filter(|value| *value <= 100);
+            level = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|value| *value <= 100);
         }
         if let Some(value) = part.strip_prefix("output muted:") {
             muted = match value.trim() {
@@ -161,12 +167,14 @@ fn percent_from_macos(text: &str) -> Result<(u8, bool), String> {
 fn volume(runner: &dyn Runner) -> Result<(u8, bool), String> {
     #[cfg(target_os = "macos")]
     {
-        return percent_from_macos(&runner.run("osascript", &["-e", "get volume settings"])?);
+        percent_from_macos(&runner.run("osascript", &["-e", "get volume settings"])? )
     }
     #[cfg(not(target_os = "macos"))]
     {
         if runner.exists("wpctl") {
-            return percent_from_wpctl(&runner.run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"])?);
+            return percent_from_wpctl(
+                &runner.run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"])?,
+            );
         }
         if runner.exists("pactl") {
             let level = runner.run("pactl", &["get-sink-volume", "@DEFAULT_SINK@"])?;
@@ -181,7 +189,10 @@ fn set_volume(runner: &dyn Runner, level: u8) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         // Only a checked 0-100 integer enters this fixed AppleScript statement.
-        runner.run("osascript", &["-e", &format!("set volume output volume {level}")])?;
+        runner.run(
+            "osascript",
+            &["-e", &format!("set volume output volume {level}")],
+        )?;
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -395,13 +406,16 @@ mod tests {
     struct Probe;
     impl Runner for Probe {
         fn exists(&self, program: &str) -> bool {
-            matches!(program, "wpctl" | "brightnessctl" | "playerctl" | "osascript")
+            matches!(
+                program,
+                "wpctl" | "brightnessctl" | "playerctl" | "osascript"
+            )
         }
         fn run(&self, program: &str, args: &[&str]) -> Result<String, String> {
             match (program, args) {
                 ("wpctl", ["get-volume", _]) => Ok("Volume: 0.30 [MUTED]".into()),
                 ("osascript", ["-e", "get volume settings"]) => Ok(
-                    "output volume:30, input volume:50, alert volume:90, output muted:true".into()
+                    "output volume:30, input volume:50, alert volume:90, output muted:true".into(),
                 ),
                 ("osascript", _) => Ok(String::new()),
                 ("brightnessctl", ["get"]) => Ok("30".into()),
