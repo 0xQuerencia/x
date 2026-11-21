@@ -148,13 +148,7 @@ impl Registry {
     pub fn select(&self, query: &str) -> Result<(Project, bool), String> {
         self.update_data(|data| {
             let project = resolve_in(data, query)?.clone();
-            let root = project
-                .root
-                .to_str()
-                .ok_or("The project folder has an unsupported path")?;
-            if project_root(root, &self.home)? != project.root {
-                return Err("The project's folder changed. Register it again".into());
-            }
+            validate_saved_root(&project.root, &self.home)?;
             let changed = data.selected != Some(project.id);
             data.selected = Some(project.id);
             Ok((project, changed))
@@ -171,13 +165,7 @@ impl Registry {
             .into_iter()
             .find(|project| project.id == id)
             .ok_or("The saved project selection no longer exists")?;
-        let root = project
-            .root
-            .to_str()
-            .ok_or("The project folder has an unsupported path")?;
-        if project_root(root, &self.home)? != project.root {
-            return Err("The selected project's folder changed. Register it again".into());
-        }
+        validate_saved_root(&project.root, &self.home)?;
         Ok(Some(project))
     }
 
@@ -366,26 +354,42 @@ fn valid_name(name: &str) -> bool {
 
 fn project_root(raw: &str, home: &Path) -> Result<PathBuf, String> {
     let wanted = paths::check(raw, home)?;
+    check_relative(&wanted, home)?;
+    let root = crate::opencode::validate_workspace(&paths::existing(raw, home)?)?;
+    validate_saved_root(&root, home)?;
+    Ok(root)
+}
+
+/// Saved roots were already canonicalized when registered. Do not pass them back
+/// through the lexical input parser: Windows canonical paths may use a \\?\ prefix.
+fn validate_saved_root(root: &Path, home: &Path) -> Result<(), String> {
     let home_real = home
         .canonicalize()
         .map_err(|_| "Could not resolve your home folder")?;
-    let root = crate::opencode::validate_workspace(&paths::existing(raw, home)?)?;
-    for (candidate, anchor) in [(&wanted, home), (&root, home_real.as_path())] {
-        let relative = candidate
-            .strip_prefix(anchor)
-            .map_err(|_| "Choose a project inside your home folder")?;
-        if relative.as_os_str().is_empty()
-            || relative.components().any(|part| {
-                let name = part.as_os_str().to_string_lossy();
-                name.starts_with('.')
-                    || (cfg!(windows) && name.eq_ignore_ascii_case("AppData"))
-                    || (cfg!(target_os = "macos") && name.eq_ignore_ascii_case("Library"))
-            })
-        {
-            return Err("Choose a project outside your home or private configuration roots".into());
-        }
+    let resolved = root
+        .canonicalize()
+        .map_err(|_| "The registered project folder is unavailable")?;
+    if !resolved.is_dir() || resolved != root {
+        return Err("The registered project folder has changed".into());
     }
-    Ok(root)
+    check_relative(&resolved, &home_real)
+}
+
+fn check_relative(candidate: &Path, anchor: &Path) -> Result<(), String> {
+    let relative = candidate
+        .strip_prefix(anchor)
+        .map_err(|_| "Choose a project inside your home folder")?;
+    if relative.as_os_str().is_empty()
+        || relative.components().any(|part| {
+            let name = part.as_os_str().to_string_lossy();
+            name.starts_with('.')
+                || (cfg!(windows) && name.eq_ignore_ascii_case("AppData"))
+                || (cfg!(target_os = "macos") && name.eq_ignore_ascii_case("Library"))
+        })
+    {
+        return Err("Choose a project outside your home or private configuration roots".into());
+    }
+    Ok(())
 }
 
 fn git_common_dir(root: &Path) -> Option<PathBuf> {
@@ -633,6 +637,7 @@ mod tests {
         fs::create_dir_all(&registry.directory).unwrap();
         let project_root = registry.home.join("legacy");
         fs::create_dir(&project_root).unwrap();
+        let project_root = project_root.canonicalize().unwrap();
         let id = Uuid::new_v4();
         fs::write(
             registry.directory.join(FILE),
