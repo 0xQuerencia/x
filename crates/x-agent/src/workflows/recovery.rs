@@ -241,7 +241,7 @@ impl Journal {
             .map_err(|error| format!("Cannot open job journal lock: {error}"))?;
         lock.try_lock()
             .map_err(|_| "Another job-journal operation is in progress")?;
-        let result = (|| {
+        let result: Result<T, String> = (|| {
             let mut data = self.read()?;
             let (value, changed) = change(&mut data)?;
             if changed {
