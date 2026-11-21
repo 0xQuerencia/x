@@ -132,6 +132,41 @@ impl Manager {
         Ok(owned)
     }
 
+    /// Re-validate an owned worktree before using it for a coding session.
+    /// A saved string path or model-supplied folder is not an ownership token.
+    pub fn validate_owned(
+        &self,
+        project: &Project,
+        worktree: &OwnedWorktree,
+    ) -> Result<PathBuf, String> {
+        let base = self.validated_base()?;
+        let common = self.verify_project(project)?;
+        if project.id != worktree.project_id
+            || worktree.run_id.is_nil()
+            || !valid_slug(&worktree.task_id)
+            || !valid_commit(&worktree.start_commit)
+        {
+            return Err("The worktree ownership record is invalid".into());
+        }
+        let expected = base
+            .join(project.id.to_string())
+            .join(format!("{}-{}", worktree.run_id, worktree.task_id));
+        if worktree.path != expected
+            || !worktree.path.is_dir()
+            || worktree
+                .path
+                .canonicalize()
+                .map_err(|_| "The worktree path no longer exists")?
+                != worktree.path
+        {
+            return Err("The worktree path has changed".into());
+        }
+        if git_common_dir(&worktree.path)? != common {
+            return Err("The worktree no longer belongs to the selected Git repository".into());
+        }
+        Ok(worktree.path.clone())
+    }
+
     /// Never delete edited, untracked, ignored or otherwise unknown files.
     /// An owner-approved cleanup uses Git without `--force` and never deletes
     /// the primary checkout.
