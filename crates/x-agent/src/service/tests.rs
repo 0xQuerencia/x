@@ -2074,3 +2074,42 @@ fn claude_login_refusal_does_not_start_work() {
     );
     assert!(!repo.join("should-not-start").exists());
 }
+
+#[test]
+fn spoken_open_code_task_holds_approval_for_the_chosen_project() {
+    let (service, _dir, project) = work_rig(
+        r#"echo '{"type":"text","sessionID":"ses_spoken","part":{"text":"read the project"}}'
+touch ran-spoken-task"#,
+    );
+    service.set_trust_actions(true);
+    let transcript = "Friday, ask OpenCode to Inspect the backend tests";
+    assert!(!service.needs_model(transcript));
+    let task = service.plan_spoken(transcript, Mode::Actions).unwrap();
+    assert_eq!(task.text, "Inspect the backend tests");
+    assert_eq!(task.work_harness, Some(harness::Kind::OpenCode));
+    assert_eq!(task.workspace.as_deref(), project.to_str());
+    assert_eq!(service.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(!project.join("ran-spoken-task").exists());
+    service.approve(task.id).unwrap();
+    let done = wait_for(&service, |snapshot| !snapshot.phase.is_busy());
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.task);
+    assert_eq!(
+        done.task.unwrap().accepted_session.unwrap().as_str(),
+        "ses_spoken"
+    );
+    assert!(project.join("ran-spoken-task").exists());
+}
+
+#[test]
+fn spoken_claude_request_does_not_fall_back_to_opencode() {
+    let (service, _dir, project) = work_rig("touch unrequested-opencode-run");
+    let error = service
+        .plan_hands_free(
+            "Friday, ask Claude Code to inspect the tests",
+            Mode::Actions,
+        )
+        .unwrap_err();
+    assert!(error.contains("Claude Code CLI not found on PATH"));
+    assert_eq!(service.snapshot(0).phase, Phase::Idle);
+    assert!(!project.join("unrequested-opencode-run").exists());
+}

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::harness::{Session, SessionId};
+use crate::harness::{Kind, Session, SessionId};
 
 const LIST_TTL: Duration = Duration::from_secs(60);
 
@@ -20,6 +20,23 @@ pub(super) fn spoken_target(text: &str) -> Option<String> {
             && (tail.is_empty() || tail.starts_with(' '))
         {
             return Some(text[prefix.len()..].trim().to_string());
+        }
+    }
+    None
+}
+
+pub(super) fn spoken_work(text: &str) -> Option<(Kind, String)> {
+    let text = crate::tools::strip_wake_word(text);
+    let lower = text.to_ascii_lowercase();
+    for (prefix, kind) in [
+        ("ask opencode to", Kind::OpenCode),
+        ("ask open code to", Kind::OpenCode),
+        ("ask claude code to", Kind::ClaudeCode),
+    ] {
+        if let Some(tail) = lower.strip_prefix(prefix)
+            && (tail.is_empty() || tail.starts_with(' '))
+        {
+            return Some((kind, text[prefix.len()..].trim().to_string()));
         }
     }
     None
@@ -163,6 +180,20 @@ mod tests {
                 .resolve(Path::new("/fixture/other"), "one", listed)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn direct_harness_speech_preserves_the_goal() {
+        assert_eq!(
+            spoken_work("Friday, ask OpenCode to Review the API tests"),
+            Some((Kind::OpenCode, "Review the API tests".into())),
+        );
+        assert_eq!(
+            spoken_work("ask Claude Code to explain the error"),
+            Some((Kind::ClaudeCode, "explain the error".into())),
+        );
+        assert!(spoken_work("we could ask opencode to check this").is_none());
+        assert!(spoken_work("ask opencode tomorrow").is_none());
     }
 
     #[test]
