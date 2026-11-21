@@ -32,12 +32,14 @@ fn run(command: ProjectCommand) -> Result<ControlReply, String> {
                 if let Some(project) = project {
                     SessionStore::new(directory)
                         .forget_project(project.id)
-                        .map_err(|error| format!("Project removed, but session metadata remains: {error}"))?;
+                        .map_err(|error| {
+                            format!("Project removed, but session metadata remains: {error}")
+                        })?;
                 }
                 Ok(ControlReply::done("Project removed from X's registry"))
             } else {
                 Ok(ControlReply::unchanged("No project has that ID"))
             }
-        },
+        }
     }
 }
