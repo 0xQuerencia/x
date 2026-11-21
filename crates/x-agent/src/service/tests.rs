@@ -1792,3 +1792,27 @@ fn work_uses_the_same_adapter_interface_with_a_fake() {
             .any(|event| event.kind == "text" && event.text == "fixture event")
     );
 }
+
+#[test]
+fn selecting_an_open_code_session_is_scoped_to_the_current_project() {
+    let (s, _, _) = rig();
+    let root = tempfile::tempdir().unwrap();
+    let a = root.path().join("project_a");
+    std::fs::create_dir(&a).unwrap();
+    let b = root.path().join("project_b");
+    std::fs::create_dir(&b).unwrap();
+    let a = a.canonicalize().unwrap();
+    let target =
+        harness::Session::from_open_code("ses_known".into(), "Session", &a, &a, 1).unwrap();
+
+    s.set_workspace(b.to_str().unwrap()).unwrap();
+    assert!(s.select_session(target.clone()).is_err());
+    assert!(s.snapshot(0).selected_session.is_none());
+
+    s.set_workspace(a.to_str().unwrap()).unwrap();
+    s.select_session(target.clone()).unwrap();
+    assert_eq!(s.snapshot(0).selected_session, Some(target));
+
+    s.set_workspace(b.to_str().unwrap()).unwrap();
+    assert!(s.snapshot(0).selected_session.is_none());
+}

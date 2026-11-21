@@ -34,6 +34,15 @@ pub(crate) fn print(reply: ControlReply, output: Output) -> u8 {
         ControlReply::Transcript { text } => println!("{text}"),
         ControlReply::Agent { snapshot } => print!("{}", human_agent(&snapshot)),
         ControlReply::AgentDoctor { lines, .. } => println!("{lines}"),
+        ControlReply::AgentSessions { sessions, selected } => {
+            if sessions.is_empty() {
+                println!("No OpenCode sessions in this project");
+            }
+            for session in sessions {
+                let prefix = if selected { "Selected " } else { "" };
+                println!("{prefix}{}  {}", session.id.as_str(), session.title);
+            }
+        }
         ControlReply::Error { message, .. } => eprintln!("hex: {message}"),
     }
     code

@@ -282,6 +282,11 @@ pub enum AgentAction {
     Desktop,
     /// Read-only diagnostics from the running service's environment.
     Doctor,
+    /// List or select an existing OpenCode session in the current project.
+    Sessions {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume: Option<String>,
+    },
     /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
     /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
     Workflow {
@@ -345,6 +350,10 @@ pub enum ControlReply {
         report: serde_json::Value,
         lines: String,
         ready: bool,
+    },
+    AgentSessions {
+        sessions: Vec<x_agent::harness::Session>,
+        selected: bool,
     },
     Error {
         code: String,

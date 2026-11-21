@@ -486,6 +486,11 @@ pub enum AgentCommand {
         #[arg(long)]
         running: bool,
     },
+    /// List or select an existing OpenCode session for the chosen workspace.
+    Sessions {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
     /// Saved desktop workflows, run by trigger phrase or by id. `list` shows them with their
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
@@ -609,6 +614,21 @@ pub enum VocabularyCommand {
 pub enum Toggle {
     On,
     Off,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SessionCommand {
+    /// List open root sessions in the selected project.
+    List {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Select an exact session ID after checking that it still exists in this project.
+    Resume {
+        id: String,
+        #[command(flatten)]
+        output: Output,
+    },
 }
 
 /// Exits with `code` once stdout is flushed.
@@ -778,6 +798,14 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Choose { index, output } => (AgentAction::Choose { index }, output),
                 AgentCommand::Undo { output } => (AgentAction::Undo, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Sessions { command } => match command {
+                    SessionCommand::List { output } => {
+                        (AgentAction::Sessions { resume: None }, output)
+                    }
+                    SessionCommand::Resume { id, output } => {
+                        (AgentAction::Sessions { resume: Some(id) }, output)
+                    }
+                },
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
                 AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),
                 AgentCommand::Key { .. } => unreachable!("key handled locally"),

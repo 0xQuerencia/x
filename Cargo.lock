@@ -1968,6 +1968,7 @@ dependencies = [
  "rune-motion",
  "rune-theme-opencode",
  "scrawl-capture",
+ "scrawl-router",
  "screencapturekit",
  "serde",
  "serde_json",

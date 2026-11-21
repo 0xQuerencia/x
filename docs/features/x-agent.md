@@ -121,6 +121,17 @@ the report against successful, failed and unavailable reads. The optional
 read-only live test checks the selected backend and rejects a stale window
 identity. The Sway and X11 isolated tests also check their actual reports.
 
+### OpenCode session discovery
+
+Choose an existing project with `hex agent workspace <path>`, then use
+`hex agent sessions list` or `hex agent sessions resume <session-id>`.
+Resume selects the existing session in X after a fresh check with the
+registered loopback service. The selection is available in `hex agent status
+--json` until X restarts or the project changes. Session discovery uses the
+service's authorization and shows a refusal if the registration is stale.
+It exposes open root sessions whose reported directory resolves to the chosen
+project. Sending work to the selected session is a separate operation.
+
 ### Command decisions (Perplexity Decider)
 
 X routes looser spoken Actions through OpenRouter's free **Perplexity Decider
