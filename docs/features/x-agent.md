@@ -261,6 +261,10 @@ it does not expose coding prompts, request fingerprints or provider evidence.
 X never retries or marks these jobs successful without independently
 checking delivery and obtaining fresh approval.
 
+The Rune coding-workflow cards also show the saved count of verified
+delivery outcomes from the previous run (or a stopped state). This is a
+read-only status, not proof of code correctness.
+
 The Rune workflow manager also shows interrupted coding claims, if any.
 It displays only the node/run identifiers and the need for manual
 reconciliation. Reading this panel never replays a harness request.
