@@ -25,6 +25,12 @@ fn sessions(service: &Service, resume: Option<String>) -> Result<(Vec<Session>, 
         .workspace_path()
         .ok_or("Choose a project with `hex agent workspace` first")?;
     let id = resume.map(SessionId::try_from).transpose()?;
+    if id
+        .as_ref()
+        .is_some_and(|id| id.kind() != x_agent::harness::Kind::OpenCode)
+    {
+        return Err("Enter an exact OpenCode session ID beginning with ses_".into());
+    }
     with_lookup(|get| {
         if let Some(id) = id {
             let selected = read_selected(get, &workspace, &id)?;

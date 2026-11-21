@@ -1966,3 +1966,111 @@ fn a_closed_selection_window_refuses_the_spoken_handoff() {
     assert!(result.task.unwrap().error.unwrap().contains("was closed"));
     assert!(!repo.join("should-not-run").exists());
 }
+
+fn fake_claude(dir: &std::path::Path, logged_in: bool, responses: &str) -> PathBuf {
+    use std::fmt::Write;
+    let mut script = String::from("#!/bin/sh\n");
+    let flags = [
+        "--print",
+        "--output-format stream-json",
+        "--resume",
+        "--permission-mode",
+        "--tools",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "--setting-sources",
+        "--disable-slash-commands",
+    ];
+    writeln!(
+        script,
+        "if [ \"$1\" = '--help' ]; then printf '%s\\n' {}; exit 0; fi",
+        flags
+            .iter()
+            .map(|flag| format!("'{flag}'"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+    .unwrap();
+    writeln!(
+        script,
+        "if [ \"$1\" = '--version' ]; then echo '2.1.328 (Claude Code)'; exit 0; fi"
+    )
+    .unwrap();
+    writeln!(
+        script,
+        "if [ \"$1\" = 'auth' ]; then echo '{{\"loggedIn\":{logged_in}}}'; exit 0; fi"
+    )
+    .unwrap();
+    script.push_str(responses);
+    let path = dir.join("claude");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[test]
+fn approved_claude_work_streams_and_resumes_its_own_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = directory.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let exe = fake_claude(
+        directory.path(),
+        true,
+        r#"
+printf '%s\n' "$@" > received-args
+echo '{"type":"assistant","session_id":"5e3b19e7-c7ce-42f0-919d-15a735a1ed16","message":{"content":[{"type":"text","text":"fixture reply"}]}}'
+echo '{"type":"result","subtype":"success","is_error":false,"session_id":"5e3b19e7-c7ce-42f0-919d-15a735a1ed16","result":"fixture done"}'
+"#,
+    );
+    let (s, _, _) = rig();
+    let s = s.with_claude(Some(exe));
+    s.set_workspace(repo.to_str().unwrap()).unwrap();
+    s.set_trust_actions(true);
+    assert!(s.plan_claude("continue the session", true).is_err());
+    let fresh = s
+        .plan_claude("summarize the supplied context", false)
+        .unwrap();
+    assert_eq!(fresh.work_harness, Some(harness::Kind::ClaudeCode));
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(!repo.join("received-args").exists());
+    s.approve(fresh.id).unwrap();
+    let done = wait_for(&s, |state| !state.phase.is_busy());
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.task);
+    assert!(
+        done.events
+            .iter()
+            .any(|event| event.kind == "text" && event.text == "fixture reply")
+    );
+    let reference = done.claude_session.unwrap();
+    let resumed = s.plan_claude("continue the context summary", true).unwrap();
+    assert_eq!(resumed.session, Some(reference.clone()));
+    s.approve(resumed.id).unwrap();
+    wait_for(&s, |state| state.phase == Phase::Completed);
+    let args = std::fs::read_to_string(repo.join("received-args")).unwrap();
+    assert!(args.contains(&format!("--resume\n{}\n", reference.id.as_str())));
+    assert!(args.contains("--tools\n\n"));
+    assert!(!args.contains("--dangerously-skip-permissions"));
+}
+
+#[test]
+fn claude_login_refusal_does_not_start_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = directory.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let exe = fake_claude(directory.path(), false, "touch should-not-start\n");
+    let (s, _, _) = rig();
+    let s = s.with_claude(Some(exe));
+    s.set_workspace(repo.to_str().unwrap()).unwrap();
+    let task = s.plan_claude("inspect the supplied text", false).unwrap();
+    s.approve(task.id).unwrap();
+    let done = wait_for(&s, |state| !state.phase.is_busy());
+    assert_eq!(done.phase, Phase::Failed);
+    assert!(
+        done.task
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("login is required")
+    );
+    assert!(!repo.join("should-not-start").exists());
+}

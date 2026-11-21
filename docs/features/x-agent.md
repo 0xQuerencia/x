@@ -144,6 +144,15 @@ changing projects. X checks the target and the source window before sending.
 This path requires approval and uses the deny-all tool policy available
 in OpenCode 2.2.7 and later OpenCode 2 builds.
 
+### Claude Code Work
+
+With Claude Code 2 installed, choose a project, run `hex agent claude <goal>`,
+and approve the task. X uses Claude Code's own login and streams its structured
+events. This mode sends the goal with tool access and MCP disabled. To continue
+the last successful session X started in that project, run
+`hex agent claude --resume <goal>`. Changing project or restarting X clears
+the resume target. Stop cancels the owned Claude Code process.
+
 ### Command decisions (Perplexity Decider)
 
 X routes looser spoken Actions through OpenRouter's free **Perplexity Decider

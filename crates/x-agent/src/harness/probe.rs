@@ -120,10 +120,8 @@ fn inspect(
     let compatible = match kind {
         Kind::OpenCode => has_opencode_json_output(&help),
         Kind::ClaudeCode => {
-            has_flag(&help, "--print")
-                && has_flag(&help, "--output-format")
-                && help.contains("stream-json")
-                && has_flag(&help, "--resume")
+            result.version.as_ref().is_some_and(|v| v.starts_with("2."))
+                && super::claude::supports_tool_free_output(&help)
         }
     };
     if !compatible {
@@ -131,9 +129,10 @@ fn inspect(
         return result;
     }
     result.compatibility = Compatibility::Compatible;
-    if kind == Kind::OpenCode {
-        result.capabilities = super::OPENCODE_OWNED_CAPABILITIES;
-    }
+    result.capabilities = match kind {
+        Kind::OpenCode => super::OPENCODE_OWNED_CAPABILITIES,
+        Kind::ClaudeCode => super::claude::CAPABILITIES,
+    };
     let probe: &[&str] = match kind {
         Kind::OpenCode if has_flag(&help, "--standalone") => {
             &["auth", "list", "--format", "json", "--standalone"]
@@ -192,7 +191,7 @@ pub(crate) fn parse_version(kind: Kind, output: &str) -> Option<String> {
     Some(candidate.into())
 }
 
-fn auth(kind: Kind, success: bool, output: &str) -> Auth {
+pub(crate) fn auth(kind: Kind, success: bool, output: &str) -> Auth {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct ClaudeAuth {
@@ -270,11 +269,12 @@ mod tests {
             let report = inspect(
                 Kind::ClaudeCode,
                 Some(PathBuf::from("fixture")),
-                |_, args| match args {
+                |_, args| {
+                    match args {
                     ["--version"] => Some((true, "2.1.328 (Claude Code)".into())),
                     ["--help"] => Some((
                         true,
-                        "--print\n--resume\n--output-format stream-json".into(),
+                        "--print\n--resume\n--output-format stream-json\n--permission-mode\n--tools\n--strict-mcp-config\n--mcp-config\n--setting-sources\n--disable-slash-commands".into(),
                     )),
                     ["auth", "status", "--json"] => Some((
                         logged_in,
@@ -283,12 +283,14 @@ mod tests {
                         ),
                     )),
                     _ => panic!("unexpected probe"),
+                }
                 },
             );
             assert_eq!(report.auth, expected);
             assert!(
-                report.capabilities.is_empty(),
-                "flag compatibility alone does not enable the Claude adapter"
+                report
+                    .capabilities
+                    .contains(&Capability::ResumeOwnedSession)
             );
             let json = serde_json::to_string(&report).unwrap();
             assert!(!json.contains("private@example.com"));

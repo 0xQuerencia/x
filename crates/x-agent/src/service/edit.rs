@@ -525,6 +525,7 @@ pub(super) fn task(id: u64, text: &str, steps: Vec<Step>, edit: Option<Preview>)
         session: None,
         accepted_session: None,
         work_access: crate::harness::WorkAccess::Workspace,
+        work_harness: None,
         blocked: vec![],
         edit,
     }
