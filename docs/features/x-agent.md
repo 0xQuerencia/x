@@ -190,6 +190,18 @@ changed, not whether the resulting code works.
 These result types and unit tests are in place for future DAG integration.
 The live X workflow UI is not yet using the complete verification pipeline.
 
+### Verified worktree scheduling (development)
+
+The DAG scheduler now supports worktree-scoped resource locks. Jobs in the
+same registered project may overlap **only when a trusted executor returns
+two separately verified worktree identities**. Without this proof they keep
+the existing one-writer-per-project restriction. Mixed project-wide and
+worktree-scoped jobs still conflict, and the exact lock is preserved through
+the job's lifetime even if the executor's discovery state changes.
+
+A live policy-backed harness executor that issues these identities remains
+outstanding; model-provided worktree names cannot switch isolation on.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
