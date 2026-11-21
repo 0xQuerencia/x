@@ -85,9 +85,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(graph) => ControlReply::done(permission_preview(&graph).to_string()),
             Err(error) => refuse(error),
         },
-        "uncertain" if !value.is_empty() => {
-            refuse("workflow uncertain takes no arguments".into())
-        }
+        "uncertain" if !value.is_empty() => refuse("workflow uncertain takes no arguments".into()),
         "uncertain" => match svc.uncertain_coding_jobs() {
             Ok(report) => ControlReply::done(report.to_string()),
             Err(error) => refuse(error),
