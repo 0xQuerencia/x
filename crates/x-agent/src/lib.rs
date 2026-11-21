@@ -30,6 +30,7 @@ pub mod service;
 pub mod session_links;
 pub mod sys;
 pub mod tools;
+pub mod verification;
 #[cfg(windows)]
 mod windows_clipboard;
 #[cfg(windows)]
