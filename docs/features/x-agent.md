@@ -125,6 +125,15 @@ automatically captured or sent**. Only the selected-text handoff is wired into
 the command surface in this slice. Future connectors must request separate
 permission and use these typed APIs rather than ad-hoc string interpolation.
 
+### Read-only workflow graph preview
+
+Run `hex agent workflow preview <id>` to validate a saved workflow or v2
+graph and print its ordered nodes, dependencies and actions as JSON. The
+response explicitly says `executed: false` and `authorization:
+not_requested`; no desktop action, coding harness, approval or merge is
+triggered by this command. Execution still uses the existing separate
+`workflow run` path with its approval requirements.
+
 ### Workflow DAG schema (development)
 
 The new `workflows::dag` module validates versioned graph JSON, detects
