@@ -31,7 +31,10 @@ impl Suite {
     pub fn command(self) -> (&'static str, &'static [&'static str]) {
         match self {
             Self::CargoWorkspace => ("cargo", &["test", "--locked", "--workspace"]),
-            Self::CargoAgent => ("cargo", &["test", "--locked", "-p", "x-agent", "--all-targets"]),
+            Self::CargoAgent => (
+                "cargo",
+                &["test", "--locked", "-p", "x-agent", "--all-targets"],
+            ),
             Self::Npm => ("npm", &["test"]),
             Self::Pnpm => ("pnpm", &["test"]),
             Self::Pytest => ("python", &["-m", "pytest", "-q"]),
@@ -73,8 +76,12 @@ pub fn verify_approved(
 }
 
 trait Runner {
-    fn run(&self, workspace: &Path, suite: Suite, stop: &Cancellation)
-        -> std::result::Result<bool, String>;
+    fn run(
+        &self,
+        workspace: &Path,
+        suite: Suite,
+        stop: &Cancellation,
+    ) -> std::result::Result<bool, String>;
 }
 
 struct SystemRunner;
@@ -166,9 +173,7 @@ fn evaluate(
             status,
             evidence_indices: indices,
         }],
-        vec![
-            "Passing a test suite does not establish correctness beyond that suite".into(),
-        ],
+        vec!["Passing a test suite does not establish correctness beyond that suite".into()],
     )
 }
 
@@ -228,7 +233,11 @@ mod tests {
     fn test_exit_status_is_not_confused_with_code_correctness() {
         let good = evaluate("task", Suite::CargoAgent, Status::Passed, 10).unwrap();
         assert_eq!(good.outcome, super::super::Outcome::Verified);
-        assert!(good.limitations.iter().any(|item| item.contains("does not establish")));
+        assert!(
+            good.limitations
+                .iter()
+                .any(|item| item.contains("does not establish"))
+        );
         assert_eq!(good.evidence[0].kind, Kind::TestProcess);
         let bad = evaluate("task", Suite::Pytest, Status::Failed, 10).unwrap();
         assert_eq!(bad.outcome, super::super::Outcome::Failed);
@@ -237,12 +246,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn fixture() -> (
-        tempfile::TempDir,
-        Project,
-        Manager,
-        OwnedWorktree,
-    ) {
+    fn fixture() -> (tempfile::TempDir, Project, Manager, OwnedWorktree) {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
         fs::create_dir(&home).unwrap();
@@ -260,10 +264,17 @@ mod tests {
         };
         git(&["init", "-q"]);
         git(&[
-            "-c", "user.name=X",
-            "-c", "user.email=x@invalid.example",
-            "-c", "core.hooksPath=",
-            "commit", "--allow-empty", "-q", "-m", "fixture",
+            "-c",
+            "user.name=X",
+            "-c",
+            "user.email=x@invalid.example",
+            "-c",
+            "core.hooksPath=",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "fixture",
         ]);
         let root = root.canonicalize().unwrap();
         let project = Project {
