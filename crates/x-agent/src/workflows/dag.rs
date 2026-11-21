@@ -22,7 +22,9 @@ pub enum HarnessKind {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Job {
-    Desktop { action: StepAction },
+    Desktop {
+        action: StepAction,
+    },
     Harness {
         harness: HarnessKind,
         project_id: String,
@@ -134,10 +136,16 @@ impl Graph {
                         return Err(format!("Node {:?} cannot depend on itself", node.id));
                     }
                     if !ids.contains(required.as_str()) {
-                        return Err(format!("Node {:?} has unknown dependency {required:?}", node.id));
+                        return Err(format!(
+                            "Node {:?} has unknown dependency {required:?}",
+                            node.id
+                        ));
                     }
                     if !seen.insert(required) {
-                        return Err(format!("Node {:?} repeats dependency {required:?}", node.id));
+                        return Err(format!(
+                            "Node {:?} repeats dependency {required:?}",
+                            node.id
+                        ));
                     }
                 }
             }
@@ -174,7 +182,8 @@ impl Graph {
 
     /// A stable topological order; this is a plan, never an execution request.
     pub fn order(&self) -> Result<Vec<String>, String> {
-        let lookup: HashMap<&str, usize> = self.nodes
+        let lookup: HashMap<&str, usize> = self
+            .nodes
             .iter()
             .enumerate()
             .map(|(index, node)| (node.id.as_str(), index))
@@ -247,8 +256,8 @@ pub fn decode(input: &str, home: &Path) -> Result<Graph, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::model::{Step, StepAction};
+    use super::*;
 
     fn home() -> std::path::PathBuf {
         std::env::temp_dir()
