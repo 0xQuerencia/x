@@ -10,6 +10,7 @@ use super::dag::{Graph, HarnessKind, Job, Node};
 use super::recovery::{Begin, Journal, State};
 use super::scheduler::{Executor, Outcome};
 use crate::cancellation::Cancellation;
+use crate::grants::{Grants, Permission, Receipt, Scope};
 use crate::harness::{Adapter, EventSink, Kind, Request, RunStatus, WorkAccess};
 use crate::projects::Project;
 use crate::verification::{Outcome as VerifiedOutcome, Result as Verification};
@@ -31,6 +32,8 @@ pub struct Assignment {
     fingerprint: String,
     adapter: Arc<dyn Adapter>,
     proof: Proof,
+    grants: Arc<Grants>,
+    receipt: Receipt,
 }
 
 impl Assignment {
@@ -41,11 +44,9 @@ impl Assignment {
         fingerprint: String,
         adapter: Arc<dyn Adapter>,
         proof: Proof,
-        approved: bool,
+        grants: Arc<Grants>,
+        receipt: Receipt,
     ) -> Result<Self, String> {
-        if !approved {
-            return Err("The owner has not approved this harness assignment".into());
-        }
         let Job::Harness {
             project_id,
             harness,
@@ -70,6 +71,12 @@ impl Assignment {
         {
             return Err("The expected changed file path is unsafe".into());
         }
+        let scope = Scope::Task {
+            project_id: project.id,
+            run_id: worktree.run_id(),
+            node_id: node.id.clone(),
+        };
+        grants.check(&receipt, Permission::StartHarness, &scope)?;
         Ok(Self {
             node_id: node.id.clone(),
             project,
@@ -77,6 +84,8 @@ impl Assignment {
             fingerprint,
             adapter,
             proof,
+            grants,
+            receipt,
         })
     }
 }
@@ -151,6 +160,18 @@ impl ApprovedHarnessExecutor {
             && self
                 .worktrees
                 .validate_owned(&assignment.project, &assignment.worktree)
+                .is_ok()
+            && assignment
+                .grants
+                .check(
+                    &assignment.receipt,
+                    Permission::StartHarness,
+                    &Scope::Task {
+                        project_id: assignment.project.id,
+                        run_id: assignment.worktree.run_id(),
+                        node_id: node.id.clone(),
+                    },
+                )
                 .is_ok())
         .then_some(assignment)
     }
@@ -175,6 +196,18 @@ impl Executor for ApprovedHarnessExecutor {
         };
         if stop.requested() {
             return Outcome::Cancelled;
+        }
+        let scope = Scope::Task {
+            project_id: assignment.project.id,
+            run_id: assignment.worktree.run_id(),
+            node_id: node.id.clone(),
+        };
+        if assignment
+            .grants
+            .consume(&assignment.receipt, Permission::StartHarness, &scope)
+            .is_err()
+        {
+            return Outcome::Failed;
         }
         match self
             .journal
