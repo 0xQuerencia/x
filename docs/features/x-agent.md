@@ -235,6 +235,15 @@ Tests use isolated real Git worktrees and fixture provider executables to
 check approval, replay refusal, changed configuration, and dirty-checkout
 preservation. Code correctness requires separate verification.
 
+### Coding workflows in Rune (development)
+
+The Agent pane's Workflows view lists imported v2 coding graphs separately
+from sequential desktop workflows. Their names and job counts appear without
+private coding goals. "Review & run" opens the existing explicit approval
+preview; it does not start jobs directly. Mixed desktop/harness graphs are
+listed but not launchable by the coding runner. Saving a legacy workflow under
+an existing graph ID is refused rather than overwriting the graph.
+
 ### Interrupted coding jobs (development)
 
 Run `hex agent workflow uncertain` to inspect workflow jobs that the
