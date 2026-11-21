@@ -222,6 +222,9 @@ impl ControlRequest {
 pub enum ProjectCommand {
     List,
     Register { name: String, path: String },
+    Use { query: String },
+    AliasAdd { id: String, alias: String },
+    AliasRemove { id: String, alias: String },
     Forget { id: String },
 }
 
