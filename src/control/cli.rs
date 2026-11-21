@@ -505,11 +505,10 @@ pub enum AgentCommand {
         #[command(subcommand)]
         command: ProjectCli,
     },
-    /// Saved desktop workflows, run by trigger phrase or by id. `list` shows them with their
-    /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
-    /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
+    /// Saved desktop workflows. `preview <id>` validates and shows a dependency
+    /// graph without starting anything. `run <id>` still needs approval.
     Workflow {
-        #[arg(value_parser = ["list", "show", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "preview", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
         command: String,
         /// A workflow id, or a file path for import.
         #[arg(default_value = "")]
