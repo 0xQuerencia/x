@@ -294,12 +294,12 @@ mod tests {
         assert_eq!(graph.nodes[1].after, ["first"]);
         assert!(graph.nodes[1].requires.is_empty());
         assert_eq!(graph.nodes[0].on_failure, OnFailure::Continue);
-        graph.nodes[1].requires.push("first".into());
-        graph.validate().unwrap();
-        assert_eq!(graph.order().unwrap(), ["first", "second"]);
         assert_eq!(graph.triggers, legacy().triggers);
         let original = serde_json::to_string(&legacy()).unwrap();
         assert_eq!(decode(&original, &home()).unwrap(), graph);
+        graph.nodes[1].requires.push("first".into());
+        graph.validate().unwrap();
+        assert_eq!(graph.order().unwrap(), ["first", "second"]);
     }
 
     #[test]
