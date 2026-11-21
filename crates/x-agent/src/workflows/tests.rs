@@ -1161,6 +1161,27 @@ mod storage {
     }
 
     #[test]
+    fn private_writes_do_not_follow_predictable_temp_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let h = home();
+        let s = store(h.path());
+        std::fs::create_dir_all(s.dir()).unwrap();
+        let victim = h.path().join("unrelated.txt");
+        std::fs::write(&victim, "do not modify").unwrap();
+        let predictable = s.dir().join("coding.tmp");
+        symlink(&victim, &predictable).unwrap();
+
+        s.save(&coding(h.path())).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "do not modify"
+        );
+        assert!(std::fs::symlink_metadata(&predictable).unwrap().file_type().is_symlink());
+        assert_eq!(s.get("coding").unwrap().id, "coding");
+    }
+
+    #[test]
     fn invalid_workflows_are_not_saved() {
         let h = home();
         let s = store(h.path());
