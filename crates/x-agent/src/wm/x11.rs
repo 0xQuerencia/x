@@ -248,6 +248,7 @@ mod tests {
             .spawn()
             .expect("xterm available in isolated test session");
         let backend = X11;
+        crate::wm::tests::contract::assert_live_report(&backend);
         let own = || {
             backend
                 .windows()

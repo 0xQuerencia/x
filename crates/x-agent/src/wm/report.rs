@@ -74,9 +74,9 @@ fn env(key: &str) -> String {
     std::env::var(key).unwrap_or_default()
 }
 
-struct SelectionFailure {
-    note: String,
-    opt_in_required: bool,
+pub(super) struct SelectionFailure {
+    pub(super) note: String,
+    pub(super) opt_in_required: bool,
 }
 
 /// Select a backend using session hints and required helpers.
@@ -187,7 +187,11 @@ fn capability_report(
 
 pub fn report() -> Report {
     let backend = select();
-    let (name, supported, note, list_probe) = match &backend {
+    report_for(backend.as_deref())
+}
+
+pub(super) fn report_for(backend: Result<&dyn Backend, &SelectionFailure>) -> Report {
+    let (name, supported, note, list_probe) = match backend {
         Ok(backend) => {
             let advertised = backend.caps();
             let list_probe = if advertised.contains(&Cap::List) {
@@ -206,7 +210,7 @@ pub fn report() -> Report {
     };
     let capabilities = CAPABILITIES
         .into_iter()
-        .map(|cap| capability_report(cap, backend.as_ref().err(), &supported, list_probe))
+        .map(|cap| capability_report(cap, backend.err(), &supported, list_probe))
         .collect();
     Report {
         desktop: if cfg!(windows) {
@@ -412,74 +416,6 @@ impl Doctor {
 #[cfg(test)]
 mod doctor_tests {
     use super::*;
-
-    #[test]
-    fn only_window_listing_is_supported_after_a_successful_read() {
-        let reports =
-            CAPABILITIES.map(|cap| capability_report(cap, None, &CAPABILITIES, Some(true)));
-        let supported: Vec<_> = reports
-            .iter()
-            .filter(|report| report.state == SupportState::Supported)
-            .map(|report| (report.capability, report.evidence))
-            .collect();
-        assert_eq!(supported, [(Cap::List, ProbeEvidence::WindowListRead)]);
-        assert!(reports.iter().all(|report| {
-            report.capability == Cap::List
-                || (report.state == SupportState::Partial
-                    && report.evidence == ProbeEvidence::BackendAdvertised)
-        }));
-    }
-
-    #[test]
-    fn selection_and_probe_failures_have_distinct_evidence() {
-        use ProbeEvidence as Evidence;
-        use SupportState as State;
-
-        let unavailable = SelectionFailure {
-            note: String::new(),
-            opt_in_required: false,
-        };
-        let opt_in_required = SelectionFailure {
-            note: String::new(),
-            opt_in_required: true,
-        };
-
-        for (selection, caps, probe, expected) in [
-            (
-                None,
-                &[Cap::List][..],
-                None,
-                (State::Partial, Evidence::BackendAdvertised),
-            ),
-            (
-                None,
-                &[Cap::List][..],
-                Some(false),
-                (State::Partial, Evidence::WindowListFailed),
-            ),
-            (
-                None,
-                &[][..],
-                None,
-                (State::Unsupported, Evidence::BackendDidNotAdvertise),
-            ),
-            (
-                Some(&unavailable),
-                &[][..],
-                None,
-                (State::Unsupported, Evidence::BackendUnavailable),
-            ),
-            (
-                Some(&opt_in_required),
-                &[][..],
-                None,
-                (State::NeedsPermission, Evidence::BackendOptInRequired),
-            ),
-        ] {
-            let report = capability_report(Cap::List, selection, caps, probe);
-            assert_eq!((report.state, report.evidence), expected);
-        }
-    }
 
     #[test]
     fn missing_dependency_is_named_and_fails_readiness() {

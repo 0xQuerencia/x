@@ -103,6 +103,12 @@ advertised operations.
 
 The probe performs no window changes and returns no window names or IDs.
 
+The [desktop contract tests](../../crates/x-agent/src/wm/tests/contract.rs)
+exercise the controller with each adapter's advertised operations and check
+the report against successful, failed and unavailable reads. The optional
+read-only live test checks the selected backend and rejects a stale window
+identity. The Sway and X11 isolated tests also check their actual reports.
+
 ### Command decisions (Perplexity Decider)
 
 X routes looser spoken Actions through OpenRouter's free **Perplexity Decider
