@@ -36,6 +36,10 @@ impl OwnedWorktree {
         &self.start_commit
     }
 
+    pub fn run_id(&self) -> Uuid {
+        self.run_id
+    }
+
     pub fn task_id(&self) -> &str {
         &self.task_id
     }
