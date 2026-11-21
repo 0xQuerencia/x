@@ -24,10 +24,10 @@ pub mod opencode;
 pub mod phase;
 pub mod planner;
 pub mod projects;
-pub mod session_links;
 pub mod quick;
 pub mod screenshots;
 pub mod service;
+pub mod session_links;
 pub mod sys;
 pub mod tools;
 #[cfg(windows)]
