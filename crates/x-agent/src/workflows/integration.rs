@@ -40,13 +40,21 @@ pub fn preview(
     if !dirty.1.trim().is_empty() {
         return Err("The task worktree has uncommitted files. Review and commit them first".into());
     }
+    // The proposed change list belongs to the task branch, not to changes
+    // made independently by the owner since this worktree was created.
+    let (base_ok, merge_base) =
+        git(&project.root, &["merge-base", &primary_head, &task_head])?;
+    let merge_base = merge_base.trim();
+    if !base_ok || !is_commit(merge_base) {
+        return Err("The task and primary checkout have no verified shared base".into());
+    }
     let (diff_ok, output) = git(
         &project.root,
         &[
             "diff",
             "--no-ext-diff",
             "--name-only",
-            &primary_head,
+            merge_base,
             &task_head,
             "--",
         ],
@@ -213,6 +221,19 @@ mod tests {
         assert!(result.merge_tree.is_none());
         assert_eq!(commit(&project.root).unwrap(), head);
         assert_eq!(fs::read_to_string(project.root.join("shared.txt")).unwrap(), "owner content\n");
+    }
+
+    #[test]
+    fn changed_files_list_only_agent_branch_changes() {
+        let (_dir, project, manager, task) = fixture();
+        fs::write(task.path().join("task_only.rs"), "agent work\n").unwrap();
+        commit_worktree(task.path(), "task edit");
+        fs::write(project.root.join("owner_only.rs"), "owner work\n").unwrap();
+        commit_worktree(&project.root, "owner edit");
+        let result = preview(&manager, &project, &task).unwrap();
+        assert!(result.clean);
+        assert!(result.changed_files.contains(&"task_only.rs".into()));
+        assert!(!result.changed_files.contains(&"owner_only.rs".into()));
     }
 
     #[test]
