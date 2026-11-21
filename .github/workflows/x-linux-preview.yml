@@ -1,15 +1,24 @@
 name: X Linux x64 preview (unsigned)
 
 # Current X source preview, not a signed or general-purpose distribution
-# package. KDE support is experimental; a CI runner is not a Plasma desktop.
+# package. Rebuild on executable-relevant changes, not only compositor edits.
+# KDE support is experimental; a CI runner is not a Plasma desktop.
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - ".github/workflows/x-linux-preview.yml"
-      - "crates/x-agent/src/wm/kde.rs"
-      - "crates/x-agent/src/wm/report.rs"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain*"
+      - "build.rs"
+      - "crates/**"
+      - "src/**"
+      - "resources/**"
+      - "assets/**"
+      - "scripts/build*"
 
 permissions:
   contents: read
