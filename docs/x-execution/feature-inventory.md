@@ -66,7 +66,7 @@ Each PR targets `main` and was open and mergeable at audit time. The listed head
 | P7.1–P7.6 | Context provenance, browser tab adapter, snippets, capture router | Build on verified sessions and platform connectors. Coordinate #82 for speech data, and keep remote companion scope explicit. |
 | P8.1–P8.8 | Arch installer, separate X build flags, preview workflows and release QA | Physical tests for the candidate build, exposure and rollback checks, then owner approval for stable publication. |
 
-The next roadmap feature is **P0.2**. Add operation-level probe evidence to the existing reports and preserve current text and JSON consumers. Resolve the baseline parser regression in a separate PR.
+The next roadmap feature is **P0.2**. Add operation-level probe evidence to the existing reports and preserve current text and JSON consumers. The baseline parser regression has a separate fix in [PR #101](https://github.com/0xQuerencia/x/pull/101).
 
 ## Baseline verification
 
@@ -81,6 +81,6 @@ CachyOS Linux x86_64, kernel `7.3.1-1-cachyos`, Hyprland 0.57.0 / Wayland, Rust 
 | `cargo test --locked -p x-agent --all-targets --no-fail-fast` with empty XDG data/config roots and an isolated home | Reproduced the same 2 library failures. System Flatpak exports remain visible to the catalog. The corpus passed and the 3 live tests remained ignored. |
 | GitHub | [PR #92](https://github.com/0xQuerencia/x/pull/92) recorded successful Linux, macOS and Windows x64 checks on the PR. The [Linux preview workflow](https://github.com/0xQuerencia/x/actions/runs/43969988724) succeeded on the audited main commit. |
 
-Failing tests are [`service::tests::destructive_actions_are_gated_by_origin_and_speech_source`](../../crates/x-agent/src/service/tests.rs) and [`workflows::tests::validation::arguments_are_checked`](../../crates/x-agent/src/workflows/tests.rs). The command loads installed app names into [speech repair](../../crates/x-agent/src/wm/speech.rs) before [matching the current window](../../crates/x-agent/src/wm/parse.rs). This needs a focused reproduction using a controlled catalog.
+Failing tests are [`service::tests::destructive_actions_are_gated_by_origin_and_speech_source`](../../crates/x-agent/src/service/tests.rs) and [`workflows::tests::validation::arguments_are_checked`](../../crates/x-agent/src/workflows/tests.rs). The command loads installed app names into [speech repair](../../crates/x-agent/src/wm/speech.rs) before [matching the current window](../../crates/x-agent/src/wm/parse.rs). A controlled fixture in [PR #101](https://github.com/0xQuerencia/x/pull/101) reproduced the failure using an entry with the `windows` keyword. The fix gives valid window grammar priority over catalog repair.
 
 The full application/workspace suite, provider-backed runs, ignored live Hyprland/Sway tests, and physical KDE, Windows and macOS acceptance were not run. The [Windows preview release](https://github.com/0xQuerencia/x/releases/tag/x-win11-preview-4e62fb4aef9c) contains the portable `x.exe`, `SHA256SUMS` and preview README. Windows installation and native behavior remain subject to the [physical checklist](../x-win11.md).
