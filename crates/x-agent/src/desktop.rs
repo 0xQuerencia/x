@@ -330,7 +330,10 @@ pub(crate) fn capture(cmd: &mut Command, limit: Duration) -> Result<(bool, Vec<u
 }
 
 pub(crate) fn hypr(args: &[&str]) -> Result<Value, String> {
-    let (_, buf) = capture(Command::new("hyprctl").args(args), Duration::from_secs(5))?;
+    let (ok, buf) = capture(Command::new("hyprctl").args(args), Duration::from_secs(5))?;
+    if !ok {
+        return Err("hyprctl refused the desktop query".into());
+    }
     serde_json::from_slice(&buf).map_err(|_| "hyprctl gave no usable answer".into())
 }
 

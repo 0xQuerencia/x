@@ -83,6 +83,26 @@ pane is selected.
 desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
 once: X refuses to start while any task or recording of its own is in flight.
 
+### Desktop capability checks
+
+Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
+report for the CLI session. `hex agent desktop` reports the same data from the
+running X service. The older `supported` list still contains the backend's
+advertised operations.
+
+- **Supported** means a read-only window list probe succeeded. Hyprland and
+  Windows provide this probe.
+- **Partial** means the selected backend advertises the operation and the
+  diagnostic could not verify it. This includes mutations such as focus, move
+  and close, and listing when the backend has no bounded probe or its read failed.
+- **Unsupported** means no backend is available in this session or the selected
+  backend does not advertise the operation.
+- **Needs permission** means KDE Plasma 6's experimental backend has its helper
+  and session bus but still needs the explicit `X_ENABLE_EXPERIMENTAL_KDE=1`
+  opt-in.
+
+The probe performs no window changes and returns no window names or IDs.
+
 ### Command decisions (Perplexity Decider)
 
 X routes looser spoken Actions through OpenRouter's free **Perplexity Decider
