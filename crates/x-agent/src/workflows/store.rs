@@ -53,6 +53,23 @@ pub struct GraphEntry {
     pub coding_only: bool,
 }
 
+/// Persisted outcome-only summary of a coding graph, without private goals,
+/// command output, provider stderr, or request fingerprints.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GraphLast {
+    pub graph_id: String,
+    pub finished_at: u64,
+    pub verified: usize,
+    pub stopped: bool,
+    pub nodes: Vec<GraphNodeLast>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GraphNodeLast {
+    pub id: String,
+    pub outcome: super::scheduler::Outcome,
+}
+
 pub struct Store {
     dir: PathBuf,
     home: PathBuf,
@@ -411,6 +428,56 @@ impl Store {
     pub fn last(&self, id: &str) -> Option<Report> {
         let path = self.file(id).ok()?.with_extension("last.json");
         serde_json::from_str(&Self::read(&path).ok()?).ok()
+    }
+
+    /// Record only verifiable node outcomes, never harness text or errors.
+    pub fn record_graph_last(
+        &self,
+        graph_id: &str,
+        report: &super::scheduler::Report,
+    ) -> Result<(), String> {
+        let path = self.file(graph_id)?.with_extension("last.json");
+        let finished_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let summary = GraphLast {
+            graph_id: graph_id.into(),
+            finished_at,
+            verified: report
+                .nodes
+                .iter()
+                .filter(|node| node.outcome == super::scheduler::Outcome::Verified)
+                .count(),
+            stopped: report.stopped,
+            nodes: report
+                .nodes
+                .iter()
+                .map(|node| GraphNodeLast {
+                    id: node.id.clone(),
+                    outcome: node.outcome,
+                })
+                .collect(),
+        };
+        let bytes = serde_json::to_vec_pretty(&summary).map_err(|e| e.to_string())?;
+        self.write_private(&path, &bytes)
+    }
+
+    /// Unlike the legacy last-result reader, report missing vs corrupt data.
+    pub fn last_graph(&self, id: &str) -> Result<Option<GraphLast>, String> {
+        let path = self.file(id)?.with_extension("last.json");
+        match std::fs::symlink_metadata(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("Cannot inspect coding run summary: {e}")),
+            Ok(_) => {}
+        }
+        let text = Self::read(&path).map_err(|e| format!("Cannot read coding run summary: {e}"))?;
+        let summary: GraphLast =
+            serde_json::from_str(&text).map_err(|_| "Coding run summary is invalid")?;
+        if summary.graph_id != id {
+            return Err("Coding run summary belongs to another workflow".into());
+        }
+        Ok(Some(summary))
     }
 }
 
