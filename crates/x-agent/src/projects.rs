@@ -153,8 +153,23 @@ impl Registry {
 
     /// Remember an explicit project selection across app restarts.
     pub fn select(&self, query: &str) -> Result<(Project, bool), String> {
+        self.select_checked(query, None)
+    }
+
+    pub(crate) fn select_pinned(&self, project: &Project) -> Result<(Project, bool), String> {
+        self.select_checked(&project.id.to_string(), Some(project.root.as_path()))
+    }
+
+    fn select_checked(
+        &self,
+        query: &str,
+        pinned: Option<&Path>,
+    ) -> Result<(Project, bool), String> {
         self.update_data(|data| {
             let project = resolve_in(data, query)?.clone();
+            if pinned.is_some_and(|path| project.root != path) {
+                return Err("The approved project directory changed".into());
+            }
             validate_saved_root(&project.root, &self.home)?;
             let changed = data.selected != Some(project.id);
             data.selected = Some(project.id);

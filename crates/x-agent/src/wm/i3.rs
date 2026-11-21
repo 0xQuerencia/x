@@ -3,6 +3,7 @@
 //! Not yet exercised on a real Sway or i3 session.
 
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -15,13 +16,17 @@ pub struct I3 {
 
 impl I3 {
     fn call(&self, args: &[&str]) -> Result<Vec<u8>, WmError> {
-        let out = Command::new(self.bin)
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| WmError::Backend(format!("could not run {}: {e}", self.bin)))?;
-        if out.status.success() {
-            Ok(out.stdout)
+        let (ok, output) = crate::desktop::capture(
+            Command::new(self.bin)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null()),
+            Duration::from_secs(5),
+        )
+        .map_err(|e| WmError::Backend(format!("could not run {}: {e}", self.bin)))?;
+        if ok {
+            Ok(output)
         } else {
             Err(WmError::Backend(format!("{} failed", self.bin)))
         }

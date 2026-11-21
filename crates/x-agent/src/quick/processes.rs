@@ -1,6 +1,6 @@
 //! On-demand process viewer with an explicit, verified termination action.
 //! Linux uses /proc and pidfds, never shell commands or PID-only termination.
-//! Unsupported systems return no entries and refuse termination.
+//! Windows supports an on-demand, read-only process list. Termination stays Linux-only.
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProcessInfo {
@@ -181,12 +181,137 @@ mod linux {
     }
 }
 
+#[cfg(windows)]
+mod windows {
+    use super::ProcessInfo;
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    const MAX_OUTPUT: usize = 512 * 1024;
+    const MAX_ROWS: usize = 4_000;
+
+    // Tasklist's /FO CSV format contains quoted cells, including commas in
+    // the localized memory column and doubled quotes in process names.
+    fn csv_cells(line: &str) -> Option<Vec<String>> {
+        let mut cells = Vec::new();
+        let mut cell = String::new();
+        let mut quoted = false;
+        let mut chars = line.trim_end_matches('\r').chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '"' if quoted && chars.peek() == Some(&'"') => {
+                    cell.push('"');
+                    chars.next();
+                }
+                '"' => quoted = !quoted,
+                ',' if !quoted => {
+                    cells.push(std::mem::take(&mut cell));
+                }
+                _ => cell.push(ch),
+            }
+        }
+        if quoted {
+            return None;
+        }
+        cells.push(cell);
+        (cells.len() == 5).then_some(cells)
+    }
+
+    fn parse_row(line: &str, query: &str) -> Option<ProcessInfo> {
+        let cells = csv_cells(line)?;
+        let name = cells[0].trim();
+        if name.is_empty() || name.chars().count() > 120 {
+            return None;
+        }
+        let pid: u32 = cells[1].trim().parse().ok()?;
+        if pid <= 1 || pid == std::process::id() || !name.to_lowercase().contains(query) {
+            return None;
+        }
+        let resident_kib = cells[4]
+            .chars()
+            .filter(char::is_ascii_digit)
+            .collect::<String>()
+            .parse::<u64>()
+            .ok()?;
+        Some(ProcessInfo {
+            pid,
+            name: name.to_string(),
+            resident_kib,
+            // No reusable identity is supplied by tasklist; Windows process
+            // termination remains unsupported rather than trusting a PID.
+            start_ticks: 0,
+        })
+    }
+
+    pub(super) fn list(query: &str) -> Vec<ProcessInfo> {
+        let root = std::env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        let executable = root.join("System32").join("tasklist.exe");
+        if !executable.is_file() {
+            return Vec::new();
+        }
+        let Ok((true, bytes)) = crate::desktop::capture(
+            Command::new(executable)
+                .args(["/FO", "CSV", "/NH"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null()),
+            Duration::from_secs(5),
+        ) else {
+            return Vec::new();
+        };
+        if bytes.len() > MAX_OUTPUT {
+            return Vec::new();
+        }
+        let query = query.trim().to_lowercase();
+        let text = String::from_utf8_lossy(&bytes);
+        let mut found: Vec<_> = text
+            .lines()
+            .take(MAX_ROWS)
+            .filter_map(|line| parse_row(line, &query))
+            .collect();
+        found.sort_by(|a, b| {
+            b.resident_kib
+                .cmp(&a.resident_kib)
+                .then_with(|| a.pid.cmp(&b.pid))
+        });
+        found.truncate(6);
+        found
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn parses_windows_csv_without_treating_cells_as_commands() {
+            let line = "\"Visual Studio Code.exe\",\"4242\",\"Console\",\"1\",\"123,456 K\"";
+            let process = parse_row(line, "visual studio").unwrap();
+            assert_eq!(process.pid, 4242);
+            assert_eq!(process.resident_kib, 123_456);
+            assert_eq!(process.start_ticks, 0);
+            assert!(parse_row(line, "firefox").is_none());
+            assert!(parse_row("\"bad\",\"4\",\"Console\",\"1\",\"44 K", "").is_none());
+            assert_eq!(
+                csv_cells("\"A \"\"quoted\"\" app.exe\",\"4\",\"C\",\"1\",\"4 K\"").unwrap()[0],
+                "A \"quoted\" app.exe"
+            );
+        }
+    }
+}
+
 pub fn list(query: &str) -> Vec<ProcessInfo> {
     #[cfg(target_os = "linux")]
     {
         linux::list(query)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        windows::list(query)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = query;
         Vec::new()

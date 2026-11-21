@@ -114,8 +114,14 @@ pub fn parse(text: &str) -> Option<Request> {
 
 /// [`parse`] against a given set of installed apps.
 pub fn parse_with(text: &str, entries: &[Entry]) -> Option<Request> {
-    let text = super::speech::fix_with(text, entries);
-    let text = text.as_str();
+    let normalized = super::speech::fix_with(text, &[]);
+    parse_normalized(&normalized, entries).or_else(|| {
+        let repaired = super::speech::fix_with(text, entries);
+        parse_normalized(&repaired, entries)
+    })
+}
+
+fn parse_normalized(text: &str, entries: &[Entry]) -> Option<Request> {
     match text {
         "undo" | "undo that" | "undo it" => return req(Op::Undo, Target::default(), None),
         "show my open windows"

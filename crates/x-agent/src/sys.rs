@@ -1,4 +1,4 @@
-//! Linux desktop system controls. All commands are fixed argv, never a shell.
+//! Bounded desktop system controls. All commands are fixed argv, never a shell.
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -87,19 +87,31 @@ impl Runner for Local {
 
 /// Determine capabilities without changing state.
 pub fn capabilities(runner: &dyn Runner) -> Vec<Capability> {
-    let mut found = Vec::new();
-    if runner.exists("wpctl") || runner.exists("pactl") {
-        found.push(Capability::Audio);
+    #[cfg(target_os = "macos")]
+    {
+        if runner.exists("osascript") {
+            vec![Capability::Audio]
+        } else {
+            Vec::new()
+        }
     }
-    if runner.exists("brightnessctl") {
-        found.push(Capability::Brightness);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut found = Vec::new();
+        if runner.exists("wpctl") || runner.exists("pactl") {
+            found.push(Capability::Audio);
+        }
+        if runner.exists("brightnessctl") {
+            found.push(Capability::Brightness);
+        }
+        if runner.exists("playerctl") {
+            found.push(Capability::Media);
+        }
+        found
     }
-    if runner.exists("playerctl") {
-        found.push(Capability::Media);
-    }
-    found
 }
 
+#[cfg(any(test, not(target_os = "macos")))]
 fn percent_from_wpctl(text: &str) -> Result<(u8, bool), String> {
     let value = text
         .strip_prefix("Volume:")
@@ -113,6 +125,7 @@ fn percent_from_wpctl(text: &str) -> Result<(u8, bool), String> {
     ))
 }
 
+#[cfg(any(test, not(target_os = "macos")))]
 fn percent_from_pactl(text: &str) -> Result<u8, String> {
     text.split_whitespace()
         .find_map(|part| {
@@ -123,24 +136,72 @@ fn percent_from_pactl(text: &str) -> Result<u8, String> {
         .ok_or_else(|| "Audio backend returned an invalid volume".into())
 }
 
+/// AppleScript's volume settings record, read without using System Events
+/// or a privileged helper. Unrecognized data fails closed.
+#[cfg(any(test, target_os = "macos"))]
+fn percent_from_macos(text: &str) -> Result<(u8, bool), String> {
+    let mut level = None;
+    let mut muted = None;
+    for part in text.split(',').map(str::trim) {
+        if let Some(value) = part.strip_prefix("output volume:") {
+            level = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|value| *value <= 100);
+        }
+        if let Some(value) = part.strip_prefix("output muted:") {
+            muted = match value.trim() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            };
+        }
+    }
+    Ok((
+        level.ok_or("macOS returned no valid output volume")?,
+        muted.ok_or("macOS returned no valid mute state")?,
+    ))
+}
+
 fn volume(runner: &dyn Runner) -> Result<(u8, bool), String> {
-    if runner.exists("wpctl") {
-        return percent_from_wpctl(&runner.run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"])?);
+    #[cfg(target_os = "macos")]
+    {
+        percent_from_macos(&runner.run("osascript", &["-e", "get volume settings"])?)
     }
-    if runner.exists("pactl") {
-        let level = runner.run("pactl", &["get-sink-volume", "@DEFAULT_SINK@"])?;
-        let mute = runner.run("pactl", &["get-sink-mute", "@DEFAULT_SINK@"])?;
-        return Ok((percent_from_pactl(&level)?, mute.contains("yes")));
+    #[cfg(not(target_os = "macos"))]
+    {
+        if runner.exists("wpctl") {
+            return percent_from_wpctl(
+                &runner.run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"])?,
+            );
+        }
+        if runner.exists("pactl") {
+            let level = runner.run("pactl", &["get-sink-volume", "@DEFAULT_SINK@"])?;
+            let mute = runner.run("pactl", &["get-sink-mute", "@DEFAULT_SINK@"])?;
+            return Ok((percent_from_pactl(&level)?, mute.contains("yes")));
+        }
+        Err("Neither wpctl nor pactl is installed".into())
     }
-    Err("Neither wpctl nor pactl is installed".into())
 }
 
 fn set_volume(runner: &dyn Runner, level: u8) -> Result<(), String> {
-    let pct = format!("{level}%");
-    if runner.exists("wpctl") {
-        runner.run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", &pct])?;
-    } else {
-        runner.run("pactl", &["set-sink-volume", "@DEFAULT_SINK@", &pct])?;
+    #[cfg(target_os = "macos")]
+    {
+        // Only a checked 0-100 integer enters this fixed AppleScript statement.
+        runner.run(
+            "osascript",
+            &["-e", &format!("set volume output volume {level}")],
+        )?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let pct = format!("{level}%");
+        if runner.exists("wpctl") {
+            runner.run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", &pct])?;
+        } else {
+            runner.run("pactl", &["set-sink-volume", "@DEFAULT_SINK@", &pct])?;
+        }
     }
     let (actual, _) = volume(runner)?;
     if actual.abs_diff(level) > 1 {
@@ -152,11 +213,23 @@ fn set_volume(runner: &dyn Runner, level: u8) -> Result<(), String> {
 }
 
 fn set_mute(runner: &dyn Runner, muted: bool) -> Result<(), String> {
-    let value = if muted { "1" } else { "0" };
-    if runner.exists("wpctl") {
-        runner.run("wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", value])?;
-    } else {
-        runner.run("pactl", &["set-sink-mute", "@DEFAULT_SINK@", value])?;
+    #[cfg(target_os = "macos")]
+    {
+        let script = if muted {
+            "set volume with output muted"
+        } else {
+            "set volume without output muted"
+        };
+        runner.run("osascript", &["-e", script])?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let value = if muted { "1" } else { "0" };
+        if runner.exists("wpctl") {
+            runner.run("wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", value])?;
+        } else {
+            runner.run("pactl", &["set-sink-mute", "@DEFAULT_SINK@", value])?;
+        }
     }
     if volume(runner)?.1 != muted {
         return Err("Audio mute state did not change as requested".into());
@@ -194,9 +267,26 @@ fn set_brightness(runner: &dyn Runner, level: u8) -> Result<(), String> {
 
 #[derive(Clone, Copy, Debug)]
 enum Undo {
-    Volume(u8),
-    Mute(bool),
-    Brightness(u8),
+    Volume { before: u8, after: u8 },
+    Mute { before: bool, after: bool },
+    Brightness { before: u8, after: u8 },
+}
+
+impl Undo {
+    /// Refuse to overwrite a setting someone changed outside X since this
+    /// command. Exact mute state and 1% tolerances match action readback.
+    fn verify_current(self, runner: &dyn Runner) -> Result<(), String> {
+        let current = match self {
+            Self::Volume { after, .. } => volume(runner)?.0.abs_diff(after) <= 1,
+            Self::Mute { after, .. } => volume(runner)?.1 == after,
+            Self::Brightness { after, .. } => brightness(runner)?.abs_diff(after) <= 2,
+        };
+        if current {
+            Ok(())
+        } else {
+            Err("Cannot undo: the system setting changed since X last controlled it".into())
+        }
+    }
 }
 
 static HISTORY: Mutex<Vec<(Instant, Undo)>> = Mutex::new(Vec::new());
@@ -226,13 +316,19 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
         Op::SetVolume(level) if level <= 100 => {
             let (before, _) = volume(runner)?;
             set_volume(runner, level)?;
-            remember(Undo::Volume(before));
+            remember(Undo::Volume {
+                before,
+                after: volume(runner)?.0,
+            });
             Ok(format!("Volume set and verified at {level}%"))
         }
         Op::SetMute(muted) => {
             let (_, before) = volume(runner)?;
             set_mute(runner, muted)?;
-            remember(Undo::Mute(before));
+            remember(Undo::Mute {
+                before,
+                after: muted,
+            });
             Ok(if muted {
                 "Audio muted (verified)"
             } else {
@@ -243,7 +339,10 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
         Op::SetBrightness(level) if level <= 100 => {
             let before = brightness(runner)?;
             set_brightness(runner, level)?;
-            remember(Undo::Brightness(before));
+            remember(Undo::Brightness {
+                before,
+                after: brightness(runner)?,
+            });
             Ok(format!("Brightness set and verified at {level}%"))
         }
         Op::SetVolume(_) | Op::SetBrightness(_) => Err("Percent must be 0-100".into()),
@@ -280,18 +379,19 @@ pub fn undo(runner: &dyn Runner) -> Result<String, String> {
         HISTORY.lock().unwrap_or_else(|p| p.into_inner()).clear();
         return Err("System change is too old to undo".into());
     }
+    previous.verify_current(runner)?;
     match previous {
-        Undo::Volume(value) => {
-            set_volume(runner, value)?;
-            Ok(format!("Restored volume to {value}%"))
+        Undo::Volume { before, .. } => {
+            set_volume(runner, before)?;
+            Ok(format!("Restored volume to {before}%"))
         }
-        Undo::Mute(muted) => {
-            set_mute(runner, muted)?;
+        Undo::Mute { before, .. } => {
+            set_mute(runner, before)?;
             Ok("Restored previous mute state".into())
         }
-        Undo::Brightness(value) => {
-            set_brightness(runner, value)?;
-            Ok(format!("Restored brightness to {value}%"))
+        Undo::Brightness { before, .. } => {
+            set_brightness(runner, before)?;
+            Ok(format!("Restored brightness to {before}%"))
         }
     }
 }
@@ -333,11 +433,18 @@ mod tests {
     struct Probe;
     impl Runner for Probe {
         fn exists(&self, program: &str) -> bool {
-            matches!(program, "wpctl" | "brightnessctl" | "playerctl")
+            matches!(
+                program,
+                "wpctl" | "brightnessctl" | "playerctl" | "osascript"
+            )
         }
         fn run(&self, program: &str, args: &[&str]) -> Result<String, String> {
             match (program, args) {
                 ("wpctl", ["get-volume", _]) => Ok("Volume: 0.30 [MUTED]".into()),
+                ("osascript", ["-e", "get volume settings"]) => Ok(
+                    "output volume:30, input volume:50, alert volume:90, output muted:true".into(),
+                ),
+                ("osascript", _) => Ok(String::new()),
                 ("brightnessctl", ["get"]) => Ok("30".into()),
                 ("brightnessctl", ["max"]) => Ok("100".into()),
                 ("playerctl", ["status"]) => Ok("Paused".into()),
@@ -345,6 +452,59 @@ mod tests {
                 _ => Err("unsupported".into()),
             }
         }
+    }
+
+    #[test]
+    fn undo_refuses_external_changes_instead_of_overwriting_them() {
+        let probe = Probe;
+        assert!(
+            Undo::Volume {
+                before: 10,
+                after: 30
+            }
+            .verify_current(&probe)
+            .is_ok()
+        );
+        assert!(
+            Undo::Volume {
+                before: 10,
+                after: 80
+            }
+            .verify_current(&probe)
+            .is_err()
+        );
+        assert!(
+            Undo::Mute {
+                before: false,
+                after: true
+            }
+            .verify_current(&probe)
+            .is_ok()
+        );
+        assert!(
+            Undo::Mute {
+                before: false,
+                after: false
+            }
+            .verify_current(&probe)
+            .is_err()
+        );
+        assert!(
+            Undo::Brightness {
+                before: 10,
+                after: 30
+            }
+            .verify_current(&probe)
+            .is_ok()
+        );
+        assert!(
+            Undo::Brightness {
+                before: 10,
+                after: 80
+            }
+            .verify_current(&probe)
+            .is_err()
+        );
     }
 
     #[test]
@@ -362,15 +522,33 @@ mod tests {
     #[test]
     fn readback_and_capability_probe() {
         let p = Probe;
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(
             capabilities(&p),
             vec![Capability::Audio, Capability::Brightness, Capability::Media]
         );
+        #[cfg(target_os = "macos")]
+        assert_eq!(capabilities(&p), vec![Capability::Audio]);
         assert_eq!(volume(&p).unwrap(), (30, true));
         assert_eq!(brightness(&p).unwrap(), 30);
         assert!(execute(Op::SetVolume(30), &p).is_ok());
         assert!(execute(Op::Pause, &p).unwrap().contains("verified"));
         assert!(execute(Op::SetVolume(120), &p).is_err());
+    }
+
+    #[test]
+    fn parses_coreaudio_settings_without_guessing_missing_fields() {
+        assert_eq!(
+            percent_from_macos("output volume:30, input volume:50, output muted:true"),
+            Ok((30, true))
+        );
+        assert_eq!(
+            percent_from_macos("output volume:0, alert volume:50, output muted:false"),
+            Ok((0, false))
+        );
+        assert!(percent_from_macos("output volume:101, output muted:false").is_err());
+        assert!(percent_from_macos("output volume:40").is_err());
+        assert!(percent_from_macos("output volume:40, output muted:unknown").is_err());
     }
 
     #[test]

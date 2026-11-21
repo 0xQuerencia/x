@@ -28,6 +28,8 @@ pub enum Proof {
 /// Constructed only after an exact project, task and worktree scope is
 /// explicitly authorized by the native host. The model cannot issue it.
 pub struct Assignment {
+    // The native approval bridge will consume this assignment identity.
+    #[allow(dead_code)]
     node_id: String,
     project: Project,
     worktree: OwnedWorktree,
@@ -39,6 +41,7 @@ pub struct Assignment {
 }
 
 impl Assignment {
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) fn from_approved_scope(
         node: &Node,
         project: Project,
@@ -102,6 +105,7 @@ pub struct ApprovedHarnessExecutor {
 impl ApprovedHarnessExecutor {
     /// Preparation must come from the native approval path, never from a
     /// model-proposed graph or a JSON `approved: true` property.
+    #[allow(dead_code)]
     pub(crate) fn new(
         graph: &Graph,
         run_id: Uuid,
@@ -376,7 +380,9 @@ mod tests {
     impl OwnedRun for FakeRun {
         fn join(self: Box<Self>) -> RunResult {
             let success = !self.fail;
-            // Keep short mock tasks overlapping despite slow journal fsyncs.
+            // The journal fsync can serialize the initial claims on slow CI
+            // disks. Keep the first fake session alive until both actually
+            // start, without allowing a deadlock to hang this test.
             let deadline = std::time::Instant::now() + Duration::from_secs(3);
             while self.peak.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));

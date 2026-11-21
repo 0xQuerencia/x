@@ -25,14 +25,8 @@ fn run(service: &Service, command: ProjectCommand) -> Result<ControlReply, Strin
             })
         }
         ProjectCommand::Use { query } => {
-            let project = registry.validated_resolve(&query)?;
-            let shown = service.set_workspace(
-                project
-                    .root
-                    .to_str()
-                    .ok_or("The project folder has an unsupported path")?,
-            )?;
-            let (_, changed) = registry.select(&project.id.to_string())?;
+            let (project, changed) = service.select_registered_project(&query)?;
+            let shown = project.root.display();
             if changed {
                 Ok(ControlReply::done(format!(
                     "Selected {} ({shown})",
