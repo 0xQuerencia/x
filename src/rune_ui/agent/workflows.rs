@@ -4,7 +4,7 @@
 //! the engine would refuse.
 
 use ::x_agent::workflows::model::{OnFailure, Step, StepAction, Workflow};
-use ::x_agent::workflows::store::Entry;
+use ::x_agent::workflows::store::{Entry, GraphEntry};
 use rune::{El, TextEdit, col, row, text};
 use rune_kit::TextInput;
 
@@ -374,6 +374,7 @@ pub(super) struct Row {
 #[derive(Default)]
 pub(in crate::rune_ui) struct Manager {
     rows: Vec<Row>,
+    graphs: Vec<GraphEntry>,
     loaded: Option<std::time::Instant>,
     /// Set by anything that changes the files, so the list reloads at once.
     dirty: bool,
@@ -419,8 +420,9 @@ impl Manager {
                 entry,
             })
             .collect();
-        let shown = serde_json::to_string(
-            &rows
+        let graphs = store.list_graphs();
+        let shown = serde_json::to_string(&(
+            rows
                 .iter()
                 .map(|r| {
                     (
@@ -431,11 +433,13 @@ impl Manager {
                     )
                 })
                 .collect::<Vec<_>>(),
-        )
+            &graphs,
+        ))
         .unwrap_or_default();
         self.dirty = false;
         self.loaded = Some(std::time::Instant::now());
         self.rows = rows;
+        self.graphs = graphs;
         let changed = shown != self.shown;
         self.shown = shown;
         changed
@@ -503,6 +507,7 @@ fn list(p: Paint, mgr: &Manager) -> El {
         .rows
         .iter()
         .map(|r| r.entry.workflow.id.clone())
+        .chain(mgr.graphs.iter().map(|r| r.id.clone()))
         .collect();
     let mut list = col().key("wf-list").gap(8.0).child(
         row()
@@ -521,7 +526,7 @@ fn list(p: Paint, mgr: &Manager) -> El {
                 },
             )),
     );
-    if mgr.rows.is_empty() {
+    if mgr.rows.is_empty() && mgr.graphs.is_empty() {
         list = list.child(small("wf-empty".into(),
             tr("No workflows yet. Create one, then say its trigger phrase, such as \"X, start coding\".").into(),
             p.muted(),
@@ -529,6 +534,18 @@ fn list(p: Paint, mgr: &Manager) -> El {
     }
     for item in &mgr.rows {
         list = list.child(entry_card(p, item));
+    }
+    if !mgr.graphs.is_empty() {
+        list = list
+            .child(section_label(p, "wf-coding-title", tr("Coding workflows")))
+            .child(small(
+                "wf-coding-note".into(),
+                "Imported coding graphs are read-only here. Review each job before approval.".into(),
+                p.muted(),
+            ));
+        for graph in &mgr.graphs {
+            list = list.child(graph_card(p, graph));
+        }
     }
     if let Some((ok, message)) = &mgr.note {
         list = list.child(small(
@@ -538,6 +555,54 @@ fn list(p: Paint, mgr: &Manager) -> El {
         ));
     }
     list
+}
+
+fn graph_card(p: Paint, graph: &GraphEntry) -> El {
+    let id = graph.id.clone();
+    let mut card = col()
+        .key(format!("wf-graph-{id}"))
+        .gap(6.0)
+        .px(16.0)
+        .py(12.0)
+        .radius(p.k.radius.md)
+        .fill(p.k.c.layer_01)
+        .child(
+            text(graph.name.clone())
+                .key(format!("wf-graph-{id}-name"))
+                .font(p.k.ty.small_medium)
+                .color(p.text()),
+        )
+        .child(small(
+            format!("wf-graph-{id}-meta"),
+            format!("{} coding jobs · explicit approval required", graph.jobs),
+            p.muted(),
+        ));
+    if graph.coding_only {
+        card = card.child(button(
+            p,
+            &format!("wf-graph-{id}-run"),
+            tr("Review & run"),
+            ButtonKind::Primary,
+            move |ui: &mut Ui, _| {
+                let result = agent_host::service().plan_graph_workflow(&id);
+                note(
+                    ui,
+                    result.is_ok(),
+                    result.map_or_else(
+                        |error| error,
+                        |_| "Planned: review every job above before approving".to_string(),
+                    ),
+                );
+            },
+        ));
+    } else {
+        card = card.child(small(
+            format!("wf-graph-{id}-mixed"),
+            "Mixed or desktop graphs cannot use the coding graph runner.".into(),
+            p.warning(),
+        ));
+    }
+    card
 }
 
 fn entry_card(p: Paint, item: &Row) -> El {
