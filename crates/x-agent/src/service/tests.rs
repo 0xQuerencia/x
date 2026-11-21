@@ -2128,14 +2128,26 @@ fn stop_revokes_native_job_receipts_without_affecting_existing_task_policy() {
         intent: "read-only-task-proof".into(),
     };
     let receipt = grants
-        .issue(Permission::StartHarness, scope.clone(), Duration::from_secs(30), 1, true)
+        .issue(
+            Permission::StartHarness,
+            scope.clone(),
+            Duration::from_secs(30),
+            1,
+            true,
+        )
         .unwrap();
-    grants.check(&receipt, Permission::StartHarness, &scope).unwrap();
+    grants
+        .check(&receipt, Permission::StartHarness, &scope)
+        .unwrap();
 
     let pending = service.plan("open firefox", Mode::Actions).unwrap();
     assert_eq!(service.snapshot(0).phase, Phase::AwaitingApproval);
     service.clone().cancel();
-    assert!(grants.consume(&receipt, Permission::StartHarness, &scope).is_err());
+    assert!(
+        grants
+            .consume(&receipt, Permission::StartHarness, &scope)
+            .is_err()
+    );
     assert!(service.approve(pending.id).is_err());
     assert_eq!(service.snapshot(0).phase, Phase::Cancelled);
 }
@@ -2148,12 +2160,24 @@ fn service_clones_share_stop_revocation() {
     let (service, _, _) = rig();
     let grants = service.scoped_grants();
     assert!(Arc::ptr_eq(&grants, &service.clone().scoped_grants()));
-    let project = Scope::Project { project_id: Uuid::new_v4() };
+    let project = Scope::Project {
+        project_id: Uuid::new_v4(),
+    };
     let receipt = grants
-        .issue(Permission::InspectProject, project.clone(), Duration::from_secs(20), 1, true)
+        .issue(
+            Permission::InspectProject,
+            project.clone(),
+            Duration::from_secs(20),
+            1,
+            true,
+        )
         .unwrap();
     service.cancel();
-    assert!(grants.check(&receipt, Permission::InspectProject, &project).is_err());
+    assert!(
+        grants
+            .check(&receipt, Permission::InspectProject, &project)
+            .is_err()
+    );
 }
 
 #[test]
