@@ -99,6 +99,10 @@ pub fn run(
         }
         if !stop_new {
             for (index, node) in graph.nodes.iter().enumerate() {
+                if stop_new || stop.requested() {
+                    stop_new = true;
+                    break;
+                }
                 if finished[index].is_some() || active.contains(&index) {
                     continue;
                 }
