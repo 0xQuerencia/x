@@ -7,6 +7,7 @@
 //! or a model prompt body, never a command.
 
 pub mod a11y;
+pub mod bundle;
 pub mod commands;
 
 use std::sync::Arc;
