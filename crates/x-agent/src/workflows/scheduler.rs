@@ -117,6 +117,7 @@ pub fn run(
     let mut finished: Vec<Option<Outcome>> = vec![None; count];
     let mut active: HashSet<usize> = HashSet::new();
     let mut resources: HashSet<Resource> = HashSet::new();
+    let mut resource_leases: HashMap<usize, Resource> = HashMap::new();
     let mut notes = vec![String::new(); count];
     let (send, receive) = mpsc::channel::<(usize, Outcome)>();
     let mut stop_new = false;
@@ -173,7 +174,8 @@ pub fn run(
                     progressed = true;
                     continue;
                 }
-                resources.insert(owned_resource);
+                resources.insert(owned_resource.clone());
+                resource_leases.insert(index, owned_resource);
                 active.insert(index);
                 max_concurrent = max_concurrent.max(active.len());
                 progressed = true;
@@ -201,7 +203,9 @@ pub fn run(
             return Err("The scheduler lost an owned worker".into());
         };
         active.remove(&index);
-        resources.remove(&resource(&graph.nodes[index], executor.as_ref()));
+        if let Some(lease) = resource_leases.remove(&index) {
+            resources.remove(&lease);
+        }
         finished[index] = Some(outcome);
         if matches!(outcome, Outcome::Failed | Outcome::Unverified)
             && graph.nodes[index].on_failure == super::model::OnFailure::Stop
