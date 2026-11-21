@@ -90,6 +90,14 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(report) => ControlReply::done(report.to_string()),
             Err(error) => refuse(error),
         },
+        "last-graph" if value.is_empty() => need("a workflow id"),
+        "last-graph" => match store.last_graph(value) {
+            Ok(Some(report)) => ControlReply::done(
+                serde_json::to_string(&report).unwrap_or_default(),
+            ),
+            Ok(None) => refuse(format!("{value:?} has no saved coding run result")),
+            Err(error) => refuse(error),
+        },
         "last" if value.is_empty() => need("a workflow id"),
         "last" => match store.last(value) {
             Some(report) => ControlReply::done(serde_json::to_string(&report).unwrap_or_default()),
@@ -133,7 +141,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, permissions, uncertain, run, run-graph, last, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, permissions, uncertain, run, run-graph, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }
