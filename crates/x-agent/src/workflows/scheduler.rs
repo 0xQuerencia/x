@@ -257,6 +257,7 @@ mod tests {
 
     struct Mock {
         authorized: bool,
+        isolated: bool,
         running: AtomicUsize,
         peak: AtomicUsize,
         calls: AtomicUsize,
@@ -267,6 +268,7 @@ mod tests {
         fn new(outcome: Outcome) -> Self {
             Self {
                 authorized: true,
+                isolated: false,
                 running: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
                 calls: AtomicUsize::new(0),
@@ -278,6 +280,10 @@ mod tests {
     impl Executor for Mock {
         fn authorized(&self, _node: &Node) -> bool {
             self.authorized
+        }
+
+        fn verified_worktree_key(&self, node: &Node) -> Option<String> {
+            self.isolated.then(|| node.id.clone())
         }
 
         fn execute(&self, _node: Node, cancel: Cancellation) -> Outcome {
@@ -360,6 +366,25 @@ mod tests {
         assert_eq!(report.max_concurrent, 1);
         assert_eq!(mock.peak.load(Ordering::SeqCst), 1);
         assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn verified_distinct_worktrees_can_run_in_parallel_within_one_project() {
+        let project = uuid::Uuid::new_v4().to_string();
+        let graph = graph(&project, &project);
+        let mut mock = Mock::new(Outcome::Verified);
+        mock.isolated = true;
+        let mock = Arc::new(mock);
+        let report = run(
+            &graph,
+            Path::new("/tmp"),
+            mock.clone(),
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
+        assert_eq!(report.max_concurrent, 2);
+        assert_eq!(mock.peak.load(Ordering::SeqCst), 2);
     }
 
     #[test]
