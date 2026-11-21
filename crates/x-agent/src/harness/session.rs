@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::Kind;
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct SessionId(String);
@@ -9,6 +11,14 @@ pub struct SessionId(String);
 impl SessionId {
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn kind(&self) -> Kind {
+        if self.0.starts_with("ses_") {
+            Kind::OpenCode
+        } else {
+            Kind::ClaudeCode
+        }
     }
 }
 
@@ -23,10 +33,18 @@ impl TryFrom<String> for SessionId {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
         });
-        if valid {
+        let uuid = value.len() == 36
+            && value.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            });
+        if valid || uuid {
             Ok(Self(value))
         } else {
-            Err("Enter an exact OpenCode session ID beginning with ses_")
+            Err("Enter an exact harness session ID")
         }
     }
 }
@@ -58,8 +76,12 @@ impl Session {
         {
             return None;
         }
+        let id = SessionId::try_from(id).ok()?;
+        if id.kind() != Kind::OpenCode {
+            return None;
+        }
         Some(Self {
-            id: SessionId::try_from(id).ok()?,
+            id,
             title: title
                 .chars()
                 .filter(|c| !c.is_control())

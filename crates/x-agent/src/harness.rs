@@ -7,13 +7,17 @@ use serde::Serialize;
 
 use crate::cancellation::Cancellation;
 
+pub mod claude;
+pub(crate) mod evidence;
 pub mod probe;
+pub(crate) mod process;
 mod session;
 pub use session::{Session, SessionId};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
+    #[default]
     OpenCode,
     ClaudeCode,
 }
@@ -33,6 +37,7 @@ pub enum Capability {
     OwnedRun,
     StreamEvents,
     StopOwnedRun,
+    ResumeOwnedSession,
 }
 
 pub(crate) const OPENCODE_OWNED_CAPABILITIES: &[Capability] = &[

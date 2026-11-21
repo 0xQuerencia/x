@@ -120,6 +120,8 @@ pub struct Task {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accepted_session: Option<harness::SessionId>,
     pub work_access: harness::WorkAccess,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_harness: Option<harness::Kind>,
     /// Commands OpenCode asked to run that X refused; each can be allowed for one rerun.
     pub blocked: Vec<String>,
     /// A text edit waiting for review: the proposal, not yet applied.
@@ -146,6 +148,10 @@ pub struct Snapshot {
     pub harness: Option<harness::Descriptor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_session: Option<harness::Session>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude: Option<harness::Descriptor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_session: Option<harness::Session>,
     #[serde(default)]
     pub trusted_actions: bool,
     pub autonomy_mode: AutonomyMode,
@@ -261,6 +267,7 @@ struct State {
     workspace: Option<PathBuf>,
     selected_session: Option<harness::Session>,
     session_list: Option<session_targets::SessionList>,
+    claude_session: Option<harness::Session>,
     autonomy_mode: AutonomyMode,
     review: Review,
     ledger: Result<Option<Ledger>, String>,
@@ -288,6 +295,7 @@ struct PlanOptions {
     new_workspace: Option<PathBuf>,
     session: Option<harness::Session>,
     work_access: harness::WorkAccess,
+    work_harness: harness::Kind,
     model_plan: Option<ModelPlanning>,
 }
 
@@ -315,6 +323,7 @@ pub struct Service {
     stt: Arc<dyn Stt>,
     launcher: Arc<dyn Launcher>,
     harness: Option<Arc<dyn harness::Adapter>>,
+    claude: Option<Arc<dyn harness::Adapter>>,
     session_verifier: Option<Arc<SessionVerifier>>,
     planner: Arc<Mutex<Option<Arc<dyn Planner>>>>,
     session_root: Arc<Mutex<Option<PathBuf>>>,
@@ -371,12 +380,14 @@ impl Service {
             workspace: None,
             selected_session: None,
             session_list: None,
+            claude_session: None,
         };
         Self {
             state: Arc::new(Mutex::new(state)),
             stt,
             launcher,
             harness,
+            claude: None,
             session_verifier: None,
             planner: Arc::new(Mutex::new(None)),
             session_root: Arc::new(Mutex::new(None)),
@@ -432,6 +443,8 @@ impl Service {
             opencode_found: self.harness.is_some(),
             harness: self.harness.as_ref().map(|adapter| adapter.descriptor()),
             selected_session: s.selected_session.clone(),
+            claude: self.claude.as_ref().map(|adapter| adapter.descriptor()),
+            claude_session: s.claude_session.clone(),
         }
     }
 
@@ -446,9 +459,46 @@ impl Service {
         if s.workspace.as_ref() != Some(&resolved) {
             s.selected_session = None;
             s.session_list = None;
+            s.claude_session = None;
         }
         s.workspace = Some(resolved);
         Ok(shown)
+    }
+
+    pub fn with_claude(mut self, executable: Option<PathBuf>) -> Self {
+        self.claude = executable
+            .map(|exe| Arc::new(harness::claude::Adapter::new(exe)) as Arc<dyn harness::Adapter>);
+        self
+    }
+
+    fn work_adapter(&self, kind: harness::Kind) -> Option<&Arc<dyn harness::Adapter>> {
+        match kind {
+            harness::Kind::OpenCode => self.harness.as_ref(),
+            harness::Kind::ClaudeCode => self.claude.as_ref(),
+        }
+    }
+
+    pub fn plan_claude(&self, text: &str, resume: bool) -> Result<Task, String> {
+        let session = if resume {
+            Some(
+                self.lock()
+                    .claude_session
+                    .clone()
+                    .ok_or("Start a Claude Code task in this project first")?,
+            )
+        } else {
+            None
+        };
+        self.plan_task(
+            text,
+            Mode::Work,
+            None,
+            PlanOptions {
+                session,
+                work_harness: harness::Kind::ClaudeCode,
+                ..PlanOptions::default()
+            },
+        )
     }
 
     pub fn with_session_verifier(
@@ -985,14 +1035,18 @@ impl Service {
                     .or(s.workspace.as_ref())
                     .ok_or("Choose a project workspace first")?;
                 if let Some(session) = &options.session
-                    && (self.session_verifier.is_none() || session.workspace != *ws)
+                    && (session.workspace != *ws
+                        || session.id.kind() != options.work_harness
+                        || (options.work_harness == harness::Kind::OpenCode
+                            && self.session_verifier.is_none()))
                 {
-                    return Err(
-                        "The selected OpenCode session is unavailable in this project".into(),
-                    );
+                    return Err("The selected session is unavailable in this project".into());
                 }
-                if self.harness.is_none() {
-                    return Err("OpenCode CLI not found on PATH".into());
+                if self.work_adapter(options.work_harness).is_none() {
+                    return Err(format!(
+                        "{} CLI not found on PATH",
+                        options.work_harness.label()
+                    ));
                 }
                 let step = |t: &str, risk: &str| Step {
                     title: t.into(),
@@ -1003,11 +1057,12 @@ impl Service {
                 };
                 let description = match &options.session {
                     Some(session) => format!(
-                        "Send to OpenCode session {} in {}",
+                        "Send to {} session {} in {}",
+                        options.work_harness.label(),
                         session.id.as_str(),
                         ws.display()
                     ),
-                    None => format!("Run OpenCode in {}", ws.display()),
+                    None => format!("Run {} in {}", options.work_harness.label(), ws.display()),
                 };
                 let steps = vec![
                     step(&description, "can modify files in this folder"),
@@ -1046,6 +1101,7 @@ impl Service {
             session: options.session,
             accepted_session: None,
             work_access: options.work_access,
+            work_harness: (mode == Mode::Work).then_some(options.work_harness),
             blocked: vec![],
             edit: None,
         };
@@ -1141,6 +1197,9 @@ impl Service {
                 .as_ref()
                 .filter(|t| t.mode == Mode::Work)
                 .ok_or("No Work task to rerun")?;
+            if task.work_harness == Some(harness::Kind::ClaudeCode) {
+                return Err("Claude Code Work in X does not accept command grants".into());
+            }
             if task.work_access == harness::WorkAccess::SelectionOnly {
                 return Err("Sharing a selection does not allow command grants".into());
             }
@@ -1397,10 +1456,11 @@ impl Service {
     }
 
     fn run_work(&self, task: &Task, stop: &Cancellation) {
-        let (Some(adapter), Some(ws)) = (self.harness.as_ref(), task.workspace.clone()) else {
+        let kind = task.work_harness.unwrap_or_default();
+        let (Some(adapter), Some(ws)) = (self.work_adapter(kind), task.workspace.clone()) else {
             return self.finish(
                 Phase::Failed,
-                Some("OpenCode or workspace missing".into()),
+                Some(format!("{} or workspace missing", kind.label())),
                 None,
                 None,
             );
@@ -1444,7 +1504,9 @@ impl Service {
                 None,
             );
         };
-        if let Some(session) = &task.session {
+        if kind == harness::Kind::OpenCode
+            && let Some(session) = &task.session
+        {
             let verification = self
                 .session_verifier
                 .as_ref()
@@ -1472,6 +1534,7 @@ impl Service {
             s.workspace = Some(ws.clone());
             s.selected_session = None;
             s.session_list = None;
+            s.claude_session = None;
         }
         self.set_step(0, "running");
         let me = self.clone();
@@ -1483,14 +1546,22 @@ impl Service {
                 return;
             };
             if task.accepted_session.is_none()
-                && let Some(id) = event.accepted_session()
+                && let Some(id) = event.accepted_session().or(
+                    if kind == harness::Kind::ClaudeCode
+                        && event.kind == harness::EventKind::StepFinish
+                    {
+                        event.session.as_ref()
+                    } else {
+                        None
+                    },
+                )
                 && expected.as_ref().is_none_or(|wanted| wanted == id)
             {
                 task.accepted_session = Some(id.clone());
                 emit(
                     &mut state,
                     "delivery",
-                    &format!("OpenCode acknowledged session {}", id.as_str()),
+                    &format!("{} acknowledged session {}", kind.label(), id.as_str()),
                 );
             }
             if let Some(command) = event.blocked_command
@@ -1501,7 +1572,7 @@ impl Service {
             emit(&mut state, event.kind.as_str(), &event.text);
         });
         let request = harness::Request {
-            workspace: ws,
+            workspace: ws.clone(),
             prompt: task.text.clone(),
             session: task.session.as_ref().map(|session| session.id.clone()),
             access: task.work_access,
@@ -1523,6 +1594,19 @@ impl Service {
             }
         };
         let res = run.join();
+        if kind == harness::Kind::ClaudeCode
+            && res.status == RunStatus::Completed
+            && !stop.requested()
+            && let Some(id) = res.accepted_session.as_ref().filter(|id| id.kind() == kind)
+        {
+            self.lock().claude_session = Some(harness::Session {
+                id: id.clone(),
+                title: "Claude Code task".into(),
+                workspace: ws,
+                updated_at: now(),
+            });
+        }
+
         let ok = res.status == RunStatus::Completed;
         self.set_step(1, if ok { "done" } else { "failed" });
         self.set_step(2, if ok { "done" } else { "failed" });
@@ -1536,13 +1620,14 @@ impl Service {
             RunStatus::Completed => self.finish(
                 Phase::Completed,
                 None,
-                Some("OpenCode exited 0 with no error events.".into()),
+                Some(format!("{} exited 0 with no error events.", kind.label())),
                 res.changed_files,
             ),
             RunStatus::Failed => {
                 let why = if res.errors.is_empty() {
                     format!(
-                        "OpenCode exited with status {}",
+                        "{} exited with status {}",
+                        kind.label(),
                         res.exit_code.map_or("unknown".into(), |c| c.to_string())
                     )
                 } else {

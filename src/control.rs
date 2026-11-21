@@ -287,6 +287,12 @@ pub enum AgentAction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resume: Option<String>,
     },
+    /// Preview tool-free Claude Code Work in the selected project.
+    Claude {
+        text: String,
+        #[serde(default)]
+        resume: bool,
+    },
     /// Preview explicit Work in the selected OpenCode session.
     SendToSession {
         text: String,

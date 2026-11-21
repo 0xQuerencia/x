@@ -77,7 +77,9 @@ pub(super) fn parse(line: &str) -> Event {
         .and_then(Value::as_str);
     let session = match (event.session.as_deref(), part_session) {
         (Some(top), Some(part)) if top != part => return malformed("session identity"),
-        (Some(session), _) | (_, Some(session)) => SessionId::try_from(session.to_owned()).ok(),
+        (Some(session), _) | (_, Some(session)) => SessionId::try_from(session.to_owned())
+            .ok()
+            .filter(|id| id.kind() == crate::harness::Kind::OpenCode),
         _ => None,
     };
     let mut parsed = match event.kind.as_str() {

@@ -1,6 +1,8 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Mutex;
+use std::thread;
+use std::time::Instant;
 
 struct Fixture {
     dir: tempfile::TempDir,

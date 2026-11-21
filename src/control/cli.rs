@@ -486,6 +486,15 @@ pub enum AgentCommand {
         #[arg(long)]
         running: bool,
     },
+    /// Preview a Claude Code task in the selected workspace. Use --resume for the last X-owned session.
+    Claude {
+        #[arg(long)]
+        resume: bool,
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
     /// List or select an existing OpenCode session for the chosen workspace.
     Sessions {
         #[command(subcommand)]
@@ -805,6 +814,17 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Choose { index, output } => (AgentAction::Choose { index }, output),
                 AgentCommand::Undo { output } => (AgentAction::Undo, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Claude {
+                    resume,
+                    text,
+                    output,
+                } => (
+                    AgentAction::Claude {
+                        text: text.join(" "),
+                        resume,
+                    },
+                    output,
+                ),
                 AgentCommand::Sessions { command } => match command {
                     SessionCommand::List { output } => {
                         (AgentAction::Sessions { resume: None }, output)
