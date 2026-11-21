@@ -163,6 +163,20 @@ refuses tracked/untracked/ignored changes and never uses `--force`.
 There is no automatic merge or cleanup. This API is not yet wired to the DAG
 scheduler or user-facing UI; those integrations must preserve the approval gates.
 
+### Crash-safe DAG task claims (development)
+
+The workflow recovery journal stores only run/node identities, a request
+fingerprint, attempt count and evidence references. It does **not** store
+prompts or tokens. It atomically claims a node before delivery; if X loses
+contact after the claim, restart reports `RequiresReconciliation` rather than
+silently sending the same work again. A terminal result is immutable.
+A new attempt needs fresh owner approval plus independent confirmation that
+the previous attempt was never delivered, with a maximum retry budget.
+
+This is the durable journal contract only. The live scheduler and harness
+adapters do not yet call it; integrating those with actual provider
+acknowledgment/reconciliation remains a separate milestone.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation

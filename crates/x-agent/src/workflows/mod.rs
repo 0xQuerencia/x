@@ -6,6 +6,7 @@ pub mod dag;
 pub mod engine;
 pub mod model;
 pub mod paths;
+pub mod recovery;
 pub mod scheduler;
 mod steps;
 pub mod store;
