@@ -22,6 +22,7 @@ use crate::session_links::{Link as SessionLink, Store as SessionStore};
 use crate::tools::{self, Action, Risk};
 
 mod edit;
+mod harness_workflow;
 mod ledger;
 mod policy;
 mod request;
@@ -285,6 +286,7 @@ struct State {
     edit: Option<edit::Job>,
     /// The saved workflow waiting to run, or running.
     workflow: Option<crate::workflows::Workflow>,
+    graph_workflow: Option<harness_workflow::PendingGraph>,
     create_workspace: bool,
     /// How to put back the last workflow run's changes.
     undo: Vec<crate::workflows::engine::Reversal>,
@@ -381,6 +383,7 @@ impl Service {
             guard: None,
             edit: None,
             workflow: None,
+            graph_workflow: None,
             create_workspace: false,
             undo: vec![],
             voice_mode: Mode::Actions,
@@ -523,7 +526,6 @@ impl Service {
     }
 
     pub fn snapshot(&self, since: u64) -> Snapshot {
-        // Read grants before State; Stop takes these locks in this order.
         let pending_job_approvals = self.scoped_grants.pending_count().ok();
         let s = self.lock();
         Snapshot {
@@ -1226,6 +1228,7 @@ impl Service {
         s.guard = options.guard;
         s.edit = None;
         s.workflow = None;
+        s.graph_workflow = None;
         let task = Task {
             id,
             mode,
@@ -1273,7 +1276,7 @@ impl Service {
     }
 
     fn approve_from(&self, task_id: u64, approval: Approval) -> Result<(), String> {
-        let (task, actions, is_edit, is_workflow, stop) = {
+        let (task, actions, is_edit, is_workflow, graph, stop) = {
             let mut s = self.lock();
             let matches_task = s.task.as_ref().is_some_and(|t| t.id == task_id);
             if !matches_task || s.phase != Phase::AwaitingApproval {
@@ -1309,15 +1312,21 @@ impl Service {
                 s.actions.clone(),
                 s.edit.is_some(),
                 s.workflow.is_some(),
+                s.graph_workflow.take(),
                 s.stop.clone(),
             )
         };
         let me = self.clone();
-        thread::spawn(move || match task.mode {
-            Mode::Actions if is_edit => me.run_edit(&task),
-            Mode::Actions if is_workflow => me.run_workflow(),
-            Mode::Actions => me.run_actions(&actions, &stop),
-            Mode::Work => me.run_work(&task, &stop),
+        thread::spawn(move || {
+            if let Some(graph) = graph {
+                return me.run_graph_workflow(graph, &stop);
+            }
+            match task.mode {
+                Mode::Actions if is_edit => me.run_edit(&task),
+                Mode::Actions if is_workflow => me.run_workflow(),
+                Mode::Actions => me.run_actions(&actions, &stop),
+                Mode::Work => me.run_work(&task, &stop),
+            }
         });
         Ok(())
     }
@@ -1823,6 +1832,7 @@ impl Service {
         }
         s.edit = None;
         s.workflow = None;
+        s.graph_workflow = None;
         set_phase(&mut s, phase);
         audit_best_effort(&mut s, AuditKind::Finished, None);
         if let Some(e) = error {
@@ -1841,11 +1851,8 @@ impl Service {
 
     /// Stop whatever is active: discard a plan, abort a recording, or kill a run.
     pub fn cancel(&self) {
-        // Revoke unspent native job approvals before cancellation can race
-        // against a job starting. Already-running jobs also need Stop tokens.
-        let revoked = self.scoped_grants().revoke_all();
         let mut s = self.lock();
-        if let Err(error) = revoked {
+        if let Err(error) = self.scoped_grants().revoke_all() {
             emit(
                 &mut s,
                 "error",
@@ -1861,6 +1868,7 @@ impl Service {
                 set_phase(&mut s, Phase::Cancelled);
                 s.edit = None;
                 s.workflow = None;
+                s.graph_workflow = None;
                 s.actions.clear();
                 s.guard = None;
                 s.grants.clear();

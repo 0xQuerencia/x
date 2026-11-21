@@ -509,7 +509,7 @@ pub enum AgentCommand {
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "permissions", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "permissions", "run", "run-graph", "last", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
         command: String,
         /// A workflow id, or a file path for import.
         #[arg(default_value = "")]
@@ -914,9 +914,20 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Context { output } => (AgentAction::Context, output),
                 AgentCommand::Workflow {
                     command,
-                    value,
+                    mut value,
                     output,
-                } => (AgentAction::Workflow { command, value }, output),
+                } => {
+                    if matches!(command.as_str(), "import" | "import-graph") && !value.is_empty() {
+                        let Ok(path) = std::path::absolute(&value) else {
+                            return fail("Could not resolve the workflow file");
+                        };
+                        let Ok(path) = path.into_os_string().into_string() else {
+                            return fail("The workflow file path must be valid UTF-8");
+                        };
+                        value = path;
+                    }
+                    (AgentAction::Workflow { command, value }, output)
+                }
                 AgentCommand::Wake {
                     command,
                     value,
@@ -1923,8 +1934,8 @@ mod tests {
             command: ControlCli,
         }
 
-        let parsed = Args::try_parse_from(["hex", "agent", "workflow", "permissions", "review"])
-            .unwrap();
+        let parsed =
+            Args::try_parse_from(["hex", "agent", "workflow", "permissions", "review"]).unwrap();
         assert!(matches!(
             parsed.command,
             ControlCli::Agent {

@@ -97,6 +97,11 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             ),
             Err(error) => refuse(error),
         },
+        "run-graph" if value.is_empty() => need("a workflow id"),
+        "run-graph" => match svc.plan_graph_workflow(value) {
+            Ok(_) => super::snapshot(0),
+            Err(error) => refuse(error),
+        },
         "delete" if value.is_empty() => need("a workflow id"),
         "delete" => match store.delete(value) {
             Ok(()) => ControlReply::done(format!("Deleted {value}")),
@@ -112,13 +117,18 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(wf) => ControlReply::done(format!("Imported {} ({})", wf.id, wf.name)),
             Err(error) => refuse(error),
         },
+        "import-graph" if value.is_empty() => need("a file path"),
+        "import-graph" => match store.import_graph(std::path::Path::new(value)) {
+            Ok(graph) => ControlReply::done(format!("Imported {} ({})", graph.id, graph.name)),
+            Err(error) => refuse(error),
+        },
         "undo" => match svc.undo_workflow() {
             Ok(message) => ControlReply::done(message),
             Err(error) => refuse(error),
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, permissions, run, last, delete, duplicate, import, undo, dir",
+            "workflow commands: list, show, permissions, run, run-graph, last, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }
