@@ -36,14 +36,16 @@ pub fn preview(
     let task_root = manager.validate_owned(project, owned)?;
     let primary_head = commit(&project.root)?;
     let task_head = commit(&task_root)?;
-    let dirty = git(&task_root, &["status", "--porcelain=v1", "--untracked-files=all"])?;
+    let dirty = git(
+        &task_root,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+    )?;
     if !dirty.1.trim().is_empty() {
         return Err("The task worktree has uncommitted files. Review and commit them first".into());
     }
     // The proposed change list belongs to the task branch, not to changes
     // made independently by the owner since this worktree was created.
-    let (base_ok, merge_base) =
-        git(&project.root, &["merge-base", &primary_head, &task_head])?;
+    let (base_ok, merge_base) = git(&project.root, &["merge-base", &primary_head, &task_head])?;
     let merge_base = merge_base.trim();
     if !base_ok || !is_commit(merge_base) {
         return Err("The task and primary checkout have no verified shared base".into());
@@ -84,7 +86,10 @@ pub fn preview(
         .map(str::trim)
         .filter(|text| is_commit(text))
         .map(ToString::to_string);
-    let conflict_count = merge.lines().filter(|line| line.starts_with("CONFLICT (")).count();
+    let conflict_count = merge
+        .lines()
+        .filter(|line| line.starts_with("CONFLICT ("))
+        .count();
     if !success && conflict_count == 0 {
         return Err("Git could not compute a trusted merge preview".into());
     }
@@ -140,12 +145,14 @@ mod tests {
     use uuid::Uuid;
 
     fn command(root: &Path, args: &[&str]) {
-        assert!(Command::new("git")
-            .current_dir(root)
-            .args(args)
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            Command::new("git")
+                .current_dir(root)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
     }
 
     fn fixture() -> (tempfile::TempDir, Project, Manager, OwnedWorktree) {
@@ -157,10 +164,21 @@ mod tests {
         command(&source, &["init", "-q"]);
         fs::write(source.join("shared.txt"), "baseline\n").unwrap();
         command(&source, &["add", "shared.txt"]);
-        command(&source, &[
-            "-c", "user.name=X", "-c", "user.email=x@invalid.example",
-            "-c", "core.hooksPath=", "commit", "-q", "-m", "baseline",
-        ]);
+        command(
+            &source,
+            &[
+                "-c",
+                "user.name=X",
+                "-c",
+                "user.email=x@invalid.example",
+                "-c",
+                "core.hooksPath=",
+                "commit",
+                "-q",
+                "-m",
+                "baseline",
+            ],
+        );
         let source = source.canonicalize().unwrap();
         let project = Project {
             id: Uuid::new_v4(),
@@ -173,22 +191,29 @@ mod tests {
         fs::create_dir(&base).unwrap();
         let manager = Manager::new(base, home);
         let rev = commit(&source).unwrap();
-        let worktree = manager.allocate(
-            &project,
-            Uuid::new_v4(),
-            "backend",
-            &rev,
-            true,
-        ).unwrap();
+        let worktree = manager
+            .allocate(&project, Uuid::new_v4(), "backend", &rev, true)
+            .unwrap();
         (dir, project, manager, worktree)
     }
 
     fn commit_worktree(path: &Path, message: &str) {
         command(path, &["add", "-A"]);
-        command(path, &[
-            "-c", "user.name=X", "-c", "user.email=x@invalid.example",
-            "-c", "core.hooksPath=", "commit", "-q", "-m", message,
-        ]);
+        command(
+            path,
+            &[
+                "-c",
+                "user.name=X",
+                "-c",
+                "user.email=x@invalid.example",
+                "-c",
+                "core.hooksPath=",
+                "commit",
+                "-q",
+                "-m",
+                message,
+            ],
+        );
     }
 
     #[test]
@@ -204,7 +229,10 @@ mod tests {
         assert!(result.changed_files.contains(&"backend.rs".into()));
         assert!(result.needs_explicit_merge_approval);
         assert_eq!(commit(&project.root).unwrap(), before);
-        assert_eq!(fs::read_to_string(project.root.join("local_notes.txt")).unwrap(), "do not delete\n");
+        assert_eq!(
+            fs::read_to_string(project.root.join("local_notes.txt")).unwrap(),
+            "do not delete\n"
+        );
     }
 
     #[test]
@@ -220,7 +248,10 @@ mod tests {
         assert!(result.conflict_count >= 1);
         assert!(result.merge_tree.is_none());
         assert_eq!(commit(&project.root).unwrap(), head);
-        assert_eq!(fs::read_to_string(project.root.join("shared.txt")).unwrap(), "owner content\n");
+        assert_eq!(
+            fs::read_to_string(project.root.join("shared.txt")).unwrap(),
+            "owner content\n"
+        );
     }
 
     #[test]
