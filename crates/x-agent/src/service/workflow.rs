@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::edit::{step, task};
-use super::{Service, busy, emit};
+use super::{Review, Service, busy, emit};
 use crate::opencode::{self, Run, RunConfig, RunStatus};
 use crate::phase::Phase;
 use crate::tools::Action;
@@ -215,10 +215,7 @@ impl Service {
             ));
         }
         let task = self.begin_workflow_task(text, &wf)?;
-        if self.lock().trust_actions && !wf.needs_approval() {
-            self.emit("info", "Trusted Actions: running without a prompt");
-            self.approve(task.id)?;
-        }
+        self.approve_if_automatic(task.id)?;
         Ok(task)
     }
 
@@ -248,6 +245,11 @@ impl Service {
         t.phase = Phase::AwaitingApproval;
         s.phase = Phase::AwaitingApproval;
         s.actions = vec![];
+        s.review = if wf.needs_approval() {
+            Review::Required
+        } else {
+            Review::LowRisk
+        };
         s.workflow = Some(wf.clone());
         s.task = Some(t.clone());
         emit(

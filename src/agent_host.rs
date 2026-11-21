@@ -52,7 +52,7 @@ pub fn service() -> &'static Service {
             Arc::new(RealLauncher),
             opencode_exe(),
         );
-        service.set_trust_actions(trust_file().is_some_and(|path| path.is_file()));
+        restore_execution_policy(&service);
         if let (Ok(dir), Some(home)) = (crate::app_paths::support_dir(), dirs::home_dir()) {
             service.set_workflow_dirs(dir.join("workflows"), home);
         }
@@ -79,6 +79,23 @@ fn trust_file() -> Option<PathBuf> {
     crate::app_paths::support_dir()
         .ok()
         .map(|dir| dir.join("x-trusted-actions"))
+}
+
+fn restore_execution_policy(service: &Service) {
+    let Some(path) = trust_file() else {
+        return;
+    };
+    let trusted = path.is_file();
+    service.set_trust_actions(trusted);
+    let marker = path.with_file_name("x-approval-policy-v1");
+    if !marker.is_file() {
+        if trusted {
+            service.note_policy_upgrade();
+        }
+        if let Err(error) = write_private(&marker, b"1") {
+            tracing::warn!(%error, "could not save X execution policy migration");
+        }
+    }
 }
 
 fn planner_file() -> Option<PathBuf> {
@@ -345,7 +362,7 @@ fn set_trust(on: bool) -> ControlReply {
         Ok(()) => {
             service().set_trust_actions(on);
             ControlReply::done(if on {
-                "Autonomous mode: safe Actions and granted computer apps start without repeated approvals; Work and protected actions still need review"
+                "Autonomous mode: low-risk desktop actions start automatically. Typing, closing windows, operating apps, and Work ask for approval."
             } else {
                 "Default mode: X asks approval before each desktop task"
             })

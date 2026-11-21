@@ -180,6 +180,12 @@ pub enum Risk {
     Consequential,
 }
 
+impl Risk {
+    pub(crate) fn is_low_risk(self) -> bool {
+        matches!(self, Self::Safe | Self::Reversible)
+    }
+}
+
 /// Capabilities an action needs. This is a requirement list, not a platform probe.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -226,13 +232,13 @@ impl Action {
             | Self::App { .. }
             | Self::Url { .. }
             | Self::Search { .. }
-            | Self::Opencode
             | Self::Copy { .. }
             | Self::Terminal { .. }
             | Self::Folder { .. }
             | Self::BrowserTab { .. }
             | Self::System { .. } => Risk::Reversible,
             Self::Screenshot { .. }
+            | Self::Opencode
             | Self::Type { .. }
             | Self::Session { .. }
             | Self::Computer { .. } => Risk::Consequential,
@@ -1190,20 +1196,9 @@ pub fn wait_for_launched_focus() -> Result<(), String> {
     Err("The launched app's window never took focus, so nothing was typed".into())
 }
 
-/// Only exhaustively classified safe/reversible actions can run automatically.
-/// Typing into a freshly opened window is a narrow exception; closes require
-/// additional local-rule, push-to-talk, and exact-focus checks in the service.
+/// Only exhaustively classified safe or reversible actions can run automatically.
 pub fn is_low_risk(actions: &[Action]) -> bool {
-    actions
-        .iter()
-        .enumerate()
-        .all(|(i, action)| match action.risk() {
-            Risk::Safe | Risk::Reversible => true,
-            Risk::Destructive => false,
-            Risk::Consequential => {
-                matches!(action, Action::Type { .. }) && i > 0 && actions[i - 1].launches_window()
-            }
-        })
+    actions.iter().all(|action| action.risk().is_low_risk())
 }
 
 /// Deterministic rule planner. `None` means "not understood": nothing runs.

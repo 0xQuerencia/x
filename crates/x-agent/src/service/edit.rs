@@ -366,7 +366,7 @@ impl Service {
             consented: true,
         };
         let task = self.begin_task(text, vec![step("Show the explanation", "")], preview, job)?;
-        self.approve(task.id)?; // nothing to change: showing it is the whole job
+        self.approve_if_automatic(task.id)?;
         Ok(task)
     }
 
@@ -389,6 +389,11 @@ impl Service {
         t.phase = Phase::AwaitingApproval;
         s.phase = Phase::AwaitingApproval;
         s.actions = vec![];
+        s.review = if matches!(job.stage, Stage::Info) {
+            super::Review::ShowResult
+        } else {
+            super::Review::Required
+        };
         s.edit = Some(job);
         s.task = Some(t.clone());
         emit(&mut s, "plan", &format!("Edit ready to review: {text}"));
