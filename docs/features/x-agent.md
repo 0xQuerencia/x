@@ -130,7 +130,11 @@ registered loopback service. The selection is available in `hex agent status
 --json` until X restarts or the project changes. Session discovery uses the
 service's authorization and shows a refusal if the registration is stale.
 It exposes open root sessions whose reported directory resolves to the chosen
-project. Sending work to the selected session is a separate operation.
+project. Use `hex agent sessions send <goal>` to preview Work for that
+session, then approve the displayed task. X rechecks the target before send
+and uses the supervised private OpenCode runner with its normal command
+permissions. A structured event from the same session supplies the delivery
+acknowledgement. Stop cancels the owned runner.
 
 ### Command decisions (Perplexity Decider)
 

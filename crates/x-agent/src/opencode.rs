@@ -18,7 +18,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::cancellation::Cancellation;
-use crate::harness::{self, Event, EventKind, EventSink};
+use crate::harness::{self, Event, EventKind, EventSink, SessionId};
 pub use crate::harness::{RunResult, RunStatus};
 
 mod events;
@@ -115,6 +115,7 @@ struct RunFlags {
     standalone: bool,
     directory: bool,
     json: bool,
+    session: bool,
 }
 
 impl RunFlags {
@@ -127,6 +128,7 @@ impl RunFlags {
             standalone: flag("--standalone"),
             directory: flag("--dir"),
             json: harness::probe::has_opencode_json_output(&help),
+            session: flag("--session"),
         })
     }
 }
@@ -135,6 +137,7 @@ pub struct RunConfig {
     pub exe: PathBuf,
     pub prompt: String,
     pub workspace: PathBuf,
+    pub session: Option<SessionId>,
     pub stall_after: Duration,
     /// Exact shell commands the person allowed for this one run.
     pub allow_commands: Vec<String>,
@@ -178,6 +181,7 @@ impl RunConfig {
             exe,
             prompt: prompt.into(),
             workspace,
+            session: None,
             stall_after: STALL_AFTER,
             allow_commands: vec![],
         }
@@ -226,6 +230,9 @@ impl RunConfig {
                 self.workspace.to_string_lossy().into_owned(),
             ]);
         }
+        if let Some(id) = &self.session {
+            args.extend(["--session".into(), id.as_str().into()]);
+        }
         args.extend([
             "--format".into(),
             "json".into(),
@@ -250,7 +257,7 @@ impl harness::Adapter for Adapter {
     fn descriptor(&self) -> harness::Descriptor {
         harness::Descriptor {
             kind: harness::Kind::OpenCode,
-            event_schema: 1,
+            event_schema: 2,
             version: None,
             capabilities: harness::OPENCODE_OWNED_CAPABILITIES,
         }
@@ -264,6 +271,7 @@ impl harness::Adapter for Adapter {
     ) -> Result<Box<dyn harness::OwnedRun>, String> {
         let mut config = RunConfig::new(self.exe.clone(), request.prompt, request.workspace);
         config.allow_commands = request.allow_commands;
+        config.session = request.session;
         Ok(Box::new(Run::start_events_scoped(config, events, stop)?))
     }
 }
@@ -321,6 +329,12 @@ impl Run {
         let flags = RunFlags::read(&cfg.exe)
             .filter(|flags| flags.json)
             .ok_or("OpenCode did not advertise structured run output")?;
+        if cfg.session.is_some() && (!flags.session || !flags.standalone) {
+            return Err(
+                "The installed OpenCode does not support a private run against an exact session"
+                    .into(),
+            );
+        }
         let args = cfg.args_for(flags);
         let mut child = crate::retry_busy(|| {
             if stop.requested() {
@@ -370,6 +384,7 @@ impl Run {
             .unwrap_or(RunResult {
                 status: RunStatus::Failed,
                 exit_code: None,
+                accepted_session: None,
                 errors: vec!["supervisor thread panicked".into()],
                 stderr: vec![],
                 changed_files: None,
@@ -475,6 +490,7 @@ fn supervise(
     drop(tx);
     let (mut open, mut last, mut stalled) = (2, Instant::now(), false);
     let (mut errors, mut stderr_tail): (Vec<String>, Vec<String>) = (vec![], vec![]);
+    let mut accepted_session = None;
     while open > 0 && !stop.requested() {
         match rx.recv_timeout(POLL) {
             Err(RecvTimeoutError::Timeout) => {
@@ -505,6 +521,17 @@ fn supervise(
                     continue;
                 }
                 let event = events::parse(l);
+                if let (Some(expected), Some(reported)) = (&cfg.session, &event.session)
+                    && expected != reported
+                {
+                    let message = "OpenCode reported a different session";
+                    errors.push(message.into());
+                    on_event(Event::new(EventKind::Error, message));
+                    break;
+                }
+                if accepted_session.is_none() {
+                    accepted_session = event.accepted_session().cloned();
+                }
                 if event.kind == EventKind::Error {
                     errors.push(event.text.clone());
                     on_event(event);
@@ -527,6 +554,10 @@ fn supervise(
         }
     };
     let changed_files = diff_snapshots(before.as_ref(), change_snapshot(&cfg.workspace).as_ref());
+    if !stop.requested() && cfg.session.is_some() && accepted_session.is_none() && errors.is_empty()
+    {
+        errors.push("OpenCode did not acknowledge the selected session".into());
+    }
     let status = if stop.requested() {
         RunStatus::Cancelled
     } else if !errors.is_empty() || exit_code != Some(0) {
@@ -538,6 +569,7 @@ fn supervise(
     RunResult {
         status,
         exit_code,
+        accepted_session,
         errors,
         stderr: stderr_tail,
         changed_files,

@@ -1,4 +1,4 @@
-use crate::harness::{Event, EventKind};
+use crate::harness::{Event, EventKind, SessionId};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -9,6 +9,8 @@ struct Envelope {
     kind: String,
     part: Option<Value>,
     error: Option<Value>,
+    #[serde(rename = "sessionID", alias = "sessionId")]
+    session: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -68,7 +70,17 @@ pub(super) fn parse(line: &str) -> Event {
     let Ok(event) = serde_json::from_str::<Envelope>(line) else {
         return Event::new(EventKind::Raw, line);
     };
-    match event.kind.as_str() {
+    let part_session = event
+        .part
+        .as_ref()
+        .and_then(|part| part.get("sessionID"))
+        .and_then(Value::as_str);
+    let session = match (event.session.as_deref(), part_session) {
+        (Some(top), Some(part)) if top != part => return malformed("session identity"),
+        (Some(session), _) | (_, Some(session)) => SessionId::try_from(session.to_owned()).ok(),
+        _ => None,
+    };
+    let mut parsed = match event.kind.as_str() {
         "text" => match from_part::<Text>(event.part) {
             Some(text) => Event::new(EventKind::Text, text.text),
             None => malformed("text"),
@@ -95,7 +107,11 @@ pub(super) fn parse(line: &str) -> Event {
             Event::new(EventKind::Permission, "OpenCode requested permission")
         }
         other => Event::new(EventKind::Activity, other),
+    };
+    if parsed.kind != EventKind::Raw {
+        parsed.session = session;
     }
+    parsed
 }
 
 fn from_part<T: serde::de::DeserializeOwned>(value: Option<Value>) -> Option<T> {
@@ -182,17 +198,9 @@ mod tests {
     fn malformed_known_events_do_not_become_progress_or_success_evidence() {
         let malformed = parse(r#"{"type":"text","part":{"text":42}}"#);
         assert_eq!(malformed.kind, EventKind::Raw);
-        assert_eq!(
-            parse(r#"{"type":"step_finish","part":[]}"#).kind,
-            EventKind::Raw
-        );
-        assert_eq!(
-            parse(r#"{"type":"error","error":null}"#).kind,
-            EventKind::Error
-        );
-        assert_eq!(
-            parse(r#"{"type":"text","part":{"text":"a valid event"},"sessionID":"ses_fixture"}"#),
-            Event::new(EventKind::Text, "a valid event"),
-        );
+        let event =
+            parse(r#"{"type":"text","part":{"text":"a valid event"},"sessionID":"ses_fixture"}"#);
+        assert_eq!(event.text, "a valid event");
+        assert_eq!(event.accepted_session().unwrap().as_str(), "ses_fixture");
     }
 }

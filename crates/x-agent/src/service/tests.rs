@@ -659,7 +659,7 @@ fn fake_opencode(dir: &std::path::Path, body: &str) -> PathBuf {
     std::fs::write(
         &p,
         format!(
-            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then printf '%s\\n' '--standalone' '--dir' '--format json'; exit 0; fi\n{body}\n"
+            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then printf '%s\\n' '--standalone' '--dir' '--session' '--format json'; exit 0; fi\n{body}\n"
         ),
     )
     .unwrap();
@@ -1758,6 +1758,7 @@ fn work_uses_the_same_adapter_interface_with_a_fake() {
             harness::RunResult {
                 status: RunStatus::Completed,
                 exit_code: Some(0),
+                accepted_session: None,
                 errors: Vec::new(),
                 stderr: Vec::new(),
                 changed_files: None,
@@ -1815,4 +1816,74 @@ fn selecting_an_open_code_session_is_scoped_to_the_current_project() {
 
     s.set_workspace(b.to_str().unwrap()).unwrap();
     assert!(s.snapshot(0).selected_session.is_none());
+}
+
+#[test]
+fn named_work_waits_for_approval_and_can_stop_the_acknowledged_run() {
+    let (s, work, _) = work_rig(
+        r#"echo '{"type":"step_start","sessionID":"ses_exact","part":{"type":"step-start"}}'
+exec sleep 60"#,
+    );
+    let verified = Arc::new(AtomicUsize::new(0));
+    let verify = verified.clone();
+    let s = s.with_session_verifier(move |target| {
+        assert_eq!(target.id.as_str(), "ses_exact");
+        verify.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    });
+    s.set_trust_actions(true);
+    let workspace = s.workspace_path().unwrap();
+    let target = harness::Session::from_open_code(
+        "ses_exact".into(),
+        "A scoped session",
+        &workspace,
+        &workspace,
+        1,
+    )
+    .unwrap();
+    s.select_session(target.clone()).unwrap();
+    let task = s.plan_session_send("inspect the tests").unwrap();
+    assert_eq!(task.session, Some(target));
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert_eq!(verified.load(Ordering::SeqCst), 0);
+    assert!(work.path().is_dir());
+    s.approve(task.id).unwrap();
+    let delivery = wait_for(&s, |state| {
+        state.events.iter().any(|event| event.kind == "delivery")
+    });
+    assert_eq!(
+        delivery.task.unwrap().accepted_session.unwrap().as_str(),
+        "ses_exact"
+    );
+    assert_eq!(verified.load(Ordering::SeqCst), 1);
+    s.cancel();
+    assert_eq!(
+        wait_for(&s, |state| state.phase == Phase::Cancelled).phase,
+        Phase::Cancelled
+    );
+}
+
+#[test]
+fn stale_named_work_never_starts_a_new_session() {
+    let (service, work, _) = work_rig("touch should-not-run");
+    let service = service.with_session_verifier(|_| Err("The session is stale".into()));
+    let workspace = service.workspace_path().unwrap();
+    let target = harness::Session::from_open_code(
+        "ses_stale".into(),
+        "A stale session",
+        &workspace,
+        &workspace,
+        1,
+    )
+    .unwrap();
+    service.select_session(target).unwrap();
+    let task = service.plan_session_send("inspect the tests").unwrap();
+    service.approve(task.id).unwrap();
+    let failed = wait_for(&service, |s| s.phase == Phase::Failed)
+        .task
+        .unwrap();
+    assert_eq!(failed.error.as_deref(), Some("The session is stale"));
+    assert!(failed.accepted_session.is_none());
+    assert!(!work.path().join("should-not-run").exists());
+    assert!(!workspace.join("should-not-run").exists());
 }

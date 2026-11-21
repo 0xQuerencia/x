@@ -45,7 +45,7 @@ impl Fixture {
     fn fake(&self, body: &str) -> PathBuf {
         let path = self.dir.path().join("fake-opencode");
         let script = format!(
-            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then printf '%s\\n' '--standalone' '--dir' '--format json'; exit 0; fi\n{body}\n"
+            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then printf '%s\\n' '--standalone' '--dir' '--session' '--format json'; exit 0; fi\n{body}\n"
         );
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -282,4 +282,48 @@ fn new_cli_without_dir_flag_still_runs_in_the_approved_workspace() {
         std::fs::read_to_string(f.repo.join("reached")).unwrap(),
         "ran here"
     );
+}
+
+#[test]
+fn named_runs_require_a_matching_structured_acknowledgement() {
+    for (body, status) in [
+        (
+            r#"echo '{"type":"step_start","sessionID":"ses_exact","part":{"type":"step-start"}}'"#,
+            RunStatus::Completed,
+        ),
+        (
+            r#"echo '{"type":"text","sessionID":"ses_other","part":{"text":"wrong session"}}'"#,
+            RunStatus::Failed,
+        ),
+        ("echo 'I am in ses_exact'", RunStatus::Failed),
+    ] {
+        let f = fixture();
+        let id = SessionId::try_from("ses_exact".to_string()).unwrap();
+        let mut config = RunConfig::new(f.fake(body), "inspect the project", f.repo.clone());
+        config.session = Some(id.clone());
+        let args = config.args();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--session", id.as_str()])
+        );
+        assert!(args.iter().any(|arg| arg == "--standalone"));
+        assert!(!args.iter().any(|arg| arg == "--auto"));
+        let result = Run::start(config, Arc::new(|_, _| {})).unwrap().join();
+        assert_eq!(result.status, status);
+        assert_eq!(
+            result.accepted_session,
+            (status == RunStatus::Completed).then_some(id)
+        );
+    }
+}
+
+#[test]
+fn named_delivery_does_not_fall_back_when_private_session_run_is_unsupported() {
+    let f = fixture();
+    let exe = f.fake("");
+    std::fs::write(&exe, "#!/bin/sh\nif [ \"$2\" = '--help' ]; then printf '%s\\n' '--format json'; exit 0; fi\ntouch started\n").unwrap();
+    let mut cfg = RunConfig::new(exe, "inspect the project", f.repo.clone());
+    cfg.session = Some(SessionId::try_from("ses_exact".to_string()).unwrap());
+    assert!(Run::start(cfg, Arc::new(|_, _| {})).is_err());
+    assert!(!f.repo.join("started").exists());
 }

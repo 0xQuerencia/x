@@ -629,6 +629,13 @@ pub enum SessionCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Plan Work for the selected session. Approval is required to send it.
+    Send {
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
 }
 
 /// Exits with `code` once stdout is flushed.
@@ -805,6 +812,12 @@ pub fn run(command: ControlCli) -> u8 {
                     SessionCommand::Resume { id, output } => {
                         (AgentAction::Sessions { resume: Some(id) }, output)
                     }
+                    SessionCommand::Send { text, output } => (
+                        AgentAction::SendToSession {
+                            text: text.join(" "),
+                        },
+                        output,
+                    ),
                 },
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
                 AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),

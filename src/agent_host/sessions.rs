@@ -25,6 +25,22 @@ fn sessions(service: &Service, resume: Option<String>) -> Result<(Vec<Session>, 
         .workspace_path()
         .ok_or("Choose a project with `hex agent workspace` first")?;
     let id = resume.map(SessionId::try_from).transpose()?;
+    with_lookup(|get| {
+        if let Some(id) = id {
+            let selected = read_selected(get, &workspace, &id)?;
+            service.select_session(selected.clone())?;
+            Ok((vec![selected], true))
+        } else {
+            Ok((read_sessions(get, &workspace)?, false))
+        }
+    })
+}
+
+pub(super) fn verify(session: &Session) -> Result<(), String> {
+    with_lookup(|get| read_selected(get, &session.workspace, &session.id).map(drop))
+}
+
+fn with_lookup<T>(run: impl FnOnce(&mut ApiGet<'_>) -> Result<T, String>) -> Result<T, String> {
     let deadline = Instant::now() + DEADLINE;
     let connection = opencode_service::find_bounded(DEADLINE).map_err(|error| error.message())?;
     let cancelled = AtomicBool::new(false);
@@ -40,13 +56,7 @@ fn sessions(service: &Service, resume: Option<String>) -> Result<(Vec<Session>, 
             code => anyhow::bail!("OpenCode session request failed with HTTP {code}"),
         }
     };
-    if let Some(id) = id {
-        let selected = read_selected(&mut get, &workspace, &id)?;
-        service.select_session(selected.clone())?;
-        Ok((vec![selected], true))
-    } else {
-        Ok((read_sessions(&mut get, &workspace)?, false))
-    }
+    run(&mut get)
 }
 
 fn scoped(raw: &OpenCodeSession, workspace: &Path) -> Option<Session> {

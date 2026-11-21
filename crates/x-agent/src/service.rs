@@ -114,6 +114,10 @@ pub struct Task {
     pub summary: Option<String>,
     pub changed_files: Option<Vec<String>>,
     pub workspace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<harness::Session>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_session: Option<harness::SessionId>,
     /// Commands OpenCode asked to run that X refused; each can be allowed for one rerun.
     pub blocked: Vec<String>,
     /// A text edit waiting for review: the proposal, not yet applied.
@@ -279,6 +283,7 @@ struct PlanOptions {
     allow_command: Option<String>,
     private_context: bool,
     new_workspace: Option<PathBuf>,
+    session: Option<harness::Session>,
     model_plan: Option<ModelPlanning>,
 }
 
@@ -298,12 +303,15 @@ struct Guard {
     strict_focus: bool,
 }
 
+type SessionVerifier = dyn Fn(&harness::Session) -> Result<(), String> + Send + Sync;
+
 #[derive(Clone)]
 pub struct Service {
     state: Arc<Mutex<State>>,
     stt: Arc<dyn Stt>,
     launcher: Arc<dyn Launcher>,
     harness: Option<Arc<dyn harness::Adapter>>,
+    session_verifier: Option<Arc<SessionVerifier>>,
     planner: Arc<Mutex<Option<Arc<dyn Planner>>>>,
     session_root: Arc<Mutex<Option<PathBuf>>>,
     desktop: Arc<Mutex<Arc<dyn crate::desktop::Desktop>>>,
@@ -364,6 +372,7 @@ impl Service {
             stt,
             launcher,
             harness,
+            session_verifier: None,
             planner: Arc::new(Mutex::new(None)),
             session_root: Arc::new(Mutex::new(None)),
             desktop: Arc::new(Mutex::new(Arc::new(crate::desktop::AgentDesktop::detect()))),
@@ -434,6 +443,31 @@ impl Service {
         }
         s.workspace = Some(resolved);
         Ok(shown)
+    }
+
+    pub fn with_session_verifier(
+        mut self,
+        verify: impl Fn(&harness::Session) -> Result<(), String> + Send + Sync + 'static,
+    ) -> Self {
+        self.session_verifier = Some(Arc::new(verify));
+        self
+    }
+
+    pub fn plan_session_send(&self, text: &str) -> Result<Task, String> {
+        let session = self
+            .lock()
+            .selected_session
+            .clone()
+            .ok_or("Select an OpenCode session with `hex agent sessions resume <id>` first")?;
+        self.plan_task(
+            text,
+            Mode::Work,
+            None,
+            PlanOptions {
+                session: Some(session),
+                ..PlanOptions::default()
+            },
+        )
     }
 
     pub fn workspace_path(&self) -> Option<PathBuf> {
@@ -869,6 +903,13 @@ impl Service {
                     .as_ref()
                     .or(s.workspace.as_ref())
                     .ok_or("Choose a project workspace first")?;
+                if let Some(session) = &options.session
+                    && (self.session_verifier.is_none() || session.workspace != *ws)
+                {
+                    return Err(
+                        "The selected OpenCode session is unavailable in this project".into(),
+                    );
+                }
                 if self.harness.is_none() {
                     return Err("OpenCode CLI not found on PATH".into());
                 }
@@ -879,11 +920,16 @@ impl Service {
                     request: None,
                     detail: String::new(),
                 };
-                let steps = vec![
-                    step(
-                        &format!("Run OpenCode in {}", ws.display()),
-                        "can modify files in this folder",
+                let description = match &options.session {
+                    Some(session) => format!(
+                        "Send to OpenCode session {} in {}",
+                        session.id.as_str(),
+                        ws.display()
                     ),
+                    None => format!("Run OpenCode in {}", ws.display()),
+                };
+                let steps = vec![
+                    step(&description, "can modify files in this folder"),
                     step("Stream agent activity", ""),
                     step("Report exit status and changed files", ""),
                 ];
@@ -916,6 +962,8 @@ impl Service {
             summary: None,
             changed_files: None,
             workspace,
+            session: options.session,
+            accepted_session: None,
             blocked: vec![],
             edit: None,
         };
@@ -1001,7 +1049,7 @@ impl Service {
     /// Allows one command OpenCode was refused, for one rerun of the same goal. The rerun
     /// is planned like any other Work task: it still waits for approval.
     pub fn allow_once(&self, index: usize) -> Result<Task, String> {
-        let (text, command) = {
+        let (text, command, session) = {
             let s = self.lock();
             if s.phase.is_busy() {
                 return Err(busy(s.phase));
@@ -1016,7 +1064,11 @@ impl Service {
                 .get(index)
                 .ok_or("No such blocked command")?
                 .clone();
-            (task.text.clone(), command)
+            let workspace = s.workspace.as_ref().map(|p| p.display().to_string());
+            if task.workspace != workspace {
+                return Err("Select the original project before rerunning that task".into());
+            }
+            (task.text.clone(), command, task.session.clone())
         };
         if command.contains(['*', '?', '\n']) {
             return Err("That command contains wildcards and cannot be allowed".into());
@@ -1027,6 +1079,7 @@ impl Service {
             None,
             PlanOptions {
                 allow_command: Some(command.clone()),
+                session,
                 ..PlanOptions::default()
             },
         )?;
@@ -1301,6 +1354,25 @@ impl Service {
                 None,
             );
         };
+        if let Some(session) = &task.session {
+            let verification = self
+                .session_verifier
+                .as_ref()
+                .ok_or_else(|| "OpenCode session verification is unavailable".to_string())
+                .and_then(|verify| verify(session));
+            if stop.requested() {
+                return self.finish(
+                    Phase::Cancelled,
+                    None,
+                    Some("Stopped before send".into()),
+                    None,
+                );
+            }
+            if let Err(error) = verification {
+                self.set_step(0, "failed");
+                return self.finish(Phase::Failed, Some(error), None, None);
+            }
+        }
         if create_workspace {
             let mut s = self.lock();
             s.workspace = Some(ws.clone());
@@ -1308,15 +1380,35 @@ impl Service {
         }
         self.set_step(0, "running");
         let me = self.clone();
+        let expected = task.session.as_ref().map(|session| session.id.clone());
+        let active_task_id = task.id;
         let on_event: harness::EventSink = Arc::new(move |event| {
-            if let (Some(command), Some(task)) = (event.blocked_command, me.lock().task.as_mut()) {
+            let mut state = me.lock();
+            let Some(task) = state.task.as_mut().filter(|task| task.id == active_task_id) else {
+                return;
+            };
+            if task.accepted_session.is_none()
+                && let Some(id) = event.accepted_session()
+                && expected.as_ref().is_none_or(|wanted| wanted == id)
+            {
+                task.accepted_session = Some(id.clone());
+                emit(
+                    &mut state,
+                    "delivery",
+                    &format!("OpenCode acknowledged session {}", id.as_str()),
+                );
+            }
+            if let Some(command) = event.blocked_command
+                && let Some(task) = state.task.as_mut()
+            {
                 task.blocked.push(command);
             }
-            me.emit(event.kind.as_str(), &event.text)
+            emit(&mut state, event.kind.as_str(), &event.text);
         });
         let request = harness::Request {
             workspace: ws,
             prompt: task.text.clone(),
+            session: task.session.as_ref().map(|session| session.id.clone()),
             allow_commands: std::mem::take(&mut self.lock().grants),
         };
         let run = match adapter.start(request, on_event, stop) {
