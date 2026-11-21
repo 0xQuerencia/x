@@ -1913,6 +1913,27 @@ mod tests {
     use crate::dictation::vocabulary::VocabularyEntry;
 
     #[test]
+    fn workflow_graph_preview_is_an_explicit_read_only_cli_command() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed =
+            Args::try_parse_from(["hex", "agent", "workflow", "preview", "my-workflow"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Workflow { command, value, .. }
+            } if command == "preview" && value == "my-workflow"
+        ));
+        assert!(Args::try_parse_from(["hex", "agent", "workflow", "execute-anything"]).is_err());
+    }
+
+    #[test]
     fn registered_project_cli_commands_are_exact_and_nonexecuting() {
         use clap::Parser;
 
