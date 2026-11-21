@@ -519,8 +519,7 @@ mod tests {
                 let receipt = grants
                     .issue(
                         Permission::StartHarness,
-                        approval_scope(node, project.id, run_id, &Proof::DeliveryOnly)
-                            .unwrap(),
+                        approval_scope(node, project.id, run_id, &Proof::DeliveryOnly).unwrap(),
                         Duration::from_secs(30),
                         1,
                         true,
