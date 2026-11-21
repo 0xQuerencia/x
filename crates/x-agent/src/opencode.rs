@@ -133,11 +133,29 @@ impl RunFlags {
     }
 }
 
+fn supports_context_policy(exe: &Path) -> bool {
+    let Some((true, output)) = harness::probe::query(exe, &["--version"]) else {
+        return false;
+    };
+    let Some(version) = harness::probe::parse_version(harness::Kind::OpenCode, &output) else {
+        return false;
+    };
+    let release = version
+        .split_once(['-', '+'])
+        .map_or(version.as_str(), |(release, _)| release);
+    let components: Vec<_> = release
+        .split('.')
+        .filter_map(|part| part.parse::<u32>().ok())
+        .collect();
+    matches!(components.as_slice(), [2, minor, patch] if (*minor, *patch) >= (2, 7))
+}
+
 pub struct RunConfig {
     pub exe: PathBuf,
     pub prompt: String,
     pub workspace: PathBuf,
     pub session: Option<SessionId>,
+    pub access: harness::WorkAccess,
     pub stall_after: Duration,
     /// Exact shell commands the person allowed for this one run.
     pub allow_commands: Vec<String>,
@@ -182,6 +200,7 @@ impl RunConfig {
             prompt: prompt.into(),
             workspace,
             session: None,
+            access: harness::WorkAccess::Workspace,
             stall_after: STALL_AFTER,
             allow_commands: vec![],
         }
@@ -190,6 +209,22 @@ impl RunConfig {
     /// OpenCode config merged over the person's own for this run only: edits stay in the
     /// workspace, unknown shell commands and other directories are refused, secrets stay unread.
     pub fn policy(&self) -> String {
+        if self.access == harness::WorkAccess::SelectionOnly {
+            let policies = [
+                "tool.use",
+                "skill.use",
+                "mcp.use",
+                "plugin.use",
+                "websearch.use",
+            ]
+            .map(|action| serde_json::json!({"action": action, "resource": "*", "effect": "deny"}));
+            return serde_json::json!({
+                "permissions": [{"action": "*", "resource": "*", "effect": "deny"}],
+                "policies": policies,
+            })
+            .to_string();
+        }
+
         let mut bash = serde_json::Map::new();
         bash.insert("*".into(), "ask".into());
         for command in SAFE_COMMANDS {
@@ -272,6 +307,7 @@ impl harness::Adapter for Adapter {
         let mut config = RunConfig::new(self.exe.clone(), request.prompt, request.workspace);
         config.allow_commands = request.allow_commands;
         config.session = request.session;
+        config.access = request.access;
         Ok(Box::new(Run::start_events_scoped(config, events, stop)?))
     }
 }
@@ -333,6 +369,11 @@ impl Run {
             return Err(
                 "The installed OpenCode does not support a private run against an exact session"
                     .into(),
+            );
+        }
+        if cfg.access == harness::WorkAccess::SelectionOnly && !supports_context_policy(&cfg.exe) {
+            return Err(
+                "Sharing a selection requires OpenCode 2.2.7 or a newer OpenCode 2 build".into(),
             );
         }
         let args = cfg.args_for(flags);

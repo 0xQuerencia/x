@@ -51,10 +51,19 @@ pub struct Descriptor {
     pub capabilities: &'static [Capability],
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkAccess {
+    #[default]
+    Workspace,
+    SelectionOnly,
+}
+
 pub struct Request {
     pub workspace: PathBuf,
     pub prompt: String,
     pub session: Option<SessionId>,
+    pub access: WorkAccess,
     pub allow_commands: Vec<String>,
 }
 

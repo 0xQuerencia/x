@@ -136,6 +136,14 @@ and uses the supervised private OpenCode runner with its normal command
 permissions. A structured event from the same session supplies the delivery
 acknowledgement. Stop cancels the owned runner.
 
+After displaying the list, say `Friday, give this to session one` to preview
+sharing selected text. Numbers refer to that list for 60 seconds. A displayed
+session title also works when it identifies one entry. An exact ID from a
+selected or displayed session takes precedence. Refresh the list after
+changing projects. X checks the target and the source window before sending.
+This path requires approval and uses the deny-all tool policy available
+in OpenCode 2.2.7 and later OpenCode 2 builds.
+
 ### Command decisions (Perplexity Decider)
 
 X routes looser spoken Actions through OpenRouter's free **Perplexity Decider

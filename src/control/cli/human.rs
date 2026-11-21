@@ -38,9 +38,13 @@ pub(crate) fn print(reply: ControlReply, output: Output) -> u8 {
             if sessions.is_empty() {
                 println!("No OpenCode sessions in this project");
             }
-            for session in sessions {
-                let prefix = if selected { "Selected " } else { "" };
-                println!("{prefix}{}  {}", session.id.as_str(), session.title);
+            for (index, session) in sessions.into_iter().enumerate() {
+                let prefix = if selected {
+                    "Selected".to_string()
+                } else {
+                    format!("{}.", index + 1)
+                };
+                println!("{prefix} {}  {}", session.id.as_str(), session.title);
             }
         }
         ControlReply::Error { message, .. } => eprintln!("hex: {message}"),
