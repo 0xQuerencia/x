@@ -28,7 +28,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-pub use report::{Doctor, Report, detect, doctor, report};
+pub use report::{
+    CapabilityReport, Doctor, ProbeEvidence, Report, SupportState, detect, doctor, report,
+};
 #[cfg(windows)]
 pub(crate) fn native_handle(id: &str) -> Option<usize> {
     win11::parse_id(id).map(|(handle, _)| handle)
@@ -110,6 +112,10 @@ impl Cmd {
 pub trait Backend: Send {
     fn name(&self) -> &'static str;
     fn caps(&self) -> Vec<Cap>;
+    /// Check window enumeration only if the backend can do so with a bounded read.
+    fn probe_window_list(&self) -> Option<Result<(), WmError>> {
+        None
+    }
     /// A fresh read every call; nothing is cached across calls.
     fn windows(&self) -> Result<Vec<WinInfo>, WmError>;
     fn focused(&self) -> Result<Option<String>, WmError>;

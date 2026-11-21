@@ -108,12 +108,16 @@ impl Backend for Hypr {
         ]
     }
 
+    fn probe_window_list(&self) -> Option<Result<(), WmError>> {
+        Some(self.windows().map(drop))
+    }
+
     fn windows(&self) -> Result<Vec<WinInfo>, WmError> {
         let clients = hypr(&["clients", "-j"]).map_err(WmError::Backend)?;
         Ok(clients
             .as_array()
-            .into_iter()
-            .flatten()
+            .ok_or_else(|| WmError::Backend("Hyprland did not return a window list".into()))?
+            .iter()
             .filter_map(parse)
             .collect())
     }

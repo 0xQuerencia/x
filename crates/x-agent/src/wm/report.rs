@@ -15,12 +15,54 @@ use super::win11::Win11;
 use super::x11::X11;
 use super::{Backend, Cap};
 
+const CAPABILITIES: [Cap; 7] = [
+    Cap::List,
+    Cap::Focus,
+    Cap::SwitchWorkspace,
+    Cap::MoveToWorkspace,
+    Cap::Maximize,
+    Cap::Minimize,
+    Cap::Close,
+];
+
+/// What the current evidence establishes about an operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SupportState {
+    Supported,
+    Partial,
+    Unsupported,
+    NeedsPermission,
+}
+
+/// How the report reached its conclusion, without retaining window details.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeEvidence {
+    WindowListRead,
+    WindowListFailed,
+    BackendAdvertised,
+    BackendDidNotAdvertise,
+    BackendUnavailable,
+    BackendOptInRequired,
+}
+
+/// Evidence for one operation on the desktop named by the enclosing report.
+#[derive(Debug, Serialize)]
+pub struct CapabilityReport {
+    pub capability: Cap,
+    pub state: SupportState,
+    pub evidence: ProbeEvidence,
+}
+
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub desktop: String,
     pub session: String,
     pub backend: Option<String>,
+    /// Legacy field containing the selected backend's advertised operations.
     pub supported: Vec<Cap>,
+    pub capabilities: Vec<CapabilityReport>,
     pub note: String,
 }
 
@@ -32,15 +74,23 @@ fn env(key: &str) -> String {
     std::env::var(key).unwrap_or_default()
 }
 
-/// Win32 desktop operations are native and don't depend on XDG or shell tools.
-#[cfg(windows)]
+struct SelectionFailure {
+    note: String,
+    opt_in_required: bool,
+}
+
+/// Select a backend using session hints and required helpers.
 pub fn detect() -> Result<Box<dyn Backend>, String> {
+    select().map_err(|failure| failure.note)
+}
+
+#[cfg(windows)]
+fn select() -> Result<Box<dyn Backend>, SelectionFailure> {
     Ok(Box::new(Win11))
 }
 
-/// Picks a backend by what actually answers, not by `XDG_CURRENT_DESKTOP` alone.
 #[cfg(not(windows))]
-pub fn detect() -> Result<Box<dyn Backend>, String> {
+fn select() -> Result<Box<dyn Backend>, SelectionFailure> {
     if !env("HYPRLAND_INSTANCE_SIGNATURE").is_empty() && has("hyprctl") {
         return Ok(Box::new(Hypr));
     }
@@ -65,9 +115,15 @@ pub fn detect() -> Result<Box<dyn Backend>, String> {
             .contains("kde")
         && has("kdotool")
         && !env("DBUS_SESSION_BUS_ADDRESS").is_empty()
-        && env("X_ENABLE_EXPERIMENTAL_KDE") == "1"
     {
-        return Ok(Box::new(Kde));
+        return if env("X_ENABLE_EXPERIMENTAL_KDE") == "1" {
+            Ok(Box::new(Kde))
+        } else {
+            Err(SelectionFailure {
+                note: "KDE Plasma 6 window control requires X_ENABLE_EXPERIMENTAL_KDE=1 in this session".into(),
+                opt_in_required: true,
+            })
+        };
     }
     // Avoid mistaking XWayland's DISPLAY for the real window-management
     // session. Only a native X11 session gets this EWMH backend.
@@ -78,7 +134,10 @@ pub fn detect() -> Result<Box<dyn Backend>, String> {
     {
         return Ok(Box::new(X11));
     }
-    Err(unsupported_note())
+    Err(SelectionFailure {
+        note: unsupported_note(),
+        opt_in_required: false,
+    })
 }
 
 #[cfg(not(windows))]
@@ -91,16 +150,64 @@ fn unsupported_note() -> String {
     } else if desktop.contains("gnome") {
         "GNOME Wayland exposes no window control to other apps; X has no extension backend yet"
     } else {
-        "no supported window manager answered (Hyprland, Sway, i3)"
+        "no supported backend matched this session (Hyprland, Sway, i3)"
     };
     format!("Window control is unavailable here: {why}")
 }
 
-pub fn report() -> Report {
-    let (backend, supported, note) = match detect() {
-        Ok(b) => (Some(b.name().to_string()), b.caps(), String::new()),
-        Err(note) => (None, Vec::new(), note),
+fn capability_report(
+    capability: Cap,
+    unavailable: Option<&SelectionFailure>,
+    advertised: &[Cap],
+    list_probe: Option<bool>,
+) -> CapabilityReport {
+    use ProbeEvidence as Evidence;
+
+    let (state, evidence) = match unavailable {
+        Some(failure) if failure.opt_in_required => (
+            SupportState::NeedsPermission,
+            Evidence::BackendOptInRequired,
+        ),
+        Some(_) => (SupportState::Unsupported, Evidence::BackendUnavailable),
+        None if !advertised.contains(&capability) => {
+            (SupportState::Unsupported, Evidence::BackendDidNotAdvertise)
+        }
+        None => match (capability, list_probe) {
+            (Cap::List, Some(true)) => (SupportState::Supported, Evidence::WindowListRead),
+            (_, Some(false)) => (SupportState::Partial, Evidence::WindowListFailed),
+            _ => (SupportState::Partial, Evidence::BackendAdvertised),
+        },
     };
+    CapabilityReport {
+        capability,
+        state,
+        evidence,
+    }
+}
+
+pub fn report() -> Report {
+    let backend = select();
+    let (name, supported, note, list_probe) = match &backend {
+        Ok(backend) => {
+            let advertised = backend.caps();
+            let list_probe = if advertised.contains(&Cap::List) {
+                backend.probe_window_list().map(|result| result.is_ok())
+            } else {
+                None
+            };
+            (
+                Some(backend.name().to_string()),
+                advertised,
+                String::new(),
+                list_probe,
+            )
+        }
+        Err(failure) => (None, Vec::new(), failure.note.clone(), None),
+    };
+    let capabilities = CAPABILITIES
+        .into_iter()
+        .map(|cap| capability_report(cap, backend.as_ref().err(), &supported, list_probe))
+        .collect();
     Report {
         desktop: if cfg!(windows) {
             "Windows".into()
@@ -112,8 +219,9 @@ pub fn report() -> Report {
         } else {
             env("XDG_SESSION_TYPE")
         },
-        backend,
+        backend: name,
         supported,
+        capabilities,
         note: if cfg!(windows) {
             "Experimental Windows 11 backend: real desktop and microphone acceptance tests pending; virtual desktop indices are unsupported".into()
         } else {
@@ -202,7 +310,11 @@ pub fn doctor(key_path: Option<&Path>) -> Doctor {
         && checks
             .iter()
             .all(|check| !check.required || check.installed)
-        && key_private;
+        && key_private
+        && !desktop
+            .capabilities
+            .iter()
+            .any(|capability| capability.evidence == ProbeEvidence::WindowListFailed);
     Doctor {
         desktop,
         checks,
@@ -241,6 +353,22 @@ impl Doctor {
             self.desktop.session,
             self.desktop.backend.as_deref().unwrap_or("unavailable")
         ));
+        if let Some(list) = self
+            .desktop
+            .capabilities
+            .iter()
+            .find(|cap| cap.capability == Cap::List)
+        {
+            let message = match list.evidence {
+                ProbeEvidence::WindowListRead => "window list read",
+                ProbeEvidence::WindowListFailed => "window list unavailable",
+                ProbeEvidence::BackendAdvertised => "window list advertised, no read probe",
+                ProbeEvidence::BackendDidNotAdvertise => "window listing unsupported",
+                ProbeEvidence::BackendUnavailable => "window backend unavailable",
+                ProbeEvidence::BackendOptInRequired => "backend opt-in required",
+            };
+            lines.push(format!("Desktop probe: {message}"));
+        }
         if !self.desktop.note.is_empty() {
             lines.push(self.desktop.note.clone());
         }
@@ -284,6 +412,74 @@ impl Doctor {
 #[cfg(test)]
 mod doctor_tests {
     use super::*;
+
+    #[test]
+    fn only_window_listing_is_supported_after_a_successful_read() {
+        let reports =
+            CAPABILITIES.map(|cap| capability_report(cap, None, &CAPABILITIES, Some(true)));
+        let supported: Vec<_> = reports
+            .iter()
+            .filter(|report| report.state == SupportState::Supported)
+            .map(|report| (report.capability, report.evidence))
+            .collect();
+        assert_eq!(supported, [(Cap::List, ProbeEvidence::WindowListRead)]);
+        assert!(reports.iter().all(|report| {
+            report.capability == Cap::List
+                || (report.state == SupportState::Partial
+                    && report.evidence == ProbeEvidence::BackendAdvertised)
+        }));
+    }
+
+    #[test]
+    fn selection_and_probe_failures_have_distinct_evidence() {
+        use ProbeEvidence as Evidence;
+        use SupportState as State;
+
+        let unavailable = SelectionFailure {
+            note: String::new(),
+            opt_in_required: false,
+        };
+        let opt_in_required = SelectionFailure {
+            note: String::new(),
+            opt_in_required: true,
+        };
+
+        for (selection, caps, probe, expected) in [
+            (
+                None,
+                &[Cap::List][..],
+                None,
+                (State::Partial, Evidence::BackendAdvertised),
+            ),
+            (
+                None,
+                &[Cap::List][..],
+                Some(false),
+                (State::Partial, Evidence::WindowListFailed),
+            ),
+            (
+                None,
+                &[][..],
+                None,
+                (State::Unsupported, Evidence::BackendDidNotAdvertise),
+            ),
+            (
+                Some(&unavailable),
+                &[][..],
+                None,
+                (State::Unsupported, Evidence::BackendUnavailable),
+            ),
+            (
+                Some(&opt_in_required),
+                &[][..],
+                None,
+                (State::NeedsPermission, Evidence::BackendOptInRequired),
+            ),
+        ] {
+            let report = capability_report(Cap::List, selection, caps, probe);
+            assert_eq!((report.state, report.evidence), expected);
+        }
+    }
 
     #[test]
     fn missing_dependency_is_named_and_fails_readiness() {
