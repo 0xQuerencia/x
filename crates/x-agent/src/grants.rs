@@ -229,13 +229,15 @@ mod tests {
     fn task_receipts_cannot_cross_projects_or_capabilities() {
         let grants = Grants::default();
         let target = task();
-        let receipt = grants.issue(
-            Permission::StartHarness,
-            target.clone(),
-            Duration::from_secs(20),
-            1,
-            true,
-        ).unwrap();
+        let receipt = grants
+            .issue(
+                Permission::StartHarness,
+                target.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
         assert!(grants.consume(&receipt, Permission::StartHarness, &task()).is_err());
         assert!(grants.consume(&receipt, Permission::RunTests, &target).is_err());
         let mut different_goal = target.clone();
