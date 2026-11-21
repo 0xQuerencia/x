@@ -509,7 +509,7 @@ pub enum AgentCommand {
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "permissions", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
         command: String,
         /// A workflow id, or a file path for import.
         #[arg(default_value = "")]
@@ -1912,6 +1912,28 @@ mod tests {
     use super::*;
     use crate::control::{StatusReport, settings::SettingValue};
     use crate::dictation::vocabulary::VocabularyEntry;
+
+    #[test]
+    fn workflow_permission_review_requires_an_explicit_id() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed = Args::try_parse_from(["hex", "agent", "workflow", "permissions", "review"])
+            .unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Workflow { command, value, .. }
+            } if command == "permissions" && value == "review"
+        ));
+        assert!(Args::try_parse_from(["hex", "agent", "workflow", "permissions"]).is_ok());
+        assert!(Args::try_parse_from(["hex", "agent", "workflow", "shell"]).is_err());
+    }
 
     #[test]
     fn registered_project_cli_commands_are_exact_and_nonexecuting() {
