@@ -134,6 +134,8 @@ impl Runner for SystemRunner {
     }
 }
 
+/// The extra argument is an injectable process runner used by the authorization tests.
+#[allow(clippy::too_many_arguments)]
 fn verify_with(
     manager: &Manager,
     project: &Project,
