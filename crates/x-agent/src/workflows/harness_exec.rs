@@ -109,7 +109,8 @@ impl ApprovedHarnessExecutor {
                 .iter()
                 .find(|node| node.id == assignment.node_id)
                 .ok_or("An assignment has no matching graph node")?;
-            if worktrees.validate_owned(&assignment.project, &assignment.worktree).is_err()
+            if assignment.worktree.run_id() != run_id
+                || worktrees.validate_owned(&assignment.project, &assignment.worktree).is_err()
                 || !matches!(
                     &node.job,
                     Job::Harness { project_id, harness, .. }
