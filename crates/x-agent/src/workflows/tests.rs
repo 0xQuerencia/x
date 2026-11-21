@@ -1108,6 +1108,49 @@ mod storage {
     }
 
     #[test]
+    fn coding_graphs_are_listed_without_exposing_goals_or_overwriting_them() {
+        use crate::workflows::dag::{Graph, HarnessKind, Job, Node, VERSION};
+
+        let h = home();
+        let s = store(h.path());
+        let graph = Graph {
+            version: VERSION,
+            id: "coding-graph".into(),
+            name: "Review backend".into(),
+            triggers: vec![],
+            nodes: vec![Node {
+                id: "backend".into(),
+                after: vec![],
+                requires: vec![],
+                job: Job::Harness {
+                    harness: HarnessKind::OpenCode,
+                    project_id: uuid::Uuid::new_v4().to_string(),
+                    goal: "private backend instructions".into(),
+                },
+                on_failure: OnFailure::Stop,
+            }],
+        };
+        let source = h.path().join("graph-source.json");
+        std::fs::write(&source, serde_json::to_vec(&graph).unwrap()).unwrap();
+        s.import_graph(&source).unwrap();
+        assert!(s.list().is_empty());
+        let entries = s.list_graphs();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "Review backend");
+        assert!(entries[0].coding_only);
+        assert_eq!(entries[0].jobs, 1);
+        assert!(!serde_json::to_string(&entries).unwrap().contains("private backend"));
+
+        let saved = std::fs::read(s.dir().join("coding-graph.json")).unwrap();
+        let mut legacy = coding(h.path());
+        legacy.id = "coding-graph".into();
+        legacy.triggers.clear();
+        assert!(s.save(&legacy).is_err());
+        assert_eq!(std::fs::read(s.dir().join("coding-graph.json")).unwrap(), saved);
+        assert_eq!(s.get_graph("coding-graph").unwrap(), graph);
+    }
+
+    #[test]
     fn invalid_workflows_are_not_saved() {
         let h = home();
         let s = store(h.path());
