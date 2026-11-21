@@ -300,11 +300,21 @@ mod tests {
         kind: Kind,
         fail: bool,
         running: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
     }
 
     impl OwnedRun for FakeRun {
         fn join(self: Box<Self>) -> RunResult {
             let success = !self.fail;
+            // The journal fsync can serialize the initial claims on slow CI
+            // disks. Keep the first fake session alive until both actually
+            // start, without allowing a deadlock to hang this test.
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while self.peak.load(Ordering::SeqCst) < 2
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
             std::thread::sleep(Duration::from_millis(45));
             self.running.fetch_sub(1, Ordering::SeqCst);
             RunResult {
@@ -351,6 +361,7 @@ mod tests {
                 kind: self.kind,
                 fail: self.fail,
                 running: Arc::clone(&self.running),
+                peak: Arc::clone(&self.peak),
             }))
         }
     }
