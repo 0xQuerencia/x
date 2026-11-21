@@ -36,6 +36,7 @@ mod windows_clipboard;
 mod windows_input;
 pub mod wm;
 pub mod workflows;
+pub mod worktrees;
 
 /// Retry a spawn that fails with ETXTBSY: another thread forked while the executable was
 /// still open for writing (only happens right after an executable is created).

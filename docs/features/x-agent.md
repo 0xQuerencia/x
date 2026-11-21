@@ -150,6 +150,19 @@ The scheduler is **not attached to live harnesses or the UI**. P4.3 worktree
 isolation, a stronger verification adapter and policy bridge must land before
 concurrent editing is exposed to users.
 
+### Approved Git worktree isolation (development)
+
+The new worktree manager can allocate a detached Git checkout at a verified
+commit into an owner-selected visible directory under the home folder. It
+verifies the repository identity, never changes the original checkout and
+refuses duplicate task paths. Git hooks are disabled for these operations;
+Git checkout configuration and filters still require explicit owner consent.
+
+Cleanup **requires a new owner approval**, rechecks ownership and Git identity,
+refuses tracked/untracked/ignored changes and never uses `--force`.
+There is no automatic merge or cleanup. This API is not yet wired to the DAG
+scheduler or user-facing UI; those integrations must preserve the approval gates.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
