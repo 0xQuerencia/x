@@ -51,6 +51,7 @@ impl Grants {
     /// Only the trusted native approval handler should issue a receipt.
     /// `owner_approved` must reflect a real, current user interaction and is
     /// intentionally inaccessible to downstream adapters and model output.
+    #[allow(dead_code)] // Native UI approval issuance is a later milestone.
     pub(crate) fn issue(
         &self,
         permission: Permission,
