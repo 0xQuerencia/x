@@ -367,7 +367,15 @@ mod tests {
             .is_err()
         );
         assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert!(grants.check(&receipt, Permission::RunTests, &scope_for_suite(&project, &owned, Suite::Npm)).is_ok());
+        assert!(
+            grants
+                .check(
+                    &receipt,
+                    Permission::RunTests,
+                    &scope_for_suite(&project, &owned, Suite::Npm),
+                )
+                .is_ok()
+        );
     }
 
     #[cfg(unix)]
