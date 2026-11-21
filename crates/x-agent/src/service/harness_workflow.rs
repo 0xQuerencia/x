@@ -180,7 +180,10 @@ impl Service {
                     .workflow_store()
                     .record_graph_last(&workflow.graph.id, &report)
                 {
-                    self.emit("warning", &format!("Could not save coding workflow outcome: {error}"));
+                    self.emit(
+                        "warning",
+                        &format!("Could not save coding workflow outcome: {error}"),
+                    );
                 }
                 let mut complete = 0;
                 for (index, node) in report.nodes.iter().enumerate() {
