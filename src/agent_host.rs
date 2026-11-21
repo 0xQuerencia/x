@@ -52,6 +52,7 @@ pub fn service() -> &'static Service {
                 tracing::warn!(%error, "could not open X audit ledger");
             }
             if let Some(home) = dirs::home_dir() {
+                service.configure_session_storage(dir.clone(), home.clone());
                 service.set_workflow_dirs(dir.join("workflows"), home);
             }
         }
