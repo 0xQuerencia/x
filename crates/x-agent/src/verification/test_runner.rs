@@ -182,15 +182,20 @@ fn unix_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::projects::Project;
+    #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
     use uuid::Uuid;
 
+    #[cfg(unix)]
     struct MockRunner {
         result: std::result::Result<bool, String>,
         calls: std::sync::atomic::AtomicUsize,
     }
 
+    #[cfg(unix)]
     impl Runner for MockRunner {
         fn run(
             &self,
