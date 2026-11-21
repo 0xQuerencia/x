@@ -654,7 +654,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn state_root(label: &str) -> PathBuf {
+    pub(crate) fn state_root(label: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "hex-opencode-service-{label}-{}-{:?}",
             std::process::id(),
