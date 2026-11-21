@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(project.git_common_dir, None);
 
         let registry = Registry::new(registry.directory, registry.home);
-        assert_eq!(registry.list().unwrap(), [project.clone()]);
+        assert_eq!(registry.list().unwrap(), std::slice::from_ref(&project));
         assert_eq!(
             registry
                 .register("Different name", root.to_str().unwrap())
@@ -345,7 +345,7 @@ mod tests {
                 .unwrap_err()
                 .contains("lock")
         );
-        assert_eq!(registry.list().unwrap(), [first.clone()]);
+        assert_eq!(registry.list().unwrap(), std::slice::from_ref(&first));
         lock.unlock().unwrap();
         let (second, _) = registry.register("Second", "~/second").unwrap();
         assert_eq!(registry.list().unwrap(), [first, second]);
