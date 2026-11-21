@@ -16,6 +16,8 @@ use crate::harness::{self, RunStatus};
 use crate::hexcli::{Stt, SttError};
 use crate::opencode;
 use crate::phase::Phase;
+use crate::projects::Registry;
+use crate::session_links::{Link as SessionLink, Store as SessionStore};
 use crate::tools::{self, Action, Risk};
 
 mod edit;
@@ -327,6 +329,7 @@ pub struct Service {
     session_verifier: Option<Arc<SessionVerifier>>,
     planner: Arc<Mutex<Option<Arc<dyn Planner>>>>,
     session_root: Arc<Mutex<Option<PathBuf>>>,
+    session_storage: Arc<Mutex<Option<(PathBuf, PathBuf)>>>,
     desktop: Arc<Mutex<Arc<dyn crate::desktop::Desktop>>>,
     context: Arc<Mutex<Arc<Engine>>>,
     editor: Arc<crate::edit::Editor>,
@@ -391,6 +394,7 @@ impl Service {
             session_verifier: None,
             planner: Arc::new(Mutex::new(None)),
             session_root: Arc::new(Mutex::new(None)),
+            session_storage: Arc::new(Mutex::new(None)),
             desktop: Arc::new(Mutex::new(Arc::new(crate::desktop::AgentDesktop::detect()))),
             context: Arc::new(Mutex::new(Arc::new(Engine::system()))),
             editor: Arc::new(crate::edit::Editor::default()),
@@ -421,6 +425,90 @@ impl Service {
                 Err(error)
             }
         }
+    }
+
+    /// Store confirmed harness IDs only for directories the user registered.
+    pub fn configure_session_storage(&self, directory: PathBuf, home: PathBuf) {
+        *self
+            .session_storage
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some((directory, home));
+    }
+
+    fn session_store(&self) -> Option<(Registry, SessionStore)> {
+        let (directory, home) = self
+            .session_storage
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()?;
+        Some((
+            Registry::new(directory.clone(), home),
+            SessionStore::new(directory),
+        ))
+    }
+
+    fn record_provider_session(&self, session: &harness::Session) {
+        let Some((registry, store)) = self.session_store() else {
+            return;
+        };
+        let result = registry.list().and_then(|projects| {
+            let Some(project) = projects
+                .into_iter()
+                .find(|project| project.root == session.workspace)
+            else {
+                return Ok(());
+            };
+            store.observe(&project, session, now()).map(drop)
+        });
+        if let Err(error) = result {
+            self.emit(
+                "warning",
+                &format!("Could not remember coding session: {error}"),
+            );
+        }
+    }
+
+    fn reconcile_provider_sessions(
+        &self,
+        workspace: &std::path::Path,
+        sessions: &[harness::Session],
+    ) {
+        let Some((registry, store)) = self.session_store() else {
+            return;
+        };
+        let result = registry.list().and_then(|projects| {
+            let Some(project) = projects
+                .into_iter()
+                .find(|project| project.root == workspace)
+            else {
+                return Ok(());
+            };
+            store
+                .reconcile(&project, harness::Kind::OpenCode, Some(sessions), now())
+                .map(drop)
+        });
+        if let Err(error) = result {
+            self.emit(
+                "warning",
+                &format!("Could not reconcile coding sessions: {error}"),
+            );
+        }
+    }
+
+    /// Remembered entries are unverified until a fresh harness lookup succeeds.
+    pub fn remembered_sessions(
+        &self,
+        workspace: &std::path::Path,
+    ) -> Result<Vec<SessionLink>, String> {
+        let (registry, store) = self
+            .session_store()
+            .ok_or("Session persistence is not configured")?;
+        let project = registry
+            .list()?
+            .into_iter()
+            .find(|project| project.root == workspace)
+            .ok_or("This directory has not been registered as a project")?;
+        store.list(&project)
     }
 
     pub fn snapshot(&self, since: u64) -> Snapshot {
@@ -539,11 +627,14 @@ impl Service {
         {
             return Err("The selected project changed during OpenCode discovery".into());
         }
+        let discovered = sessions.clone();
         state.session_list = Some(session_targets::SessionList::new(
             workspace.to_owned(),
             sessions,
             Instant::now(),
         ));
+        drop(state);
+        self.reconcile_provider_sessions(workspace, &discovered);
         Ok(())
     }
 
@@ -606,7 +697,10 @@ impl Service {
         if s.workspace.as_ref() != Some(&session.workspace) {
             return Err("The selected project changed during OpenCode discovery".into());
         }
+        let observed = session.clone();
         s.selected_session = Some(session);
+        drop(s);
+        self.record_provider_session(&observed);
         Ok(())
     }
 
@@ -1616,6 +1710,14 @@ impl Service {
             }
         };
         let res = run.join();
+        if let Some(id) = res.accepted_session.as_ref().filter(|id| id.kind() == kind) {
+            self.record_provider_session(&harness::Session {
+                id: id.clone(),
+                title: String::new(),
+                workspace: ws.clone(),
+                updated_at: now(),
+            });
+        }
         if kind == harness::Kind::ClaudeCode
             && res.status == RunStatus::Completed
             && !stop.requested()
