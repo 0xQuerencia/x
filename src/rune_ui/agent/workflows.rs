@@ -609,7 +609,11 @@ fn list(p: Paint, mgr: &Manager) -> El {
         && !jobs.is_empty()
     {
         list = list
-            .child(section_label(p, "wf-recovery-title", tr("Interrupted coding jobs")))
+            .child(section_label(
+                p,
+                "wf-recovery-title",
+                tr("Interrupted coding jobs"),
+            ))
             .child(small(
                 "wf-recovery-caution".into(),
                 "Check provider delivery before trying these jobs again.".into(),
