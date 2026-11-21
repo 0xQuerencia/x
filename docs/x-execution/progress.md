@@ -6,3 +6,4 @@
 | Baseline parser fix | Open | [#101](https://github.com/0xQuerencia/x/pull/101) | Catalog fixture reproduced the failure. Linux, macOS and Windows x64 CI passed. |
 | P0.2 | Open | [#102](https://github.com/0xQuerencia/x/pull/102) | Linux, macOS and Windows x64 CI passed. The read-only Hyprland probe passed. |
 | P0.3 | Open | [#103](https://github.com/0xQuerencia/x/pull/103) | Formatting, strict Clippy and the live read-only Hyprland contract passed. With #101 applied, 386 tests passed and 8 were ignored. The standalone branch has two P0.1 baseline failures on this machine. |
+| P0.4 | Open | [#104](https://github.com/0xQuerencia/x/pull/104) | Formatting and strict Clippy passed. With #101 applied, 390 tests passed and 8 were ignored. New tests cover forged metadata, duplicate approval and changed close targets. |
