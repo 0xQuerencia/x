@@ -45,7 +45,7 @@ impl Fixture {
     fn fake(&self, body: &str) -> PathBuf {
         let path = self.dir.path().join("fake-opencode");
         let script = format!(
-            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then echo '--standalone'; exit 0; fi\n{body}\n"
+            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then printf '%s\\n' '--standalone' '--dir' '--format json'; exit 0; fi\n{body}\n"
         );
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -259,4 +259,27 @@ fn a_task_stop_reaps_only_its_own_open_code_run() {
     );
     assert!(Run::start_scoped(config, Arc::new(|_, _| {}), &root).is_err());
     assert!(!owned_fixture.repo.join("started-after-stop").exists());
+}
+
+#[test]
+fn new_cli_without_dir_flag_still_runs_in_the_approved_workspace() {
+    let f = fixture();
+    let exe = f.fake("");
+    std::fs::write(
+        &exe,
+        concat!(
+            "#!/bin/sh\n",
+            "if [ \"$2\" = '--help' ]; then printf '%s\\n' '--standalone' '--format json'; exit 0; fi\n",
+            "for arg in \"$@\"; do if [ \"$arg\" = '--dir' ]; then exit 41; fi; done\n",
+            "printf 'ran here' > reached\n",
+        ),
+    ).unwrap();
+    let config = RunConfig::new(exe, "inspect the project", f.repo.clone());
+    assert!(!config.args().contains(&"--dir".to_string()));
+    let run = Run::start(config, Arc::new(|_, _| {})).unwrap().join();
+    assert_eq!(run.status, RunStatus::Completed);
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("reached")).unwrap(),
+        "ran here"
+    );
 }

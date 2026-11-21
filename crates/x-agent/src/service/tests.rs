@@ -659,7 +659,7 @@ fn fake_opencode(dir: &std::path::Path, body: &str) -> PathBuf {
     std::fs::write(
         &p,
         format!(
-            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then echo '--standalone'; exit 0; fi\n{body}\n"
+            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then printf '%s\\n' '--standalone' '--dir' '--format json'; exit 0; fi\n{body}\n"
         ),
     )
     .unwrap();
