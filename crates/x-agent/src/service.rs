@@ -770,7 +770,9 @@ impl Service {
 
     /// True when this request would go to the model (the rules do not know it).
     pub fn needs_model(&self, text: &str) -> bool {
-        if session_targets::spoken_target(text).is_some() {
+        if session_targets::spoken_target(text).is_some()
+            || session_targets::spoken_work(text).is_some()
+        {
             return false;
         }
         let spoken_edit =
@@ -834,6 +836,26 @@ impl Service {
                 .ok_or_else(|| "Stop requested".into());
         }
         let planning_started = Instant::now();
+        if mode == Mode::Actions
+            && let Some((work_harness, goal)) = session_targets::spoken_work(text)
+        {
+            let session = if work_harness == harness::Kind::OpenCode {
+                self.lock().selected_session.clone()
+            } else {
+                None
+            };
+            return self.plan_task(
+                &goal,
+                Mode::Work,
+                None,
+                PlanOptions {
+                    source,
+                    session,
+                    work_harness,
+                    ..PlanOptions::default()
+                },
+            );
+        }
         if mode == Mode::Actions
             && let Some(selector) = session_targets::spoken_target(text)
         {

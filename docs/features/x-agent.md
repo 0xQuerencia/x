@@ -144,6 +144,16 @@ changing projects. X checks the target and the source window before sending.
 This path requires approval and uses the deny-all tool policy available
 in OpenCode 2.2.7 and later OpenCode 2 builds.
 
+### Delegate a task by voice
+
+Set the project with `hex agent workspace <path>`. Through an enabled X
+command input, say `Friday, ask OpenCode to inspect the backend tests`. X
+previews the goal and project, then waits for approval. An explicitly selected
+OpenCode session appears in the preview and is rechecked before delivery.
+`Ask Claude Code to …` chooses Claude Code directly. Doctor shows the local
+harness versions and login information. The model configured in the chosen
+harness handles the approved run.
+
 ### Claude Code Work
 
 With Claude Code 2 installed, choose a project, run `hex agent claude <goal>`,
