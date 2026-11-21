@@ -110,7 +110,9 @@ impl ApprovedHarnessExecutor {
                 .find(|node| node.id == assignment.node_id)
                 .ok_or("An assignment has no matching graph node")?;
             if assignment.worktree.run_id() != run_id
-                || worktrees.validate_owned(&assignment.project, &assignment.worktree).is_err()
+                || worktrees
+                    .validate_owned(&assignment.project, &assignment.worktree)
+                    .is_err()
                 || !matches!(
                     &node.job,
                     Job::Harness { project_id, harness, .. }
@@ -194,7 +196,9 @@ impl Executor for ApprovedHarnessExecutor {
         let owned = match assignment.adapter.start(request, sink, &stop) {
             Ok(owned) => owned,
             Err(_) => {
-                let _ = self.journal.settle(self.run_id, &node.id, State::Failed, None);
+                let _ = self
+                    .journal
+                    .settle(self.run_id, &node.id, State::Failed, None);
                 return Outcome::Failed;
             }
         };
@@ -270,13 +274,11 @@ fn unix_now() -> u64 {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::*;
     use super::super::dag::{Graph, VERSION};
     use super::super::model::OnFailure;
     use super::super::scheduler;
-    use crate::harness::{
-        Capability, Descriptor, Event, OwnedRun, RunResult,
-    };
+    use super::*;
+    use crate::harness::{Capability, Descriptor, Event, OwnedRun, RunResult};
     use std::path::Path;
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -302,14 +304,19 @@ mod tests {
             std::thread::sleep(Duration::from_millis(45));
             self.running.fetch_sub(1, Ordering::SeqCst);
             RunResult {
-                status: if success { RunStatus::Completed } else { RunStatus::Failed },
+                status: if success {
+                    RunStatus::Completed
+                } else {
+                    RunStatus::Failed
+                },
                 exit_code: Some(if success { 0 } else { 1 }),
-                accepted_session: Some(crate::harness::SessionId::try_from(
-                    match self.kind {
+                accepted_session: Some(
+                    crate::harness::SessionId::try_from(match self.kind {
                         Kind::OpenCode => "ses_fixture".into(),
                         Kind::ClaudeCode => "123e4567-e89b-12d3-a456-426614174000".into(),
-                    },
-                ).unwrap()),
+                    })
+                    .unwrap(),
+                ),
                 errors: Vec::new(),
                 stderr: Vec::new(),
                 changed_files: Some(vec!["src/app.rs".into()]),
@@ -344,7 +351,9 @@ mod tests {
         }
     }
 
-    fn fixture(fail_claude: bool) -> (
+    fn fixture(
+        fail_claude: bool,
+    ) -> (
         tempfile::TempDir,
         Graph,
         Arc<ApprovedHarnessExecutor>,
@@ -358,10 +367,28 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         for args in [
             vec!["init", "-q"],
-            vec!["-c", "user.name=X", "-c", "user.email=x@invalid.test",
-                 "-c", "core.hooksPath=", "commit", "--allow-empty", "-q", "-m", "fixture"],
+            vec![
+                "-c",
+                "user.name=X",
+                "-c",
+                "user.email=x@invalid.test",
+                "-c",
+                "core.hooksPath=",
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "fixture",
+            ],
         ] {
-            assert!(Command::new("git").current_dir(&root).args(args).status().unwrap().success());
+            assert!(
+                Command::new("git")
+                    .current_dir(&root)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
         }
         let root = root.canonicalize().unwrap();
         let project = Project {
@@ -438,13 +465,9 @@ mod tests {
             })
             .collect();
         let journal = Arc::new(Journal::new(directory.path().join("journal")));
-        let runner = Arc::new(ApprovedHarnessExecutor::new(
-            &graph,
-            run_id,
-            assignments,
-            manager,
-            journal,
-        ).unwrap());
+        let runner = Arc::new(
+            ApprovedHarnessExecutor::new(&graph, run_id, assignments, manager, journal).unwrap(),
+        );
         (directory, graph, runner, peak, calls)
     }
 
@@ -457,16 +480,32 @@ mod tests {
             adapter.clone(),
             &Cancellation::default(),
             2,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(result.max_concurrent, 2);
         assert_eq!(peak.load(Ordering::SeqCst), 2);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        assert!(result.nodes.iter().all(|node| node.outcome == Outcome::Verified));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .all(|node| node.outcome == Outcome::Verified)
+        );
         // A second run with the same journal claims must never resend.
         let replay = scheduler::run(
-            &graph, Path::new("/tmp"), adapter, &Cancellation::default(), 2
-        ).unwrap();
-        assert!(replay.nodes.iter().all(|node| node.outcome == Outcome::Unverified));
+            &graph,
+            Path::new("/tmp"),
+            adapter,
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
+        assert!(
+            replay
+                .nodes
+                .iter()
+                .all(|node| node.outcome == Outcome::Unverified)
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
@@ -474,10 +513,25 @@ mod tests {
     fn a_failed_harness_does_not_verify_its_task() {
         let (_directory, graph, runner, _peak, calls) = fixture(true);
         let result = scheduler::run(
-            &graph, Path::new("/tmp"), runner, &Cancellation::default(), 2
-        ).unwrap();
+            &graph,
+            Path::new("/tmp"),
+            runner,
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        assert!(result.nodes.iter().any(|node| node.outcome == Outcome::Failed));
-        assert!(result.nodes.iter().any(|node| node.outcome == Outcome::Verified));
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|node| node.outcome == Outcome::Failed)
+        );
+        assert!(
+            result
+                .nodes
+                .iter()
+                .any(|node| node.outcome == Outcome::Verified)
+        );
     }
 }
