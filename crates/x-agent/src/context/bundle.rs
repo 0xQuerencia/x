@@ -78,6 +78,9 @@ impl Bundle {
         if excerpt.trim().is_empty() {
             return Err("The context excerpt is empty".into());
         }
+        if excerpt.len() > MAX_TOTAL_BYTES * 8 {
+            return Err("Context excerpt exceeds the input limit".into());
+        }
         let (text, redacted) = redact(excerpt);
         let remaining = MAX_TOTAL_BYTES.saturating_sub(self.text_bytes());
         if remaining == 0 {
@@ -279,22 +282,33 @@ fn truncate_utf8(text: &str, limit: usize) -> (String, bool) {
 
 fn redact(text: &str) -> (String, bool) {
     let mut redacted = false;
+    let mut private_key = false;
     let filtered = text
         .lines()
         .map(|line| {
             let value = line.to_ascii_lowercase();
-            let sensitive = [
-                "-----begin private key",
-                "-----begin openssh private key",
-                "authorization: bearer ",
-                "api_key=",
-                "api-key:",
-                "password=",
-                "secret_key=",
-                "access_token=",
-            ]
-            .iter()
-            .any(|needle| value.contains(needle));
+            let begins_key = value.contains("-----begin") && value.contains("private key-----");
+            let ends_key = value.contains("-----end") && value.contains("private key-----");
+            if begins_key {
+                private_key = true;
+            }
+            let sensitive = private_key
+                || [
+                    "authorization: bearer ",
+                    "api_key=",
+                    "api-key:",
+                    "password=",
+                    "secret_key=",
+                    "access_token=",
+                    "github_pat_",
+                    "ghp_",
+                    "sk_live_",
+                ]
+                .iter()
+                .any(|needle| value.contains(needle));
+            if ends_key {
+                private_key = false;
+            }
             if sensitive {
                 redacted = true;
                 "[redacted sensitive-looking line]"
@@ -348,6 +362,32 @@ mod tests {
         assert!(item.truncated);
         assert!(item.text.len() <= MAX_TEXT_BYTES);
         assert!(std::str::from_utf8(item.text.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn masks_full_private_key_blocks_and_rejects_unbounded_input() {
+        let mut bundle = Bundle::default();
+        bundle
+            .push_text(
+                Source::ErrorLog,
+                Scope::Project,
+                "-----BEGIN RSA PRIVATE KEY-----\\nTOPSECRETCONTENT\\n-----END RSA PRIVATE KEY-----\\nnormal",
+                5,
+            )
+            .unwrap();
+        let printed = bundle.render_untrusted().unwrap();
+        assert!(!printed.contains("TOPSECRETCONTENT"));
+        assert!(printed.contains("normal"));
+        assert!(
+            bundle
+                .push_text(
+                    Source::GitDiff,
+                    Scope::Project,
+                    &"x".repeat(MAX_TOTAL_BYTES * 8 + 1),
+                    5
+                )
+                .is_err()
+        );
     }
 
     #[test]
