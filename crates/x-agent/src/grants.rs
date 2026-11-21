@@ -285,8 +285,16 @@ mod tests {
                 true,
             )
             .unwrap();
-        assert!(grants.consume(&receipt, Permission::StartHarness, &task()).is_err());
-        assert!(grants.consume(&receipt, Permission::RunTests, &target).is_err());
+        assert!(
+            grants
+                .consume(&receipt, Permission::StartHarness, &task())
+                .is_err()
+        );
+        assert!(
+            grants
+                .consume(&receipt, Permission::RunTests, &target)
+                .is_err()
+        );
         let mut different_goal = target.clone();
         if let Scope::Task { intent, .. } = &mut different_goal {
             *intent = "an unauthorized replacement request".into();
@@ -296,8 +304,14 @@ mod tests {
                 .consume(&receipt, Permission::StartHarness, &different_goal)
                 .is_err()
         );
-        grants.consume(&receipt, Permission::StartHarness, &target).unwrap();
-        assert!(grants.consume(&receipt, Permission::StartHarness, &target).is_err());
+        grants
+            .consume(&receipt, Permission::StartHarness, &target)
+            .unwrap();
+        assert!(
+            grants
+                .consume(&receipt, Permission::StartHarness, &target)
+                .is_err()
+        );
     }
 
     #[test]
@@ -458,7 +472,11 @@ mod tests {
             .unwrap();
         assert_eq!(grants.revoke_all().unwrap(), 2);
         assert!(grants.consume(&a, Permission::RunTests, &first).is_err());
-        assert!(grants.consume(&b, Permission::StartHarness, &second).is_err());
+        assert!(
+            grants
+                .consume(&b, Permission::StartHarness, &second)
+                .is_err()
+        );
         assert_eq!(grants.revoke_all().unwrap(), 0);
     }
 
@@ -498,11 +516,37 @@ mod tests {
         let grants = Grants::default();
         let first = task();
         let second = task();
-        let Scope::Task { project_id: project_a, .. } = &first else { unreachable!() };
-        let a = grants.issue(Permission::StartHarness, first.clone(), Duration::from_secs(20), 1, true).unwrap();
-        let b = grants.issue(Permission::RunTests, second.clone(), Duration::from_secs(20), 1, true).unwrap();
+        let Scope::Task {
+            project_id: project_a,
+            ..
+        } = &first
+        else {
+            unreachable!()
+        };
+        let a = grants
+            .issue(
+                Permission::StartHarness,
+                first.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        let b = grants
+            .issue(
+                Permission::RunTests,
+                second.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
         assert_eq!(grants.revoke_project(*project_a).unwrap(), 1);
-        assert!(grants.consume(&a, Permission::StartHarness, &first).is_err());
+        assert!(
+            grants
+                .consume(&a, Permission::StartHarness, &first)
+                .is_err()
+        );
         grants.consume(&b, Permission::RunTests, &second).unwrap();
         assert_eq!(grants.revoke_project(*project_a).unwrap(), 0);
     }
@@ -511,20 +555,56 @@ mod tests {
     fn run_revocation_preserves_other_runs_and_project_inspection() {
         let grants = Grants::default();
         let first = task();
-        let Scope::Task { project_id, run_id, .. } = &first else { unreachable!() };
+        let Scope::Task {
+            project_id, run_id, ..
+        } = &first
+        else {
+            unreachable!()
+        };
         let (project_id, run_id) = (*project_id, *run_id);
         let mut other = first.clone();
-        if let Scope::Task { run_id, .. } = &mut other { *run_id = Uuid::new_v4(); }
+        if let Scope::Task { run_id, .. } = &mut other {
+            *run_id = Uuid::new_v4();
+        }
         let inspection = Scope::Project { project_id };
-        let a = grants.issue(Permission::StartHarness, first.clone(), Duration::from_secs(20), 1, true).unwrap();
-        let b = grants.issue(Permission::RunTests, other.clone(), Duration::from_secs(20), 1, true).unwrap();
-        let c = grants.issue(Permission::InspectProject, inspection.clone(), Duration::from_secs(20), 1, true).unwrap();
+        let a = grants
+            .issue(
+                Permission::StartHarness,
+                first.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        let b = grants
+            .issue(
+                Permission::RunTests,
+                other.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        let c = grants
+            .issue(
+                Permission::InspectProject,
+                inspection.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
         assert_eq!(grants.revoke_run(project_id, run_id).unwrap(), 1);
-        assert!(grants.consume(&a, Permission::StartHarness, &first).is_err());
+        assert!(
+            grants
+                .consume(&a, Permission::StartHarness, &first)
+                .is_err()
+        );
         grants.consume(&b, Permission::RunTests, &other).unwrap();
-        grants.consume(&c, Permission::InspectProject, &inspection).unwrap();
+        grants
+            .consume(&c, Permission::InspectProject, &inspection)
+            .unwrap();
     }
-
     #[test]
     fn pending_count_omits_expired_and_spent_receipts() {
         let grants = Grants::default();
