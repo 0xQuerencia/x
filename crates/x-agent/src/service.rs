@@ -1843,7 +1843,7 @@ impl Service {
     pub fn cancel(&self) {
         // Revoke unspent native job approvals before cancellation can race
         // against a job starting. Already-running jobs also need Stop tokens.
-        let revoked = self.scoped_grants.revoke_all();
+        let revoked = self.scoped_grants().revoke_all();
         let mut s = self.lock();
         if let Err(error) = revoked {
             emit(&mut s, "error", &format!("Could not revoke pending job approvals: {error}"));
