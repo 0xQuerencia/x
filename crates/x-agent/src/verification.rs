@@ -100,24 +100,30 @@ impl Result {
                 return Err("Verification checks need unique stable IDs".into());
             }
             if check.evidence_indices.len() > 8
-                || check.evidence_indices.iter().any(|index| *index >= evidence.len())
+                || check
+                    .evidence_indices
+                    .iter()
+                    .any(|index| *index >= evidence.len())
             {
                 return Err("A verification check references nonexistent evidence".into());
             }
             if check.status == Status::Passed
                 && check.required
-                && !check.evidence_indices.iter().any(|index| {
-                    evidence[*index].authority == Authority::Direct
-                })
+                && !check
+                    .evidence_indices
+                    .iter()
+                    .any(|index| evidence[*index].authority == Authority::Direct)
             {
                 return Err("A required check cannot pass on inferred evidence alone".into());
             }
         }
-        let required = checks.iter().filter(|check| check.required).collect::<Vec<_>>();
+        let required = checks
+            .iter()
+            .filter(|check| check.required)
+            .collect::<Vec<_>>();
         let outcome = if required.iter().any(|check| check.status == Status::Failed) {
             Outcome::Failed
-        } else if required.is_empty()
-            || required.iter().any(|check| check.status != Status::Passed)
+        } else if required.is_empty() || required.iter().any(|check| check.status != Status::Passed)
         {
             Outcome::Unverified
         } else {
@@ -206,8 +212,15 @@ impl Result {
         } else {
             vec!["This verifies receipt and process exit only, not code correctness".into()]
         };
-        Self::evaluate(target_id, "harness_task_delivery", observed_at, evidence, checks, limitations)
-            .expect("Internally generated harness verification fields are valid")
+        Self::evaluate(
+            target_id,
+            "harness_task_delivery",
+            observed_at,
+            evidence,
+            checks,
+            limitations,
+        )
+        .expect("Internally generated harness verification fields are valid")
     }
 
     /// A separate, narrow check for whether a known file change was observed in
@@ -221,7 +234,9 @@ impl Result {
         if expected_path.is_empty()
             || expected_path.len() > 160
             || expected_path.starts_with('/')
-            || expected_path.split('/').any(|part| part.is_empty() || part == "..")
+            || expected_path
+                .split('/')
+                .any(|part| part.is_empty() || part == "..")
             || expected_path.chars().any(char::is_control)
         {
             return Err("Expected a safe, project-relative path".into());
@@ -248,7 +263,11 @@ impl Result {
                 id: "expected_file_changed".into(),
                 required: true,
                 status,
-                evidence_indices: if changed_files.is_some() { vec![0] } else { vec![] },
+                evidence_indices: if changed_files.is_some() {
+                    vec![0]
+                } else {
+                    vec![]
+                },
             }],
             vec!["A changed file does not prove tests pass".into()],
         )
@@ -263,9 +282,8 @@ mod tests {
         RunResult {
             status,
             exit_code: exit,
-            accepted_session: accepted.then(|| {
-                SessionId::try_from("ses_provider".to_string()).unwrap()
-            }),
+            accepted_session: accepted
+                .then(|| SessionId::try_from("ses_provider".to_string()).unwrap()),
             errors: vec![],
             stderr: vec![],
             changed_files: None,
@@ -307,33 +325,42 @@ mod tests {
 
     #[test]
     fn required_checks_refuse_inferred_evidence_or_empty_requirements() {
-        let empty = Result::evaluate("target", "operation", 0, vec![], vec![
-            Check {
+        let empty = Result::evaluate(
+            "target",
+            "operation",
+            0,
+            vec![],
+            vec![Check {
                 id: "optional".into(),
                 required: false,
                 status: Status::Passed,
                 evidence_indices: vec![],
-            },
-        ], vec![]).unwrap();
-        assert_eq!(empty.outcome, Outcome::Unverified);
-        assert!(Result::evaluate(
-            "target",
-            "operation",
-            0,
-            vec![Evidence {
-                kind: Kind::Screen,
-                authority: Authority::Supporting,
-                observed_at: 0,
-                reference: "screen_ref".into(),
-            }],
-            vec![Check {
-                id: "required".into(),
-                required: true,
-                status: Status::Passed,
-                evidence_indices: vec![0],
             }],
             vec![],
-        ).is_err());
+        )
+        .unwrap();
+        assert_eq!(empty.outcome, Outcome::Unverified);
+        assert!(
+            Result::evaluate(
+                "target",
+                "operation",
+                0,
+                vec![Evidence {
+                    kind: Kind::Screen,
+                    authority: Authority::Supporting,
+                    observed_at: 0,
+                    reference: "screen_ref".into(),
+                }],
+                vec![Check {
+                    id: "required".into(),
+                    required: true,
+                    status: Status::Passed,
+                    evidence_indices: vec![0],
+                }],
+                vec![],
+            )
+            .is_err()
+        );
     }
 
     #[test]
