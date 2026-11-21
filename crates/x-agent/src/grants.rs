@@ -25,6 +25,8 @@ pub enum Scope {
         project_id: Uuid,
         run_id: Uuid,
         node_id: String,
+        /// Exact canonical task request, including its verifier profile.
+        intent: String,
     },
 }
 
@@ -79,10 +81,13 @@ impl Grants {
                     project_id,
                     run_id,
                     node_id,
+                    intent,
                 },
             ) if !project_id.is_nil()
                 && !run_id.is_nil()
-                && valid_node_id(node_id) => {}
+                && valid_node_id(node_id)
+                && !intent.is_empty()
+                && intent.len() <= 20_000 => {}
             _ => return Err("Grant scope does not match its operation".into()),
         }
         let expires_at = Instant::now()
@@ -194,6 +199,7 @@ mod tests {
             project_id: Uuid::new_v4(),
             run_id: Uuid::new_v4(),
             node_id: "backend".into(),
+            intent: "canonical-task-intent".into(),
         }
     }
 
@@ -210,6 +216,15 @@ mod tests {
         ).unwrap();
         assert!(grants.consume(&receipt, Permission::StartHarness, &task()).is_err());
         assert!(grants.consume(&receipt, Permission::RunTests, &target).is_err());
+        let mut different_goal = target.clone();
+        if let Scope::Task { intent, .. } = &mut different_goal {
+            *intent = "an unauthorized replacement request".into();
+        }
+        assert!(
+            grants
+                .consume(&receipt, Permission::StartHarness, &different_goal)
+                .is_err()
+        );
         grants.consume(&receipt, Permission::StartHarness, &target).unwrap();
         assert!(grants.consume(&receipt, Permission::StartHarness, &target).is_err());
     }
