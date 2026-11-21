@@ -127,16 +127,18 @@ impl Graph {
             }
         }
         for node in &self.nodes {
-            let mut seen = HashSet::new();
-            for required in node.after.iter().chain(&node.requires) {
-                if required == &node.id {
-                    return Err(format!("Node {:?} cannot depend on itself", node.id));
-                }
-                if !ids.contains(required.as_str()) {
-                    return Err(format!("Node {:?} has unknown dependency {required:?}", node.id));
-                }
-                if !seen.insert(required) {
-                    return Err(format!("Node {:?} repeats dependency {required:?}", node.id));
+            for edges in [&node.after, &node.requires] {
+                let mut seen = HashSet::new();
+                for required in edges {
+                    if required == &node.id {
+                        return Err(format!("Node {:?} cannot depend on itself", node.id));
+                    }
+                    if !ids.contains(required.as_str()) {
+                        return Err(format!("Node {:?} has unknown dependency {required:?}", node.id));
+                    }
+                    if !seen.insert(required) {
+                        return Err(format!("Node {:?} repeats dependency {required:?}", node.id));
+                    }
                 }
             }
         }
@@ -283,6 +285,9 @@ mod tests {
         assert_eq!(graph.nodes[1].after, ["first"]);
         assert!(graph.nodes[1].requires.is_empty());
         assert_eq!(graph.nodes[0].on_failure, OnFailure::Continue);
+        graph.nodes[1].requires.push("first".into());
+        graph.validate().unwrap();
+        assert_eq!(graph.order().unwrap(), ["first", "second"]);
         assert_eq!(graph.triggers, legacy().triggers);
         let original = serde_json::to_string(&legacy()).unwrap();
         assert_eq!(decode(&original, &home()).unwrap(), graph);
