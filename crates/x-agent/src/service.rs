@@ -1846,7 +1846,11 @@ impl Service {
         let revoked = self.scoped_grants.revoke_all();
         let mut s = self.lock();
         if let Err(error) = revoked {
-            emit(&mut s, "error", &format!("Could not revoke pending job approvals: {error}"));
+            emit(
+                &mut s,
+                "error",
+                &format!("Could not revoke pending job approvals: {error}"),
+            );
         }
         if s.model_stop.as_ref().is_some_and(Cancellation::request) {
             emit(&mut s, "info", "Stop requested for the pending plan");
