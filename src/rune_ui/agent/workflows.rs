@@ -4,7 +4,7 @@
 //! the engine would refuse.
 
 use ::x_agent::workflows::model::{OnFailure, Step, StepAction, Workflow};
-use ::x_agent::workflows::store::{Entry, GraphEntry};
+use ::x_agent::workflows::store::{Entry, GraphEntry, GraphLast};
 use rune::{El, TextEdit, col, row, text};
 use rune_kit::TextInput;
 
@@ -375,6 +375,7 @@ pub(super) struct Row {
 pub(in crate::rune_ui) struct Manager {
     rows: Vec<Row>,
     graphs: Vec<GraphEntry>,
+    graph_last: Vec<(String, GraphLast)>,
     graph_source: TextEdit,
     recovery: Option<Result<serde_json::Value, String>>,
     loaded: Option<std::time::Instant>,
@@ -423,6 +424,16 @@ impl Manager {
             })
             .collect();
         let graphs = store.list_graphs();
+        let graph_last = graphs
+            .iter()
+            .filter_map(|graph| {
+                store
+                    .last_graph(&graph.id)
+                    .ok()
+                    .flatten()
+                    .map(|last| (graph.id.clone(), last))
+            })
+            .collect::<Vec<_>>();
         let recovery = agent_host::service().uncertain_coding_jobs();
         let shown = serde_json::to_string(&(
             rows.iter()
@@ -436,6 +447,7 @@ impl Manager {
                 })
                 .collect::<Vec<_>>(),
             &graphs,
+            &graph_last,
             &recovery,
         ))
         .unwrap_or_default();
@@ -443,6 +455,7 @@ impl Manager {
         self.loaded = Some(std::time::Instant::now());
         self.rows = rows;
         self.graphs = graphs;
+        self.graph_last = graph_last;
         self.recovery = Some(recovery);
         let changed = shown != self.shown;
         self.shown = shown;
@@ -583,7 +596,12 @@ fn list(p: Paint, mgr: &Manager) -> El {
                 p.muted(),
             ));
         for graph in &mgr.graphs {
-            list = list.child(graph_card(p, graph));
+            let last = mgr
+                .graph_last
+                .iter()
+                .find(|(id, _)| id == &graph.id)
+                .map(|(_, last)| last);
+            list = list.child(graph_card(p, graph, last));
         }
     }
     if let Some(Ok(recovery)) = &mgr.recovery
@@ -624,7 +642,7 @@ fn list(p: Paint, mgr: &Manager) -> El {
     list
 }
 
-fn graph_card(p: Paint, graph: &GraphEntry) -> El {
+fn graph_card(p: Paint, graph: &GraphEntry, last: Option<&GraphLast>) -> El {
     let id = graph.id.clone();
     let mut card = col()
         .key(format!("wf-graph-{id}"))
@@ -644,6 +662,22 @@ fn graph_card(p: Paint, graph: &GraphEntry) -> El {
             format!("{} coding jobs · explicit approval required", graph.jobs),
             p.muted(),
         ));
+    if let Some(last) = last {
+        let total = last.nodes.len();
+        let color = if last.stopped {
+            p.warning()
+        } else if total > 0 && last.verified == total {
+            p.success()
+        } else {
+            p.danger()
+        };
+        let state = if last.stopped { "stopped" } else { "finished" };
+        card = card.child(small(
+            format!("wf-graph-{id}-last"),
+            format!("Last run: {}/{} verified · {state}", last.verified, total),
+            color,
+        ));
+    }
     if graph.coding_only {
         card = card.child(button(
             p,
