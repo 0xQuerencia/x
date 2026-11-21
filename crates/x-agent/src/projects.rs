@@ -536,21 +536,19 @@ mod tests {
         assert!(changed);
         assert_eq!(updated.aliases, ["CA Workspace"]);
         assert_eq!(registry.resolve("ca workspace").unwrap().id, project.id);
-        assert_eq!(
-            registry
+        assert!(
+            !registry
                 .add_alias(&project.id.to_string(), "CA WORKSPACE")
                 .unwrap()
-                .1,
-            false
+                .1
         );
         let reopened = Registry::new(registry.directory.clone(), registry.home.clone());
         assert_eq!(reopened.resolve(" Ca Workspace ").unwrap(), updated);
-        assert_eq!(
+        assert!(
             reopened
                 .remove_alias(&project.id.to_string(), "ca workspace")
                 .unwrap()
-                .1,
-            true
+                .1
         );
         assert!(reopened.resolve("CA workspace").is_err());
         assert!(directory.path().join("home/chamber").exists());
