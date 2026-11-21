@@ -177,6 +177,19 @@ This is the durable journal contract only. The live scheduler and harness
 adapters do not yet call it; integrating those with actual provider
 acknowledgment/reconciliation remains a separate milestone.
 
+### Proof-based verification (development)
+
+`x_agent::verification` computes `Verified`, `Failed` or `Unverified`
+from direct evidence and required checks. A passing model summary or a
+screenshot interpretation cannot satisfy a required check. A harness run can
+prove **delivery** only when the correct structured session acknowledgment
+and exit code 0 are both observed; it does not prove code correctness.
+A separate Git status check reports whether an exact project-relative file
+changed, not whether the resulting code works.
+
+These result types and unit tests are in place for future DAG integration.
+The live X workflow UI is not yet using the complete verification pipeline.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
