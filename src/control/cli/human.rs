@@ -34,6 +34,23 @@ pub(crate) fn print(reply: ControlReply, output: Output) -> u8 {
         ControlReply::Transcript { text } => println!("{text}"),
         ControlReply::Agent { snapshot } => print!("{}", human_agent(&snapshot)),
         ControlReply::AgentDoctor { lines, .. } => println!("{lines}"),
+        ControlReply::AgentProjects {
+            projects,
+            registered,
+        } => {
+            if projects.is_empty() {
+                println!("No registered projects");
+            }
+            for project in projects {
+                let prefix = if registered { "Registered " } else { "" };
+                println!(
+                    "{prefix}{}  {}  {}",
+                    project.id,
+                    project.name,
+                    project.root.display()
+                );
+            }
+        }
         ControlReply::AgentSessions { sessions, selected } => {
             if sessions.is_empty() {
                 println!("No OpenCode sessions in this project");

@@ -23,6 +23,7 @@ pub mod hexcli;
 pub mod opencode;
 pub mod phase;
 pub mod planner;
+pub mod projects;
 pub mod quick;
 pub mod screenshots;
 pub mod service;

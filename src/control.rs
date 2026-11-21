@@ -217,6 +217,14 @@ impl ControlRequest {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "operation", rename_all = "kebab-case")]
+pub enum ProjectCommand {
+    List,
+    Register { name: String, path: String },
+    Forget { id: String },
+}
+
 /// What `hex agent` asks X to do. Default requires approval; Autonomous may run safe Actions directly.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case")]
@@ -286,6 +294,10 @@ pub enum AgentAction {
     Sessions {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resume: Option<String>,
+    },
+    /// Manage explicitly registered local project directories.
+    Projects {
+        command: ProjectCommand,
     },
     /// Preview tool-free Claude Code Work in the selected project.
     Claude {
@@ -360,6 +372,10 @@ pub enum ControlReply {
         report: serde_json::Value,
         lines: String,
         ready: bool,
+    },
+    AgentProjects {
+        projects: Vec<x_agent::projects::Project>,
+        registered: bool,
     },
     AgentSessions {
         sessions: Vec<x_agent::harness::Session>,
