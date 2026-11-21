@@ -516,3 +516,11 @@ on when comfortable sharing visible pixels with OpenRouter/Perplexity.
 Images are supporting context for **existing allowlisted accessible UI
 targets**; X cannot use ungrounded coordinates to click inaccessible
 buttons, and screen text never grants new permissions. Model quotas apply.
+
+### Captured-context expiry
+
+Before targeting a previously observed window or applying a selection-based edit,
+X rechecks both window identity and snapshot age. Context older than 15 seconds
+is rejected even when the same window still exists and even after an approval
+prompt temporarily changes focus. The user must issue the command again to
+obtain fresh evidence.
