@@ -4,7 +4,7 @@
 
 use std::io::Write;
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
 use super::engine::Report;
@@ -44,6 +44,32 @@ pub enum Match {
     },
 }
 
+/// A safe UI summary of a saved v2 graph. Coding goals never enter the list.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct GraphEntry {
+    pub id: String,
+    pub name: String,
+    pub jobs: usize,
+    pub coding_only: bool,
+}
+
+/// Persisted outcome-only summary of a coding graph, without private goals,
+/// command output, provider stderr, or request fingerprints.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GraphLast {
+    pub graph_id: String,
+    pub finished_at: u64,
+    pub verified: usize,
+    pub stopped: bool,
+    pub nodes: Vec<GraphNodeLast>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GraphNodeLast {
+    pub id: String,
+    pub outcome: super::scheduler::Outcome,
+}
+
 pub struct Store {
     dir: PathBuf,
     home: PathBuf,
@@ -79,7 +105,7 @@ impl Store {
         std::fs::read_to_string(path).map_err(|e| e.to_string())
     }
 
-    fn write_private(&self, path: &Path, bytes: &[u8]) -> Result<(), String> {
+    fn ensure_private_dir(&self) -> Result<(), String> {
         // Unix: owner-only (0700 folder, 0600 files). Windows has no mode bits; the folder
         // lives under the user's profile, whose default ACL already limits it to the user
         // and administrators, and X does not change those ACLs.
@@ -88,17 +114,19 @@ impl Store {
         #[cfg(unix)]
         dir.mode(0o700);
         dir.create(&self.dir)
-            .map_err(|e| format!("could not create {}: {e}", self.dir.display()))?;
-        let tmp = path.with_extension("tmp");
-        let mut open = std::fs::OpenOptions::new();
-        open.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        open.mode(0o600);
-        let mut f = open.open(&tmp).map_err(|e| e.to_string())?;
-        f.write_all(bytes)
-            .and_then(|()| f.sync_all())
+            .map_err(|e| format!("could not create {}: {e}", self.dir.display()))
+    }
+
+    fn write_private(&self, path: &Path, bytes: &[u8]) -> Result<(), String> {
+        self.ensure_private_dir()?;
+        let mut temp = tempfile::NamedTempFile::new_in(&self.dir)
+            .map_err(|e| format!("Cannot create private temporary file: {e}"))?;
+        temp.write_all(bytes)
+            .and_then(|()| temp.as_file().sync_all())
             .map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+        temp.persist(path)
+            .map(|_| ())
+            .map_err(|e| format!("Cannot save workflow atomically: {}", e.error))
     }
 
     /// Every workflow file, with its validation result and trigger conflicts.
@@ -147,13 +175,61 @@ impl Store {
             .collect()
     }
 
+    /// Read validated v2 graph metadata for the workflow manager. Never
+    /// interpret a graph as a legacy workflow or expose its coding goals.
+    pub fn list_graphs(&self) -> Vec<GraphEntry> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return vec![];
+        };
+        let mut found = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .filter(|path| {
+                !path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".last.json"))
+            })
+            .take(MAX_WORKFLOWS)
+            .filter_map(|path| {
+                let text = Self::read(&path).ok()?;
+                let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+                if value.get("version").and_then(serde_json::Value::as_u64)
+                    != Some(u64::from(super::dag::VERSION))
+                {
+                    return None;
+                }
+                let graph = super::dag::decode(&text, &self.home).ok()?;
+                if path.file_stem()?.to_str()? != graph.id {
+                    return None;
+                }
+                let coding_only = graph
+                    .nodes
+                    .iter()
+                    .all(|node| matches!(&node.job, super::dag::Job::Harness { .. }));
+                Some(GraphEntry {
+                    id: graph.id,
+                    name: graph.name,
+                    jobs: graph.nodes.len(),
+                    coding_only,
+                })
+            })
+            .collect::<Vec<_>>();
+        found.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then(a.id.cmp(&b.id))
+        });
+        found
+    }
+
     pub fn get(&self, id: &str) -> Result<Workflow, String> {
         let text = Self::read(&self.file(id)?).map_err(|e| format!("No workflow {id:?} ({e})"))?;
         serde_json::from_str(&text).map_err(|e| format!("Workflow {id:?} is not valid: {e}"))
     }
 
     /// Read either saved legacy workflows or a versioned graph without scheduling it.
-    /// This is read-only until the DAG scheduler and approval gates are implemented.
     pub fn get_graph(&self, id: &str) -> Result<super::dag::Graph, String> {
         let text = Self::read(&self.file(id)?).map_err(|e| format!("No workflow {id:?} ({e})"))?;
         super::dag::decode(&text, &self.home)
@@ -177,8 +253,20 @@ impl Store {
                 }
             }
         }
-        let full = self.list().len();
-        let exists = self.file(&wf.id).is_ok_and(|p| p.exists());
+        let full = self.list().len() + self.list_graphs().len();
+        let target = self.file(&wf.id).map_err(|e| {
+            vec![Problem {
+                step: None,
+                message: e,
+            }]
+        })?;
+        let exists = std::fs::symlink_metadata(&target).is_ok();
+        if exists && self.get(&wf.id).is_err() {
+            problems.push(Problem {
+                step: None,
+                message: "This ID belongs to a coding graph or an unreadable file; it cannot be overwritten by a legacy workflow".into(),
+            });
+        }
         if !exists && full >= MAX_WORKFLOWS {
             problems.push(Problem {
                 step: None,
@@ -218,7 +306,12 @@ impl Store {
     /// A copy with a fresh id and name and no triggers (so it cannot collide with the original).
     pub fn duplicate(&self, id: &str) -> Result<Workflow, String> {
         let mut copy = self.get(id)?;
-        let taken: Vec<String> = self.list().into_iter().map(|e| e.workflow.id).collect();
+        let taken: Vec<String> = self
+            .list()
+            .into_iter()
+            .map(|e| e.workflow.id)
+            .chain(self.list_graphs().into_iter().map(|e| e.id))
+            .collect();
         let base = format!("{}-copy", copy.id.chars().take(34).collect::<String>());
         copy.id = (1..)
             .map(|n| {
@@ -254,6 +347,30 @@ impl Store {
                 .join("; ")
         })?;
         Ok(wf)
+    }
+
+    /// Install an explicit graph without replacing another workflow's ID.
+    pub fn import_graph(&self, source: &Path) -> Result<super::dag::Graph, String> {
+        let text =
+            Self::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
+        let graph: super::dag::Graph =
+            serde_json::from_str(&text).map_err(|e| format!("Invalid workflow graph: {e}"))?;
+        graph.validate_with_home(&self.home)?;
+        let path = self.file(&graph.id)?;
+        self.ensure_private_dir()?;
+        let mut staged = tempfile::NamedTempFile::new_in(&self.dir).map_err(|e| e.to_string())?;
+        staged
+            .write_all(text.as_bytes())
+            .map_err(|e| e.to_string())?;
+        staged.as_file().sync_all().map_err(|e| e.to_string())?;
+        staged.persist_noclobber(&path).map_err(|e| {
+            if e.error.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("A workflow already uses the ID {}", graph.id)
+            } else {
+                format!("Could not save {}: {}", path.display(), e.error)
+            }
+        })?;
+        Ok(graph)
     }
 
     /// Which workflow, if any, this spoken or typed phrase asks for. Matches a trigger
@@ -309,6 +426,56 @@ impl Store {
     pub fn last(&self, id: &str) -> Option<Report> {
         let path = self.file(id).ok()?.with_extension("last.json");
         serde_json::from_str(&Self::read(&path).ok()?).ok()
+    }
+
+    /// Record only verifiable node outcomes, never harness text or errors.
+    pub fn record_graph_last(
+        &self,
+        graph_id: &str,
+        report: &super::scheduler::Report,
+    ) -> Result<(), String> {
+        let path = self.file(graph_id)?.with_extension("last.json");
+        let finished_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let summary = GraphLast {
+            graph_id: graph_id.into(),
+            finished_at,
+            verified: report
+                .nodes
+                .iter()
+                .filter(|node| node.outcome == super::scheduler::Outcome::Verified)
+                .count(),
+            stopped: report.stopped,
+            nodes: report
+                .nodes
+                .iter()
+                .map(|node| GraphNodeLast {
+                    id: node.id.clone(),
+                    outcome: node.outcome,
+                })
+                .collect(),
+        };
+        let bytes = serde_json::to_vec_pretty(&summary).map_err(|e| e.to_string())?;
+        self.write_private(&path, &bytes)
+    }
+
+    /// Unlike the legacy last-result reader, report missing vs corrupt data.
+    pub fn last_graph(&self, id: &str) -> Result<Option<GraphLast>, String> {
+        let path = self.file(id)?.with_extension("last.json");
+        match std::fs::symlink_metadata(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("Cannot inspect coding run summary: {e}")),
+            Ok(_) => {}
+        }
+        let text = Self::read(&path).map_err(|e| format!("Cannot read coding run summary: {e}"))?;
+        let summary: GraphLast =
+            serde_json::from_str(&text).map_err(|_| "Coding run summary is invalid")?;
+        if summary.graph_id != id {
+            return Err("Coding run summary belongs to another workflow".into());
+        }
+        Ok(Some(summary))
     }
 }
 

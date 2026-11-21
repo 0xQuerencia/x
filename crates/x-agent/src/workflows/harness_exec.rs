@@ -1,20 +1,23 @@
 //! An approved, worktree-scoped harness executor for the deterministic DAG.
-//! This executor is not user-accessible until the host wires a real approval receipt.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::dag::{Graph, HarnessKind, Job, Node};
 use super::recovery::{Begin, Journal, State};
 use super::scheduler::{Executor, Outcome};
 use crate::cancellation::Cancellation;
+use crate::grants::{Grants, Permission, Receipt, Scope};
 use crate::harness::{Adapter, EventSink, Kind, Request, RunStatus, WorkAccess};
 use crate::projects::Project;
 use crate::verification::{Outcome as VerifiedOutcome, Result as Verification};
 use crate::worktrees::{Manager, OwnedWorktree};
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Proof {
     /// Only the provider delivery and clean process exit are verified.
     DeliveryOnly,
@@ -33,22 +36,21 @@ pub struct Assignment {
     fingerprint: String,
     adapter: Arc<dyn Adapter>,
     proof: Proof,
+    grants: Arc<Grants>,
+    receipt: Receipt,
 }
 
 impl Assignment {
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) fn from_approved_scope(
         node: &Node,
         project: Project,
         worktree: OwnedWorktree,
-        fingerprint: String,
         adapter: Arc<dyn Adapter>,
         proof: Proof,
-        approved: bool,
+        grants: Arc<Grants>,
+        receipt: Receipt,
     ) -> Result<Self, String> {
-        if !approved {
-            return Err("The owner has not approved this harness assignment".into());
-        }
         let Job::Harness {
             project_id,
             harness,
@@ -60,10 +62,8 @@ impl Assignment {
         if project.id.to_string() != *project_id
             || worktree.task_id() != node.id
             || adapter.descriptor().kind != to_kind(*harness)
-            || fingerprint.len() != 64
-            || !fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
         {
-            return Err("The approved harness task, project or fingerprint changed".into());
+            return Err("The approved harness task or project changed".into());
         }
         if let Proof::ChangedFile(path) = &proof
             && (path.is_empty()
@@ -73,6 +73,15 @@ impl Assignment {
         {
             return Err("The expected changed file path is unsafe".into());
         }
+        let scope = approval_scope(node, project.id, &worktree, &proof)?;
+        grants.check(&receipt, Permission::StartHarness, &scope)?;
+        let Scope::Task { intent, .. } = &scope else {
+            return Err("A harness assignment requires exact task scope".into());
+        };
+        let fingerprint: String = Sha256::digest(intent)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         Ok(Self {
             node_id: node.id.clone(),
             project,
@@ -80,6 +89,8 @@ impl Assignment {
             fingerprint,
             adapter,
             proof,
+            grants,
+            receipt,
         })
     }
 }
@@ -155,8 +166,29 @@ impl ApprovedHarnessExecutor {
             && self
                 .worktrees
                 .validate_owned(&assignment.project, &assignment.worktree)
-                .is_ok())
+                .is_ok()
+            && approval_scope(
+                node,
+                assignment.project.id,
+                &assignment.worktree,
+                &assignment.proof,
+            )
+            .and_then(|scope| {
+                assignment
+                    .grants
+                    .check(&assignment.receipt, Permission::StartHarness, &scope)
+            })
+            .is_ok())
         .then_some(assignment)
+    }
+}
+
+impl Drop for ApprovedHarnessExecutor {
+    fn drop(&mut self) {
+        // Unlaunched jobs must not keep usable receipts after the executor is closed.
+        for assignment in self.assignments.values() {
+            let _ = assignment.grants.revoke(&assignment.receipt);
+        }
     }
 }
 
@@ -180,6 +212,31 @@ impl Executor for ApprovedHarnessExecutor {
         if stop.requested() {
             return Outcome::Cancelled;
         }
+        let Ok(scope) = approval_scope(
+            &node,
+            assignment.project.id,
+            &assignment.worktree,
+            &assignment.proof,
+        ) else {
+            return Outcome::Failed;
+        };
+        if self
+            .worktrees
+            .verify_start(&assignment.project, &assignment.worktree)
+            .is_err()
+        {
+            return Outcome::Unverified;
+        }
+        if stop.requested() {
+            return Outcome::Cancelled;
+        }
+        if assignment
+            .grants
+            .consume(&assignment.receipt, Permission::StartHarness, &scope)
+            .is_err()
+        {
+            return Outcome::Failed;
+        }
         match self
             .journal
             .begin(self.run_id, &node.id, &assignment.fingerprint)
@@ -200,10 +257,13 @@ impl Executor for ApprovedHarnessExecutor {
         let owned = match assignment.adapter.start(request, sink, &stop) {
             Ok(owned) => owned,
             Err(_) => {
-                let _ = self
-                    .journal
-                    .settle(self.run_id, &node.id, State::Failed, None);
-                return Outcome::Failed;
+                let (state, outcome) = if stop.requested() {
+                    (State::Cancelled, Outcome::Cancelled)
+                } else {
+                    (State::Failed, Outcome::Failed)
+                };
+                let _ = self.journal.settle(self.run_id, &node.id, state, None);
+                return outcome;
             }
         };
         let result = owned.join();
@@ -214,13 +274,10 @@ impl Executor for ApprovedHarnessExecutor {
             .is_some_and(|id| id.kind() == to_kind(*harness));
         let outcome = if stop.requested() || result.status == RunStatus::Cancelled {
             Outcome::Cancelled
-        } else if !id_matches {
-            Outcome::Unverified
         } else {
             match delivery.outcome {
                 VerifiedOutcome::Failed => Outcome::Failed,
-                VerifiedOutcome::Unverified => Outcome::Unverified,
-                VerifiedOutcome::Verified => match &assignment.proof {
+                VerifiedOutcome::Verified if id_matches => match &assignment.proof {
                     Proof::DeliveryOnly => Outcome::Verified,
                     Proof::ChangedFile(path) => {
                         match Verification::required_git_change(
@@ -238,6 +295,7 @@ impl Executor for ApprovedHarnessExecutor {
                         }
                     }
                 },
+                VerifiedOutcome::Unverified | VerifiedOutcome::Verified => Outcome::Unverified,
             }
         };
         let persisted = match outcome {
@@ -262,7 +320,23 @@ impl Executor for ApprovedHarnessExecutor {
     }
 }
 
-fn to_kind(kind: HarnessKind) -> Kind {
+pub(crate) fn approval_scope(
+    node: &Node,
+    project_id: Uuid,
+    worktree: &OwnedWorktree,
+    proof: &Proof,
+) -> Result<Scope, String> {
+    let intent = serde_json::to_string(&(&node.job, worktree.start_commit(), proof))
+        .map_err(|_| "Could not identify the approved task request")?;
+    Ok(Scope::Task {
+        project_id,
+        run_id: worktree.run_id(),
+        node_id: node.id.clone(),
+        intent,
+    })
+}
+
+pub(crate) fn to_kind(kind: HarnessKind) -> Kind {
     match kind {
         HarnessKind::OpenCode => Kind::OpenCode,
         HarnessKind::ClaudeCode => Kind::ClaudeCode,
@@ -322,13 +396,13 @@ mod tests {
                     RunStatus::Failed
                 },
                 exit_code: Some(if success { 0 } else { 1 }),
-                accepted_session: Some(
+                accepted_session: success.then(|| {
                     crate::harness::SessionId::try_from(match self.kind {
                         Kind::OpenCode => String::from("ses_fixture"),
                         Kind::ClaudeCode => String::from("123e4567-e89b-12d3-a456-426614174000"),
                     })
-                    .unwrap(),
-                ),
+                    .unwrap()
+                }),
                 errors: Vec::new(),
                 stderr: Vec::new(),
                 changed_files: Some(vec!["src/app.rs".into()]),
@@ -447,6 +521,7 @@ mod tests {
             })
             .collect(),
         };
+        let grants = Arc::new(Grants::default());
         let assignments = graph
             .nodes
             .iter()
@@ -465,14 +540,23 @@ mod tests {
                     running: Arc::clone(&running),
                     peak: Arc::clone(&peak),
                 });
+                let receipt = grants
+                    .issue(
+                        Permission::StartHarness,
+                        approval_scope(node, project.id, &worktree, &Proof::DeliveryOnly).unwrap(),
+                        Duration::from_secs(30),
+                        1,
+                        true,
+                    )
+                    .unwrap();
                 Assignment::from_approved_scope(
                     node,
                     project.clone(),
                     worktree,
-                    "a".repeat(64),
                     adapter,
                     Proof::DeliveryOnly,
-                    true,
+                    Arc::clone(&grants),
+                    receipt,
                 )
                 .unwrap()
             })
@@ -504,22 +588,135 @@ mod tests {
                 .iter()
                 .all(|node| node.outcome == Outcome::Verified)
         );
-        // A second run with the same journal claims must never resend.
-        let replay = scheduler::run(
-            &graph,
-            Path::new("/tmp"),
-            adapter,
-            &Cancellation::default(),
-            2,
-        )
-        .unwrap();
+        // Receipts are consumed before delivery; a replay cannot pass preflight.
         assert!(
-            replay
-                .nodes
-                .iter()
-                .all(|node| node.outcome == Outcome::Unverified)
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                adapter,
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn changing_the_goal_or_verification_profile_invalidates_consent() {
+        let (_directory, mut graph, executor, _peak, calls) = fixture(false);
+        let assignment = executor.assignments.get("front").unwrap();
+        assert!(
+            Assignment::from_approved_scope(
+                &graph.nodes[0],
+                assignment.project.clone(),
+                assignment.worktree.clone(),
+                Arc::clone(&assignment.adapter),
+                Proof::ChangedFile("src/app.rs".into()),
+                Arc::clone(&assignment.grants),
+                assignment.receipt,
+            )
+            .is_err()
+        );
+        if let Job::Harness { goal, .. } = &mut graph.nodes[0].job {
+            *goal = "A different task that the user never approved".into();
+        }
+        assert!(
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                executor,
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_different_worktree_commit_does_not_launch_the_approved_goal() {
+        let (_directory, graph, executor, _peak, calls) = fixture(false);
+        let task = &executor.assignments["front"];
+        assert!(
+            Command::new("git")
+                .current_dir(task.worktree.path())
+                .args([
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@invalid.test",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "unapproved commit"
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            executor.execute(graph.nodes[0].clone(), Cancellation::default()),
+            Outcome::Unverified
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn revoked_harness_receipt_cannot_start_any_work() {
+        let (_directory, graph, executor, _peak, calls) = fixture(false);
+        let assignment = executor.assignments.get("front").unwrap();
+        assignment.grants.revoke(&assignment.receipt).unwrap();
+        assert!(
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                executor.clone(),
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn dropping_executor_revokes_unspent_harness_approvals() {
+        let (_directory, _graph, runner, _peak, calls) = fixture(false);
+        let grants = Arc::clone(&runner.assignments.get("front").unwrap().grants);
+        assert_eq!(grants.pending_count().unwrap(), 2);
+        drop(runner);
+        assert_eq!(grants.pending_count().unwrap(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn revoking_a_workflow_run_blocks_all_jobs_before_dispatch() {
+        let (_directory, graph, executor, _peak, calls) = fixture(false);
+        let assignment = executor.assignments.get("front").unwrap();
+        assert_eq!(
+            assignment
+                .grants
+                .revoke_run(assignment.project.id, assignment.worktree.run_id())
+                .unwrap(),
+            2
+        );
+        assert!(
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                executor,
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

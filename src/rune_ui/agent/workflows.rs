@@ -4,7 +4,7 @@
 //! the engine would refuse.
 
 use ::x_agent::workflows::model::{OnFailure, Step, StepAction, Workflow};
-use ::x_agent::workflows::store::Entry;
+use ::x_agent::workflows::store::{Entry, GraphEntry, GraphLast};
 use rune::{El, TextEdit, col, row, text};
 use rune_kit::TextInput;
 
@@ -374,6 +374,10 @@ pub(super) struct Row {
 #[derive(Default)]
 pub(in crate::rune_ui) struct Manager {
     rows: Vec<Row>,
+    graphs: Vec<GraphEntry>,
+    graph_last: Vec<(String, GraphLast)>,
+    graph_source: TextEdit,
+    recovery: Option<Result<serde_json::Value, String>>,
     loaded: Option<std::time::Instant>,
     /// Set by anything that changes the files, so the list reloads at once.
     dirty: bool,
@@ -419,9 +423,20 @@ impl Manager {
                 entry,
             })
             .collect();
-        let shown = serde_json::to_string(
-            &rows
-                .iter()
+        let graphs = store.list_graphs();
+        let graph_last = graphs
+            .iter()
+            .filter_map(|graph| {
+                store
+                    .last_graph(&graph.id)
+                    .ok()
+                    .flatten()
+                    .map(|last| (graph.id.clone(), last))
+            })
+            .collect::<Vec<_>>();
+        let recovery = agent_host::service().uncertain_coding_jobs();
+        let shown = serde_json::to_string(&(
+            rows.iter()
                 .map(|r| {
                     (
                         &r.entry.workflow,
@@ -431,11 +446,17 @@ impl Manager {
                     )
                 })
                 .collect::<Vec<_>>(),
-        )
+            &graphs,
+            &graph_last,
+            &recovery,
+        ))
         .unwrap_or_default();
         self.dirty = false;
         self.loaded = Some(std::time::Instant::now());
         self.rows = rows;
+        self.graphs = graphs;
+        self.graph_last = graph_last;
+        self.recovery = Some(recovery);
         let changed = shown != self.shown;
         self.shown = shown;
         changed
@@ -503,6 +524,7 @@ fn list(p: Paint, mgr: &Manager) -> El {
         .rows
         .iter()
         .map(|r| r.entry.workflow.id.clone())
+        .chain(mgr.graphs.iter().map(|r| r.id.clone()))
         .collect();
     let mut list = col().key("wf-list").gap(8.0).child(
         row()
@@ -521,7 +543,41 @@ fn list(p: Paint, mgr: &Manager) -> El {
                 },
             )),
     );
-    if mgr.rows.is_empty() {
+    let source = input(
+        p,
+        &mgr.graph_source,
+        "wf-graph-source".into(),
+        "Path to a version 2 coding graph JSON file",
+        |ui: &mut Ui| &mut ui.agent.workflows.graph_source,
+    );
+    list = list.child(
+        row()
+            .key("wf-graph-import-row")
+            .gap(8.0)
+            .center_y()
+            .child(source)
+            .child(button(
+                p,
+                "wf-graph-import",
+                tr("Import coding graph"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _| {
+                    let path = ui.agent.workflows.graph_source.text.trim().to_string();
+                    let result = if path.is_empty() {
+                        Err("Select a JSON file path to import".to_string())
+                    } else {
+                        store().import_graph(std::path::Path::new(&path))
+                    };
+                    note(
+                        ui,
+                        result.is_ok(),
+                        result
+                            .map_or_else(|error| error, |graph| format!("Imported {}", graph.name)),
+                    );
+                },
+            )),
+    );
+    if mgr.rows.is_empty() && mgr.graphs.is_empty() {
         list = list.child(small("wf-empty".into(),
             tr("No workflows yet. Create one, then say its trigger phrase, such as \"X, start coding\".").into(),
             p.muted(),
@@ -529,6 +585,56 @@ fn list(p: Paint, mgr: &Manager) -> El {
     }
     for item in &mgr.rows {
         list = list.child(entry_card(p, item));
+    }
+    if !mgr.graphs.is_empty() {
+        list = list
+            .child(section_label(p, "wf-coding-title", tr("Coding workflows")))
+            .child(small(
+                "wf-coding-note".into(),
+                "Imported coding graphs are read-only here. Review each job before approval."
+                    .into(),
+                p.muted(),
+            ));
+        for graph in &mgr.graphs {
+            let last = mgr
+                .graph_last
+                .iter()
+                .find(|(id, _)| id == &graph.id)
+                .map(|(_, last)| last);
+            list = list.child(graph_card(p, graph, last));
+        }
+    }
+    if let Some(Ok(recovery)) = &mgr.recovery
+        && let Some(jobs) = recovery["jobs"].as_array()
+        && !jobs.is_empty()
+    {
+        list = list
+            .child(section_label(
+                p,
+                "wf-recovery-title",
+                tr("Interrupted coding jobs"),
+            ))
+            .child(small(
+                "wf-recovery-caution".into(),
+                "Check provider delivery before trying these jobs again.".into(),
+                p.warning(),
+            ));
+        for (index, job) in jobs.iter().enumerate() {
+            let run_id = job["run_id"].as_str().unwrap_or("unknown run");
+            let node_id = job["node_id"].as_str().unwrap_or("unknown node");
+            list = list.child(small(
+                format!("wf-recovery-job-{index}"),
+                format!("{node_id} · run {run_id} · needs reconciliation"),
+                p.muted(),
+            ));
+        }
+    }
+    if mgr.recovery.as_ref().is_some_and(Result::is_err) {
+        list = list.child(small(
+            "wf-recovery-unavailable".into(),
+            "Could not inspect interrupted coding jobs; no retry was attempted.".into(),
+            p.warning(),
+        ));
     }
     if let Some((ok, message)) = &mgr.note {
         list = list.child(small(
@@ -538,6 +644,70 @@ fn list(p: Paint, mgr: &Manager) -> El {
         ));
     }
     list
+}
+
+fn graph_card(p: Paint, graph: &GraphEntry, last: Option<&GraphLast>) -> El {
+    let id = graph.id.clone();
+    let mut card = col()
+        .key(format!("wf-graph-{id}"))
+        .gap(6.0)
+        .px(16.0)
+        .py(12.0)
+        .radius(p.k.radius.md)
+        .fill(p.k.c.layer_01)
+        .child(
+            text(graph.name.clone())
+                .key(format!("wf-graph-{id}-name"))
+                .font(p.k.ty.small_medium)
+                .color(p.text()),
+        )
+        .child(small(
+            format!("wf-graph-{id}-meta"),
+            format!("{} coding jobs · explicit approval required", graph.jobs),
+            p.muted(),
+        ));
+    if let Some(last) = last {
+        let total = last.nodes.len();
+        let color = if last.stopped {
+            p.warning()
+        } else if total > 0 && last.verified == total {
+            p.success()
+        } else {
+            p.danger()
+        };
+        let state = if last.stopped { "stopped" } else { "finished" };
+        card = card.child(small(
+            format!("wf-graph-{id}-last"),
+            format!("Last run: {}/{} verified · {state}", last.verified, total),
+            color,
+        ));
+    }
+    if graph.coding_only {
+        card = card.child(button(
+            p,
+            &format!("wf-graph-{id}-run"),
+            tr("Review & run"),
+            ButtonKind::Primary,
+            move |ui: &mut Ui, _| {
+                let result = agent_host::service().plan_graph_workflow(&id);
+                note(
+                    ui,
+                    result.is_ok(),
+                    result.map_or_else(
+                        |error| error,
+                        |_| "Planned: review every job above before approving".to_string(),
+                    ),
+                );
+            },
+        ));
+    } else {
+        card = card.child(small(
+            format!("wf-graph-{id}-mixed"),
+            "Mixed or desktop graphs cannot use the coding graph runner.".into(),
+            p.warning(),
+        ));
+    }
+    card
 }
 
 fn entry_card(p: Paint, item: &Row) -> El {

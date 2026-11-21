@@ -1108,6 +1108,82 @@ mod storage {
     }
 
     #[test]
+    fn coding_graphs_are_listed_without_exposing_goals_or_overwriting_them() {
+        use crate::workflows::dag::{Graph, HarnessKind, Job, Node, VERSION};
+
+        let h = home();
+        let s = store(h.path());
+        let graph = Graph {
+            version: VERSION,
+            id: "coding-graph".into(),
+            name: "Review backend".into(),
+            triggers: vec![],
+            nodes: vec![Node {
+                id: "backend".into(),
+                after: vec![],
+                requires: vec![],
+                job: Job::Harness {
+                    harness: HarnessKind::OpenCode,
+                    project_id: uuid::Uuid::new_v4().to_string(),
+                    goal: "private backend instructions".into(),
+                },
+                on_failure: OnFailure::Stop,
+            }],
+        };
+        let source = h.path().join("graph-source.json");
+        std::fs::write(&source, serde_json::to_vec(&graph).unwrap()).unwrap();
+        s.import_graph(&source).unwrap();
+        assert!(s.list().is_empty());
+        let legacy_workflow = coding(h.path());
+        s.save(&legacy_workflow).unwrap();
+        assert_eq!(s.list().len(), 1);
+        let entries = s.list_graphs();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "Review backend");
+        assert!(entries[0].coding_only);
+        assert_eq!(entries[0].jobs, 1);
+        assert!(
+            !serde_json::to_string(&entries)
+                .unwrap()
+                .contains("private backend")
+        );
+
+        let saved = std::fs::read(s.dir().join("coding-graph.json")).unwrap();
+        let mut legacy = coding(h.path());
+        legacy.id = "coding-graph".into();
+        legacy.triggers.clear();
+        assert!(s.save(&legacy).is_err());
+        assert_eq!(
+            std::fs::read(s.dir().join("coding-graph.json")).unwrap(),
+            saved
+        );
+        assert_eq!(s.get_graph("coding-graph").unwrap(), graph);
+    }
+
+    #[test]
+    fn private_writes_do_not_follow_predictable_temp_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let h = home();
+        let s = store(h.path());
+        std::fs::create_dir_all(s.dir()).unwrap();
+        let victim = h.path().join("unrelated.txt");
+        std::fs::write(&victim, "do not modify").unwrap();
+        let predictable = s.dir().join("coding.tmp");
+        symlink(&victim, &predictable).unwrap();
+
+        s.save(&coding(h.path())).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "do not modify");
+        assert!(
+            std::fs::symlink_metadata(&predictable)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(s.get("coding").unwrap().id, "coding");
+    }
+
+    #[test]
     fn invalid_workflows_are_not_saved() {
         let h = home();
         let s = store(h.path());
@@ -1234,6 +1310,39 @@ mod storage {
         .unwrap();
         assert!(s.import(&file).is_err());
         assert!(s.get("../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn saved_graph_result_omits_provider_text_and_rejects_corruption() {
+        use crate::workflows::scheduler::{NodeReport, Outcome, Report as DagReport};
+
+        let h = home();
+        let s = store(h.path());
+        let report = DagReport {
+            nodes: vec![NodeReport {
+                id: "backend".into(),
+                outcome: Outcome::Verified,
+                reason: "sensitive provider result must not be persisted".into(),
+            }],
+            stopped: false,
+            max_concurrent: 1,
+        };
+        s.record_graph_last("coding-graph", &report).unwrap();
+        let saved = s.last_graph("coding-graph").unwrap().unwrap();
+        assert_eq!(saved.graph_id, "coding-graph");
+        assert_eq!(saved.verified, 1);
+        assert!(!saved.stopped);
+        assert_eq!(saved.nodes[0].outcome, Outcome::Verified);
+        let path = s.dir().join("coding-graph.last.json");
+        let bytes = std::fs::read_to_string(&path).unwrap();
+        assert!(!bytes.contains("sensitive provider result"));
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(s.last_graph("unseen").unwrap().is_none());
+        std::fs::write(&path, b"not json").unwrap();
+        assert!(s.last_graph("coding-graph").is_err());
     }
 
     #[test]
