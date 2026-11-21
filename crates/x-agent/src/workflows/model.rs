@@ -357,6 +357,12 @@ fn check_action(action: &StepAction, home: &Path) -> Result<(), String> {
             check_text("The action phrase", phrase)?;
             let actions = tools::plan_rules(phrase)
                 .ok_or("X does not understand that phrase as a built-in action")?;
+            if actions
+                .iter()
+                .any(|action| matches!(action, tools::Action::Type { .. }))
+            {
+                return Err("Typing into windows is not allowed in workflows".into());
+            }
             if !tools::is_low_risk(&actions) {
                 return Err(
                     "That action needs approval each time, so it cannot be a workflow step".into(),
