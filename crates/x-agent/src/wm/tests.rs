@@ -757,3 +757,53 @@ fn a_misheard_workspace_command_still_parses() {
     assert_eq!((r.op, r.ws), (Op::Move, Some(Ws::N(4))));
     assert_eq!(r.target.pick, Some(2));
 }
+
+#[test]
+fn prepared_close_requires_the_same_focused_window_identity() {
+    let (mut controller, fake) = setup();
+    let request = p("close this window").unwrap();
+    let target = controller.prepare_close(&request.target).unwrap();
+    assert!(target.label().unwrap().contains("Docs"));
+
+    fake.0.lock().unwrap().focus = Some("0x2".into());
+    assert!(matches!(
+        controller.run_with_target(&request, Some(&target)),
+        Err(WmError::NotFound(_))
+    ));
+    let original = {
+        let mut w = fake.0.lock().unwrap();
+        w.focus = Some("0x1".into());
+        let original = w.wins[0].clone();
+        w.wins[0].pid += 10;
+        original
+    };
+    assert!(matches!(
+        controller.run_with_target(&request, Some(&target)),
+        Err(WmError::NotFound(_))
+    ));
+    assert!(fake.0.lock().unwrap().log.is_empty());
+
+    fake.0.lock().unwrap().wins[0] = original;
+    controller.run_with_target(&request, Some(&target)).unwrap();
+    assert_eq!(fake.0.lock().unwrap().log, [Cmd::Close("0x1".into())]);
+}
+
+#[test]
+fn prepared_ambiguous_close_still_requires_a_choice_after_window_disappears() {
+    let fake = world(vec![
+        win("0x1", "firefox", "Browser", 1),
+        win("0x2", "foot", "First", 1),
+        win("0x3", "foot", "Second", 1),
+    ]);
+    let mut controller = Controller::new(Box::new(fake.clone())).with_catalog(catalog);
+    let request = p("close terminal").unwrap();
+    let target = controller.prepare_close(&request.target).unwrap();
+    fake.0.lock().unwrap().wins.retain(|w| w.id != "0x2");
+    assert!(matches!(
+        controller.run_with_target(&request, Some(&target)),
+        Err(WmError::Ambiguous(choices)) if choices.len() == 2
+    ));
+    assert!(fake.0.lock().unwrap().log.is_empty());
+    controller.choose(2).unwrap();
+    assert_eq!(fake.0.lock().unwrap().log, [Cmd::Close("0x3".into())]);
+}

@@ -500,6 +500,7 @@ pub(super) fn step(title: &str, risk: &str) -> Step {
         title: title.into(),
         status: "pending".into(),
         risk: risk.into(),
+        request: None,
         detail: String::new(),
     }
 }

@@ -17,8 +17,11 @@ use crate::phase::Phase;
 use crate::tools::{self, Action, Risk};
 
 mod edit;
+mod request;
 mod workflow;
 pub use edit::Preview;
+pub use request::RequestMetadata;
+use request::{ActionId, ActionRequest};
 
 /// Human-facing impact is derived from the exact same exhaustive risk model
 /// that gates autonomous execution. A close must never be labelled a launch.
@@ -59,18 +62,22 @@ pub enum AutonomyMode {
 
 /// Where the action was constructed. Remote choices are never treated as
 /// an exact local rule for approval-free destructive operations.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Origin {
     Rules,
     Decider,
     Workflow,
+    #[default]
     Quick,
 }
 
 /// Typed commands, explicit push-to-talk speech, and ambient wake speech have
 /// different safety properties even when they produce the same transcript.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InputSource {
+    #[default]
     Text,
     PushToTalk,
     HandsFree,
@@ -117,6 +124,8 @@ pub struct Step {
     /// pending | running | launched | done | failed
     pub status: String,
     pub risk: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<RequestMetadata>,
     /// What happened, once it has: shown when a workflow step fails or cannot be verified.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub detail: String,
@@ -165,6 +174,21 @@ pub struct Snapshot {
 /// Launches validated actions (faked in tests).
 pub trait Launcher: Send + Sync {
     fn launch(&self, action: &Action) -> Result<String, String>;
+
+    fn prepare_close(
+        &self,
+        _target: &crate::wm::Target,
+    ) -> Result<Option<crate::wm::CloseTarget>, String> {
+        Ok(None)
+    }
+
+    fn launch_prepared(
+        &self,
+        action: &Action,
+        _target: Option<&crate::wm::CloseTarget>,
+    ) -> Result<String, String> {
+        self.launch(action)
+    }
 
     /// Waits for a window other than `before` to take focus, so typing lands in the app
     /// that was just launched. Errors when none appears.
@@ -217,6 +241,23 @@ impl Launcher for RealLauncher {
         action.execute()
     }
 
+    fn prepare_close(
+        &self,
+        target: &crate::wm::Target,
+    ) -> Result<Option<crate::wm::CloseTarget>, String> {
+        crate::wm::prepare_close(target)
+            .map(Some)
+            .map_err(|err| err.to_string())
+    }
+
+    fn launch_prepared(
+        &self,
+        action: &Action,
+        target: Option<&crate::wm::CloseTarget>,
+    ) -> Result<String, String> {
+        action.execute_for_target(target)
+    }
+
     fn await_launched_focus(&self) -> Result<(), String> {
         tools::wait_for_launched_focus()
     }
@@ -228,9 +269,7 @@ struct State {
     events: Vec<Event>,
     seq: u64,
     serial: u64,
-    actions: Vec<Action>,
-    origin: Origin,
-    input_source: InputSource,
+    actions: Vec<ActionRequest>,
     canceller: Option<Canceller>,
     stop_requested: bool,
     voice_mode: Mode,
@@ -247,6 +286,14 @@ struct State {
     workflow: Option<crate::workflows::Workflow>,
     /// How to put back the last workflow run's changes.
     undo: Vec<crate::workflows::engine::Reversal>,
+}
+
+#[derive(Default)]
+struct PlanOptions {
+    origin: Origin,
+    source: InputSource,
+    guard: Option<Guard>,
+    allow_command: Option<String>,
 }
 
 struct Guard {
@@ -288,8 +335,6 @@ impl Service {
             seq: 0,
             serial: 0,
             actions: vec![],
-            origin: Origin::Quick,
-            input_source: InputSource::Text,
             canceller: None,
             stop_requested: false,
             trust_actions: false,
@@ -413,6 +458,7 @@ impl Service {
         &self,
         text: &str,
         cmd: &context::commands::Command,
+        source: InputSource,
     ) -> Result<Task, String> {
         {
             let s = self.lock();
@@ -432,17 +478,23 @@ impl Service {
         // Text from the primary selection can be stale or from another window, so it is
         // always shown for approval, even with Trusted Actions on.
         let from_primary = ctx.selection.source == context::Source::PrimarySelection;
-        let task = self.plan_task(text, Mode::Actions, Some(resolved.actions))?;
-        self.lock().origin = Origin::Quick;
-        self.lock().guard = Some(Guard {
-            ctx,
-            strict_focus: false,
-        });
-        if self.lock().trust_actions && !from_primary && tools::is_low_risk(&self.lock().actions) {
+        let automatic =
+            self.lock().trust_actions && !from_primary && tools::is_low_risk(&resolved.actions);
+        let task = self.plan_task(
+            text,
+            Mode::Actions,
+            Some(resolved.actions),
+            PlanOptions {
+                source,
+                guard: Some(Guard {
+                    ctx,
+                    strict_focus: automatic,
+                }),
+                ..PlanOptions::default()
+            },
+        )?;
+        if automatic && self.lock().trust_actions {
             self.emit("info", "Trusted Actions: running without a prompt");
-            if let Some(g) = self.lock().guard.as_mut() {
-                g.strict_focus = true; // no prompt in between, so focus must not have moved
-            }
             self.approve(task.id)?;
         }
         Ok(task)
@@ -528,7 +580,7 @@ impl Service {
                     let explain = Command::Transform(Transform::Explain, Scope::Selection);
                     return self.plan_edit(text.trim(), explain);
                 }
-                return self.plan_contextual(text.trim(), &cmd);
+                return self.plan_contextual(text.trim(), &cmd, source);
             }
             if let Some(cmd) = crate::edit::commands::parse(&tools::strip_wake_word(text)) {
                 use crate::edit::commands::Command;
@@ -583,7 +635,32 @@ impl Service {
         if computer_app.is_some() {
             self.check_screen_may_leave()?;
         }
-        let task = self.plan_task(text, mode, preset)?;
+        let exact_close = origin == Origin::Rules
+            && source == InputSource::PushToTalk
+            && matches!(
+                preset.as_deref(),
+                Some([Action::Window {
+                    op: crate::wm::Op::Close,
+                    target: crate::wm::Target { app, pick: None },
+                    ..
+                }]) if app.is_empty()
+            );
+        let auto_close = exact_close && self.lock().trust_actions;
+        let low_risk = preset.as_deref().is_some_and(tools::is_low_risk);
+        let task = self.plan_task(
+            text,
+            mode,
+            preset,
+            PlanOptions {
+                origin,
+                source,
+                guard: auto_close.then(|| Guard {
+                    ctx: self.context_engine().capture(false),
+                    strict_focus: true,
+                }),
+                ..PlanOptions::default()
+            },
+        )?;
         self.emit(
             "timing",
             &format!(
@@ -591,11 +668,6 @@ impl Service {
                 planning_started.elapsed().as_millis()
             ),
         );
-        {
-            let mut state = self.lock();
-            state.origin = origin;
-            state.input_source = source;
-        }
         if let Some(app) = computer_app {
             let granted = self.lock().computer_apps.contains(&app);
             if granted && self.lock().trust_actions {
@@ -607,34 +679,7 @@ impl Service {
             }
             return Ok(task);
         }
-        let (low_risk, exact_close) = {
-            let state = self.lock();
-            let safe = tools::is_low_risk(&state.actions);
-            // Only the focused window, named by an exact local rule, can be
-            // closed without a prompt; numbered/named windows require approval.
-            let close = state.actions.as_slice();
-            let exact = state.origin == Origin::Rules
-                && state.input_source == InputSource::PushToTalk
-                && matches!(
-                    close,
-                    [Action::Window {
-                        op: crate::wm::Op::Close,
-                        target: crate::wm::Target { app, pick: None },
-                        ..
-                    }] if app.is_empty()
-                );
-            (safe, exact)
-        };
-        if mode == Mode::Actions && (low_risk || exact_close) && self.lock().trust_actions {
-            if exact_close {
-                // Prevent a race between hearing "close this" and the action:
-                // a focus change invalidates the automatic close.
-                let ctx = self.context_engine().capture(false);
-                self.lock().guard = Some(Guard {
-                    ctx,
-                    strict_focus: true,
-                });
-            }
+        if mode == Mode::Actions && (auto_close || low_risk) && self.lock().trust_actions {
             self.emit("info", "Trusted Actions: running without a prompt");
             self.approve(task.id)?;
         }
@@ -669,7 +714,7 @@ impl Service {
         self.set_workspace(&dir.display().to_string())?;
         // Autonomous mode is for local desktop Actions, not for generated
         // OpenCode edits. Even a fresh workspace still needs Work approval.
-        self.plan_task(goal, Mode::Work, None)
+        self.plan_task(goal, Mode::Work, None, PlanOptions::default())
     }
 
     fn plan_task(
@@ -677,29 +722,66 @@ impl Service {
         text: &str,
         mode: Mode,
         preset: Option<Vec<Action>>,
+        options: PlanOptions,
     ) -> Result<Task, String> {
         let text = text.trim();
         if text.is_empty() || text.chars().count() > MAX_INPUT {
             return Err("Enter a task of 1-1,500 characters".into());
         }
+        let phase = self.lock().phase;
+        if phase.is_busy() {
+            return Err(busy(phase));
+        }
+        let prepared = if mode == Mode::Actions {
+            let actions = preset.or_else(|| tools::plan_rules(text)).ok_or(
+                "Not understood. Try 'open Firefox' or 'search YouTube for ...'. Nothing was run.",
+            )?;
+            let standalone = actions.len() == 1;
+            actions
+                .into_iter()
+                .map(|action| {
+                    let action = action.validate()?;
+                    let target = match &action {
+                        Action::Window {
+                            op: crate::wm::Op::Close,
+                            target,
+                            ..
+                        } if standalone => self.launcher.prepare_close(target)?,
+                        _ => None,
+                    };
+                    Ok((action, target))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        } else {
+            Vec::new()
+        };
         let mut s = self.lock();
         if s.phase.is_busy() {
             return Err(busy(s.phase));
         }
-        s.grants.clear();
-        s.guard = None;
-        s.edit = None;
-        s.workflow = None;
+        let id = s.serial + 1;
         let (steps, actions, workspace) = match mode {
             Mode::Actions => {
-                let actions = preset.or_else(|| tools::plan_rules(text)).ok_or(
-                    "Not understood. Try 'open Firefox' or 'search YouTube for ...'. Nothing was run.")?;
+                let actions: Vec<_> = prepared
+                    .into_iter()
+                    .enumerate()
+                    .map(|(step, (action, target))| {
+                        ActionRequest::new(
+                            ActionId { task: id, step },
+                            options.origin,
+                            options.source,
+                            action,
+                            target,
+                        )
+                    })
+                    .collect();
                 let steps = actions
                     .iter()
-                    .map(|a| Step {
-                        title: a.describe(),
+                    .map(|request| Step {
+                        title: request.title(),
                         status: "pending".into(),
-                        risk: action_risk_label(a).into(),
+                        risk: action_risk_label(&request.action).into(),
+                        request: Some(request.metadata.clone()),
                         detail: String::new(),
                     })
                     .collect();
@@ -722,6 +804,7 @@ impl Service {
                     title: t.into(),
                     status: "pending".into(),
                     risk: risk.into(),
+                    request: None,
                     detail: String::new(),
                 };
                 let steps = vec![
@@ -735,9 +818,13 @@ impl Service {
                 (steps, vec![], Some(ws.display().to_string()))
             }
         };
-        s.serial += 1;
+        s.serial = id;
+        s.grants = options.allow_command.into_iter().collect();
+        s.guard = options.guard;
+        s.edit = None;
+        s.workflow = None;
         let task = Task {
-            id: s.serial,
+            id,
             mode,
             text: text.into(),
             steps,
@@ -770,7 +857,7 @@ impl Service {
     // ---- execution ---------------------------------------------------------------------
 
     pub fn approve(&self, task_id: u64) -> Result<(), String> {
-        let (task, actions) = {
+        let (task, actions, is_edit, is_workflow) = {
             let mut s = self.lock();
             let matches_task = s.task.as_ref().is_some_and(|t| t.id == task_id);
             if !matches_task || s.phase != Phase::AwaitingApproval {
@@ -780,11 +867,12 @@ impl Service {
             s.stop_requested = false;
             emit(&mut s, "info", "Approved");
             emit(&mut s, "approval", &format!("approved task {task_id}"));
-            (s.task.clone().ok_or("no task")?, s.actions.clone())
-        };
-        let (is_edit, is_workflow) = {
-            let s = self.lock();
-            (s.edit.is_some(), s.workflow.is_some())
+            (
+                s.task.clone().ok_or("no task")?,
+                s.actions.clone(),
+                s.edit.is_some(),
+                s.workflow.is_some(),
+            )
         };
         let me = self.clone();
         thread::spawn(move || match task.mode {
@@ -819,13 +907,38 @@ impl Service {
         if command.contains(['*', '?', '\n']) {
             return Err("That command contains wildcards and cannot be allowed".into());
         }
-        let task = self.plan_task(&text, Mode::Work, None)?;
-        self.lock().grants = vec![command.clone()];
+        let task = self.plan_task(
+            &text,
+            Mode::Work,
+            None,
+            PlanOptions {
+                allow_command: Some(command.clone()),
+                ..PlanOptions::default()
+            },
+        )?;
         self.emit("info", &format!("Allowing `{command}` for this rerun only"));
         Ok(task)
     }
 
-    fn run_actions(&self, actions: &[Action]) {
+    fn claim_action(&self, id: ActionId) -> bool {
+        let mut state = self.lock();
+        if state.stop_requested || state.phase != Phase::Running {
+            return false;
+        }
+        let Some(step) = state
+            .task
+            .as_mut()
+            .filter(|task| task.id == id.task)
+            .and_then(|task| task.steps.get_mut(id.step))
+            .filter(|step| step.status == "pending")
+        else {
+            return false;
+        };
+        step.status = "running".into();
+        true
+    }
+
+    fn run_actions(&self, actions: &[ActionRequest]) {
         let guard = self.lock().guard.take();
         if let Some(guard) = guard
             && let Err(why) = self
@@ -837,11 +950,16 @@ impl Service {
         }
         let mut launched = 0;
         let mut verified = 0;
-        for (i, action) in actions.iter().enumerate() {
-            if self.lock().stop_requested {
-                break;
+        for request in actions {
+            let id = request.metadata.idempotency_key;
+            if !self.claim_action(id) {
+                if self.lock().stop_requested {
+                    self.finish(Phase::Cancelled, None, Some("Stopped".into()), None);
+                }
+                return;
             }
-            self.set_step(i, "running");
+            let i = id.step;
+            let action = &request.action;
             self.emit("action", &action.describe());
             if let Action::Computer { app, goal } = action {
                 return self.run_computer(app, goal);
@@ -850,14 +968,16 @@ impl Service {
             let result = match action {
                 Action::Type { .. } => {
                     let waited = match actions.get(i.wrapping_sub(1)) {
-                        Some(launched) if launched.launches_window() => {
+                        Some(launched) if launched.action.launches_window() => {
                             self.launcher.await_launched_focus()
                         }
                         _ => Ok(()),
                     };
                     waited.and_then(|()| self.launcher.launch(action))
                 }
-                _ => self.launcher.launch(action),
+                _ => self
+                    .launcher
+                    .launch_prepared(action, request.close_target.as_ref()),
             };
             // Window Controller already waits for compositor verification;
             // ordinary launches are timed as execution, not verification.
