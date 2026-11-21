@@ -2155,3 +2155,31 @@ fn service_clones_share_stop_revocation() {
     service.cancel();
     assert!(grants.check(&receipt, Permission::InspectProject, &project).is_err());
 }
+
+#[test]
+fn snapshot_reports_only_pending_grant_count_and_stop_clears_it() {
+    use crate::grants::{Permission, Scope};
+    use uuid::Uuid;
+
+    let (service, _, _) = rig();
+    assert_eq!(service.snapshot(0).pending_job_approvals, Some(0));
+    let secret_intent = "internal request text must not appear in status";
+    let scope = Scope::Task {
+        project_id: Uuid::new_v4(),
+        run_id: Uuid::new_v4(),
+        node_id: "review".into(),
+        intent: secret_intent.into(),
+    };
+    let grants = service.scoped_grants();
+    let receipt = grants
+        .issue(Permission::StartHarness, scope.clone(), Duration::from_secs(30), 1, true)
+        .unwrap();
+    let status = service.snapshot(0);
+    assert_eq!(status.pending_job_approvals, Some(1));
+    let serialized = serde_json::to_string(&status).unwrap();
+    assert!(serialized.contains("pending_job_approvals"));
+    assert!(!serialized.contains(secret_intent));
+    service.cancel();
+    assert_eq!(service.snapshot(0).pending_job_approvals, Some(0));
+    assert!(grants.consume(&receipt, Permission::StartHarness, &scope).is_err());
+}
