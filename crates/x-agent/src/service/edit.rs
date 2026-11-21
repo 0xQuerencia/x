@@ -522,6 +522,8 @@ pub(super) fn task(id: u64, text: &str, steps: Vec<Step>, edit: Option<Preview>)
         summary: None,
         changed_files: None,
         workspace: None,
+        session: None,
+        accepted_session: None,
         blocked: vec![],
         edit,
     }

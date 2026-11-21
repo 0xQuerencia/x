@@ -40,7 +40,8 @@ pub fn service() -> &'static Service {
             Arc::new(HexCli { exe }),
             Arc::new(RealLauncher),
             x_agent::harness::probe::locate(x_agent::harness::Kind::OpenCode),
-        );
+        )
+        .with_session_verifier(sessions::verify);
         restore_execution_policy(&service);
         if let Ok(dir) = crate::app_paths::support_dir() {
             if let Err(error) = service.configure_ledger(&dir) {
@@ -895,6 +896,10 @@ pub fn handle(action: AgentAction) -> ControlReply {
         AgentAction::Trust { on } => set_trust(on),
         AgentAction::Autonomy { mode } => set_autonomy(&mode),
         AgentAction::Planner { model } => set_planner(&model),
+        AgentAction::SendToSession { text } => match svc.plan_session_send(&text) {
+            Ok(_) => snapshot(0),
+            Err(error) => ControlReply::error("refused", error),
+        },
         AgentAction::Sessions { resume } => sessions::handle(svc, resume),
         AgentAction::Doctor => unreachable!("doctor is handled before initializing X"),
         AgentAction::Desktop => {

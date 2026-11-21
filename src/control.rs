@@ -287,6 +287,10 @@ pub enum AgentAction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resume: Option<String>,
     },
+    /// Preview explicit Work in the selected OpenCode session.
+    SendToSession {
+        text: String,
+    },
     /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
     /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
     Workflow {

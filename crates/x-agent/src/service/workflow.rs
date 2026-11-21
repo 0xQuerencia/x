@@ -364,6 +364,7 @@ impl Service {
         let request = harness::Request {
             workspace,
             prompt: goal.to_string(),
+            session: None,
             allow_commands: Vec::new(),
         };
         let res = match adapter.start(request, on_event, stop) {

@@ -54,6 +54,7 @@ pub struct Descriptor {
 pub struct Request {
     pub workspace: PathBuf,
     pub prompt: String,
+    pub session: Option<SessionId>,
     pub allow_commands: Vec<String>,
 }
 
@@ -108,6 +109,7 @@ impl EventKind {
 pub struct Event {
     pub kind: EventKind,
     pub text: String,
+    pub session: Option<SessionId>,
     /// A specific command reported by a structured bash permission refusal.
     /// The owner still has to select it for a newly approved run.
     pub blocked_command: Option<String>,
@@ -119,8 +121,18 @@ impl Event {
         Self {
             kind,
             text,
+            session: None,
             blocked_command: None,
         }
+    }
+    /// Only structured model activity can confirm receipt by a specific session.
+    pub fn accepted_session(&self) -> Option<&SessionId> {
+        matches!(
+            self.kind,
+            EventKind::StepStart | EventKind::Text | EventKind::Tool
+        )
+        .then_some(self.session.as_ref())
+        .flatten()
     }
 }
 
@@ -136,6 +148,7 @@ pub enum RunStatus {
 pub struct RunResult {
     pub status: RunStatus,
     pub exit_code: Option<i32>,
+    pub accepted_session: Option<SessionId>,
     pub errors: Vec<String>,
     pub stderr: Vec<String>,
     /// Files whose git status changed. Evidence may be unavailable outside a Git repository.
