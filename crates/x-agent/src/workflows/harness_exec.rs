@@ -10,11 +10,14 @@ use super::dag::{Graph, HarnessKind, Job, Node};
 use super::recovery::{Begin, Journal, State};
 use super::scheduler::{Executor, Outcome};
 use crate::cancellation::Cancellation;
+use crate::grants::{Grants, Permission, Receipt, Scope};
 use crate::harness::{Adapter, EventSink, Kind, Request, RunStatus, WorkAccess};
 use crate::projects::Project;
 use crate::verification::{Outcome as VerifiedOutcome, Result as Verification};
 use crate::worktrees::{Manager, OwnedWorktree};
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Proof {
     /// Only the provider delivery and clean process exit are verified.
     DeliveryOnly,
@@ -33,10 +36,12 @@ pub struct Assignment {
     fingerprint: String,
     adapter: Arc<dyn Adapter>,
     proof: Proof,
+    grants: Arc<Grants>,
+    receipt: Receipt,
 }
 
 impl Assignment {
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) fn from_approved_scope(
         node: &Node,
         project: Project,
@@ -44,11 +49,9 @@ impl Assignment {
         fingerprint: String,
         adapter: Arc<dyn Adapter>,
         proof: Proof,
-        approved: bool,
+        grants: Arc<Grants>,
+        receipt: Receipt,
     ) -> Result<Self, String> {
-        if !approved {
-            return Err("The owner has not approved this harness assignment".into());
-        }
         let Job::Harness {
             project_id,
             harness,
@@ -73,6 +76,8 @@ impl Assignment {
         {
             return Err("The expected changed file path is unsafe".into());
         }
+        let scope = approval_scope(node, project.id, worktree.run_id(), &proof)?;
+        grants.check(&receipt, Permission::StartHarness, &scope)?;
         Ok(Self {
             node_id: node.id.clone(),
             project,
@@ -80,6 +85,8 @@ impl Assignment {
             fingerprint,
             adapter,
             proof,
+            grants,
+            receipt,
         })
     }
 }
@@ -155,7 +162,19 @@ impl ApprovedHarnessExecutor {
             && self
                 .worktrees
                 .validate_owned(&assignment.project, &assignment.worktree)
-                .is_ok())
+                .is_ok()
+            && approval_scope(
+                node,
+                assignment.project.id,
+                assignment.worktree.run_id(),
+                &assignment.proof,
+            )
+            .and_then(|scope| {
+                assignment
+                    .grants
+                    .check(&assignment.receipt, Permission::StartHarness, &scope)
+            })
+            .is_ok())
         .then_some(assignment)
     }
 }
@@ -179,6 +198,21 @@ impl Executor for ApprovedHarnessExecutor {
         };
         if stop.requested() {
             return Outcome::Cancelled;
+        }
+        let Ok(scope) = approval_scope(
+            &node,
+            assignment.project.id,
+            assignment.worktree.run_id(),
+            &assignment.proof,
+        ) else {
+            return Outcome::Failed;
+        };
+        if assignment
+            .grants
+            .consume(&assignment.receipt, Permission::StartHarness, &scope)
+            .is_err()
+        {
+            return Outcome::Failed;
         }
         match self
             .journal
@@ -260,6 +294,22 @@ impl Executor for ApprovedHarnessExecutor {
         }
         outcome
     }
+}
+
+fn approval_scope(
+    node: &Node,
+    project_id: Uuid,
+    run_id: Uuid,
+    proof: &Proof,
+) -> Result<Scope, String> {
+    let intent = serde_json::to_string(&(&node.job, proof))
+        .map_err(|_| "Could not identify the approved task request")?;
+    Ok(Scope::Task {
+        project_id,
+        run_id,
+        node_id: node.id.clone(),
+        intent,
+    })
 }
 
 fn to_kind(kind: HarnessKind) -> Kind {
@@ -447,6 +497,7 @@ mod tests {
             })
             .collect(),
         };
+        let grants = Arc::new(Grants::default());
         let assignments = graph
             .nodes
             .iter()
@@ -465,6 +516,15 @@ mod tests {
                     running: Arc::clone(&running),
                     peak: Arc::clone(&peak),
                 });
+                let receipt = grants
+                    .issue(
+                        Permission::StartHarness,
+                        approval_scope(node, project.id, run_id, &Proof::DeliveryOnly).unwrap(),
+                        Duration::from_secs(30),
+                        1,
+                        true,
+                    )
+                    .unwrap();
                 Assignment::from_approved_scope(
                     node,
                     project.clone(),
@@ -472,7 +532,8 @@ mod tests {
                     "a".repeat(64),
                     adapter,
                     Proof::DeliveryOnly,
-                    true,
+                    Arc::clone(&grants),
+                    receipt,
                 )
                 .unwrap()
             })
@@ -504,22 +565,69 @@ mod tests {
                 .iter()
                 .all(|node| node.outcome == Outcome::Verified)
         );
-        // A second run with the same journal claims must never resend.
-        let replay = scheduler::run(
-            &graph,
-            Path::new("/tmp"),
-            adapter,
-            &Cancellation::default(),
-            2,
-        )
-        .unwrap();
+        // Receipts are consumed before delivery; a replay cannot pass preflight.
         assert!(
-            replay
-                .nodes
-                .iter()
-                .all(|node| node.outcome == Outcome::Unverified)
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                adapter,
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn changing_the_goal_or_verification_profile_invalidates_consent() {
+        let (_directory, mut graph, executor, _peak, calls) = fixture(false);
+        let assignment = executor.assignments.get("front").unwrap();
+        assert!(
+            Assignment::from_approved_scope(
+                &graph.nodes[0],
+                assignment.project.clone(),
+                assignment.worktree.clone(),
+                assignment.fingerprint.clone(),
+                Arc::clone(&assignment.adapter),
+                Proof::ChangedFile("src/app.rs".into()),
+                Arc::clone(&assignment.grants),
+                assignment.receipt,
+            )
+            .is_err()
+        );
+        if let Job::Harness { goal, .. } = &mut graph.nodes[0].job {
+            *goal = "A different task that the user never approved".into();
+        }
+        assert!(
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                executor,
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn revoked_harness_receipt_cannot_start_any_work() {
+        let (_directory, graph, executor, _peak, calls) = fixture(false);
+        let assignment = executor.assignments.get("front").unwrap();
+        assignment.grants.revoke(&assignment.receipt).unwrap();
+        assert!(
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                executor.clone(),
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
