@@ -105,7 +105,10 @@ impl Registry {
                 .ok_or("No project has that ID")?;
             let alias_key = key(&alias);
             if alias_key == key(&project.name)
-                || project.aliases.iter().any(|existing| key(existing) == alias_key)
+                || project
+                    .aliases
+                    .iter()
+                    .any(|existing| key(existing) == alias_key)
             {
                 return Ok((project.clone(), false));
             }
@@ -217,7 +220,10 @@ impl Registry {
                     || {
                         let mut labels = HashSet::new();
                         !labels.insert(key(&project.name))
-                            || project.aliases.iter().any(|alias| !labels.insert(key(alias)))
+                            || project
+                                .aliases
+                                .iter()
+                                .any(|alias| !labels.insert(key(alias)))
                     }
                     || project
                         .git_common_dir
@@ -318,8 +324,7 @@ fn resolve_in<'a>(data: &'a Data, query: &str) -> Result<&'a Project, String> {
         .projects
         .iter()
         .filter(|project| {
-            key(&project.name) == wanted
-                || project.aliases.iter().any(|alias| key(alias) == wanted)
+            key(&project.name) == wanted || project.aliases.iter().any(|alias| key(alias) == wanted)
         })
         .collect();
     match matches.as_slice() {
@@ -532,12 +537,21 @@ mod tests {
         assert_eq!(updated.aliases, ["CA Workspace"]);
         assert_eq!(registry.resolve("ca workspace").unwrap().id, project.id);
         assert_eq!(
-            registry.add_alias(&project.id.to_string(), "CA WORKSPACE").unwrap().1,
+            registry
+                .add_alias(&project.id.to_string(), "CA WORKSPACE")
+                .unwrap()
+                .1,
             false
         );
         let reopened = Registry::new(registry.directory.clone(), registry.home.clone());
         assert_eq!(reopened.resolve(" Ca Workspace ").unwrap(), updated);
-        assert_eq!(reopened.remove_alias(&project.id.to_string(), "ca workspace").unwrap().1, true);
+        assert_eq!(
+            reopened
+                .remove_alias(&project.id.to_string(), "ca workspace")
+                .unwrap()
+                .1,
+            true
+        );
         assert!(reopened.resolve("CA workspace").is_err());
         assert!(directory.path().join("home/chamber").exists());
     }
@@ -549,12 +563,17 @@ mod tests {
         fs::create_dir(registry.home.join("two")).unwrap();
         let (first, _) = registry.register("Chamber", "~/one").unwrap();
         let (second, _) = registry.register("Billing", "~/two").unwrap();
-        registry.add_alias(&second.id.to_string(), "Chamber").unwrap();
+        registry
+            .add_alias(&second.id.to_string(), "Chamber")
+            .unwrap();
         let message = registry.resolve("chamber").unwrap_err();
         assert!(message.contains("Several projects"));
         assert!(message.contains(&first.id.to_string()));
         assert!(message.contains(&second.id.to_string()));
-        assert_eq!(registry.resolve(&second.id.to_string()).unwrap().id, second.id);
+        assert_eq!(
+            registry.resolve(&second.id.to_string()).unwrap().id,
+            second.id
+        );
         assert!(registry.select("chamber").is_err());
         assert_eq!(registry.last_selected().unwrap(), None);
     }
