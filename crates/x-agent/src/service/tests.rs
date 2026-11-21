@@ -2196,7 +2196,13 @@ fn snapshot_reports_only_pending_grant_count_and_stop_clears_it() {
     };
     let grants = service.scoped_grants();
     let receipt = grants
-        .issue(Permission::StartHarness, scope.clone(), Duration::from_secs(30), 1, true)
+        .issue(
+            Permission::StartHarness,
+            scope.clone(),
+            Duration::from_secs(30),
+            1,
+            true,
+        )
         .unwrap();
     let status = service.snapshot(0);
     assert_eq!(status.pending_job_approvals, Some(1));
@@ -2205,5 +2211,9 @@ fn snapshot_reports_only_pending_grant_count_and_stop_clears_it() {
     assert!(!serialized.contains(secret_intent));
     service.cancel();
     assert_eq!(service.snapshot(0).pending_job_approvals, Some(0));
-    assert!(grants.consume(&receipt, Permission::StartHarness, &scope).is_err());
+    assert!(
+        grants
+            .consume(&receipt, Permission::StartHarness, &scope)
+            .is_err()
+    );
 }
