@@ -212,6 +212,11 @@ fn read_preview(canonical: &Path) -> Result<String, String> {
 /// Opening is explicit, with no shell or text interpolation.
 pub fn open(path: &str) -> Result<String, String> {
     let canonical = scoped_regular_file(path)?;
+    launch_path(&canonical)?;
+    Ok("Sent to the system file opener; X cannot verify that it opened".into())
+}
+
+pub(crate) fn launch_path(canonical: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let opener = "explorer.exe";
     #[cfg(target_os = "macos")]
@@ -220,16 +225,16 @@ pub fn open(path: &str) -> Result<String, String> {
     let opener = "xdg-open";
 
     let mut child = Command::new(opener)
-        .arg(&canonical)
+        .arg(canonical)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("Could not open this file with your desktop: {e}"))?;
+        .map_err(|e| format!("Could not open this path with your desktop: {e}"))?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });
-    Ok("Sent to the system file opener; X cannot verify that it opened".into())
+    Ok(())
 }
 
 #[cfg(test)]

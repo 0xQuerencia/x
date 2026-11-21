@@ -19,6 +19,8 @@ pub struct Preview {
     pub primary_head: String,
     pub task_head: String,
     pub clean: bool,
+    /// The primary checkout has uncommitted files and is not ready for merge.
+    pub primary_dirty: bool,
     pub merge_tree: Option<String>,
     pub changed_files: Vec<String>,
     pub change_list_truncated: bool,
@@ -36,9 +38,27 @@ pub fn preview(
     let task_root = manager.validate_owned(project, owned)?;
     let primary_head = commit(&project.root)?;
     let task_head = commit(&task_root)?;
-    let dirty = git(&task_root, &["status", "--porcelain=v1", "--untracked-files=all"])?;
+    let (primary_ok, primary_status) = git(
+        &project.root,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+    )?;
+    if !primary_ok {
+        return Err("Git could not inspect the primary checkout status".into());
+    }
+    let primary_dirty = !primary_status.trim().is_empty();
+    let dirty = git(
+        &task_root,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+    )?;
     if !dirty.1.trim().is_empty() {
         return Err("The task worktree has uncommitted files. Review and commit them first".into());
+    }
+    // The proposed change list belongs to the task branch, not to changes
+    // made independently by the owner since this worktree was created.
+    let (base_ok, merge_base) = git(&project.root, &["merge-base", &primary_head, &task_head])?;
+    let merge_base = merge_base.trim();
+    if !base_ok || !is_commit(merge_base) {
+        return Err("The task and primary checkout have no verified shared base".into());
     }
     let (diff_ok, output) = git(
         &project.root,
@@ -46,7 +66,7 @@ pub fn preview(
             "diff",
             "--no-ext-diff",
             "--name-only",
-            &primary_head,
+            merge_base,
             &task_head,
             "--",
         ],
@@ -76,7 +96,10 @@ pub fn preview(
         .map(str::trim)
         .filter(|text| is_commit(text))
         .map(ToString::to_string);
-    let conflict_count = merge.lines().filter(|line| line.starts_with("CONFLICT (")).count();
+    let conflict_count = merge
+        .lines()
+        .filter(|line| line.starts_with("CONFLICT ("))
+        .count();
     if !success && conflict_count == 0 {
         return Err("Git could not compute a trusted merge preview".into());
     }
@@ -87,6 +110,7 @@ pub fn preview(
         primary_head,
         task_head,
         clean: success,
+        primary_dirty,
         merge_tree: success.then_some(result_tree).flatten(),
         changed_files,
         change_list_truncated,
@@ -132,12 +156,14 @@ mod tests {
     use uuid::Uuid;
 
     fn command(root: &Path, args: &[&str]) {
-        assert!(Command::new("git")
-            .current_dir(root)
-            .args(args)
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            Command::new("git")
+                .current_dir(root)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
     }
 
     fn fixture() -> (tempfile::TempDir, Project, Manager, OwnedWorktree) {
@@ -149,10 +175,21 @@ mod tests {
         command(&source, &["init", "-q"]);
         fs::write(source.join("shared.txt"), "baseline\n").unwrap();
         command(&source, &["add", "shared.txt"]);
-        command(&source, &[
-            "-c", "user.name=X", "-c", "user.email=x@invalid.example",
-            "-c", "core.hooksPath=", "commit", "-q", "-m", "baseline",
-        ]);
+        command(
+            &source,
+            &[
+                "-c",
+                "user.name=X",
+                "-c",
+                "user.email=x@invalid.example",
+                "-c",
+                "core.hooksPath=",
+                "commit",
+                "-q",
+                "-m",
+                "baseline",
+            ],
+        );
         let source = source.canonicalize().unwrap();
         let project = Project {
             id: Uuid::new_v4(),
@@ -165,22 +202,29 @@ mod tests {
         fs::create_dir(&base).unwrap();
         let manager = Manager::new(base, home);
         let rev = commit(&source).unwrap();
-        let worktree = manager.allocate(
-            &project,
-            Uuid::new_v4(),
-            "backend",
-            &rev,
-            true,
-        ).unwrap();
+        let worktree = manager
+            .allocate(&project, Uuid::new_v4(), "backend", &rev, true)
+            .unwrap();
         (dir, project, manager, worktree)
     }
 
     fn commit_worktree(path: &Path, message: &str) {
         command(path, &["add", "-A"]);
-        command(path, &[
-            "-c", "user.name=X", "-c", "user.email=x@invalid.example",
-            "-c", "core.hooksPath=", "commit", "-q", "-m", message,
-        ]);
+        command(
+            path,
+            &[
+                "-c",
+                "user.name=X",
+                "-c",
+                "user.email=x@invalid.example",
+                "-c",
+                "core.hooksPath=",
+                "commit",
+                "-q",
+                "-m",
+                message,
+            ],
+        );
     }
 
     #[test]
@@ -192,11 +236,15 @@ mod tests {
         let before = commit(&project.root).unwrap();
         let result = preview(&manager, &project, &task).unwrap();
         assert!(result.clean);
+        assert!(result.primary_dirty);
         assert!(result.merge_tree.is_some());
         assert!(result.changed_files.contains(&"backend.rs".into()));
         assert!(result.needs_explicit_merge_approval);
         assert_eq!(commit(&project.root).unwrap(), before);
-        assert_eq!(fs::read_to_string(project.root.join("local_notes.txt")).unwrap(), "do not delete\n");
+        assert_eq!(
+            fs::read_to_string(project.root.join("local_notes.txt")).unwrap(),
+            "do not delete\n"
+        );
     }
 
     #[test]
@@ -212,7 +260,23 @@ mod tests {
         assert!(result.conflict_count >= 1);
         assert!(result.merge_tree.is_none());
         assert_eq!(commit(&project.root).unwrap(), head);
-        assert_eq!(fs::read_to_string(project.root.join("shared.txt")).unwrap(), "owner content\n");
+        assert_eq!(
+            fs::read_to_string(project.root.join("shared.txt")).unwrap(),
+            "owner content\n"
+        );
+    }
+
+    #[test]
+    fn changed_files_list_only_agent_branch_changes() {
+        let (_dir, project, manager, task) = fixture();
+        fs::write(task.path().join("task_only.rs"), "agent work\n").unwrap();
+        commit_worktree(task.path(), "task edit");
+        fs::write(project.root.join("owner_only.rs"), "owner work\n").unwrap();
+        commit_worktree(&project.root, "owner edit");
+        let result = preview(&manager, &project, &task).unwrap();
+        assert!(result.clean);
+        assert!(result.changed_files.contains(&"task_only.rs".into()));
+        assert!(!result.changed_files.contains(&"owner_only.rs".into()));
     }
 
     #[test]

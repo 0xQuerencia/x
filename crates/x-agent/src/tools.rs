@@ -438,21 +438,38 @@ impl Action {
                 {
                     Ok(vec![windows_explorer(resolve)?, url])
                 }
-                #[cfg(not(windows))]
+                #[cfg(target_os = "macos")]
+                {
+                    let opener = resolve("open")
+                        .or_else(|| {
+                            std::path::Path::new("/usr/bin/open")
+                                .is_file()
+                                .then(|| "/usr/bin/open".into())
+                        })
+                        .ok_or("macOS open utility is unavailable")?;
+                    Ok(vec![opener, url])
+                }
+                #[cfg(all(not(windows), not(target_os = "macos")))]
                 {
                     let opener =
                         resolve("xdg-open").ok_or("xdg-open not found (install xdg-utils)")?;
                     Ok(vec![opener, url])
                 }
             } else {
+                #[cfg(target_os = "macos")]
+                if let Some(app) = crate::wm::apps::installed(browser) {
+                    let mut command = crate::wm::apps::launch_argv(&app, resolve)?;
+                    command.push(url);
+                    return Ok(command);
+                }
                 Ok(vec![exe_for(browser, resolve)?, url])
             }
         };
         match self {
             Self::App { target } => {
-                // On Windows, installed Start Menu shortcuts take precedence
+                // Prefer installed native shortcuts/bundles on Windows and macOS
                 // over Linux-oriented built-in PATH aliases.
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "macos"))]
                 if let Some(app) = crate::wm::apps::installed(target) {
                     return crate::wm::apps::launch_argv(&app, resolve);
                 }
