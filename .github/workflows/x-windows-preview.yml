@@ -1,6 +1,6 @@
 name: X Windows 11 preview (unsigned)
 
-# Windows 11 preview: produce an unsigned X-branded binary, verify its checksum,
+# Windows 11 preview: rebuild on executable-relevant changes, verify its checksum,
 # then attach it to a clearly labeled GitHub *prerelease*. No installer, signed
 # production release or updater feed is published.
 on:
@@ -9,11 +9,16 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/x-windows-preview.yml"
-      - "crates/x-agent/src/browser_tab.rs"
-      - "crates/x-agent/src/windows_input.rs"
-      - "crates/x-agent/src/wm/tests.rs"
-      - "src/windows/input.rs"
-      - "src/windows/input/rearm.rs"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain*"
+      - "build.rs"
+      - "crates/**"
+      - "src/**"
+      - "resources/**"
+      - "assets/**"
+      - "scripts/build*"
 
 permissions:
   contents: read
