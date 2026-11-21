@@ -51,6 +51,7 @@ impl Grants {
     /// Only the trusted native approval handler should issue a receipt.
     /// `owner_approved` must reflect a real, current user interaction and is
     /// intentionally inaccessible to downstream adapters and model output.
+    #[allow(dead_code)] // Becomes used when the native approval bridge is wired.
     pub(crate) fn issue(
         &self,
         permission: Permission,
@@ -208,6 +209,39 @@ mod tests {
         assert!(grants.revoke(&receipt).unwrap());
         assert!(!grants.revoke(&receipt).unwrap());
         assert!(grants.consume(&receipt, Permission::RunTests, &target).is_err());
+    }
+
+    #[test]
+    fn one_use_receipt_cannot_be_consumed_by_parallel_workers() {
+        let grants = std::sync::Arc::new(Grants::default());
+        let scope = task();
+        let receipt = grants
+            .issue(
+                Permission::StartHarness,
+                scope.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        let handles = (0..8)
+            .map(|_| {
+                let grants = std::sync::Arc::clone(&grants);
+                let scope = scope.clone();
+                std::thread::spawn(move || {
+                    grants
+                        .consume(&receipt, Permission::StartHarness, &scope)
+                        .is_ok()
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            handles
+                .into_iter()
+                .filter(|handle| handle.join().unwrap())
+                .count(),
+            1
+        );
     }
 
     #[test]
