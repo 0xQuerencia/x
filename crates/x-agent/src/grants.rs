@@ -51,7 +51,6 @@ impl Grants {
     /// Only the trusted native approval handler should issue a receipt.
     /// `owner_approved` must reflect a real, current user interaction and is
     /// intentionally inaccessible to downstream adapters and model output.
-    #[allow(dead_code)] // Becomes used when the native approval bridge is wired.
     pub(crate) fn issue(
         &self,
         permission: Permission,
@@ -101,6 +100,33 @@ impl Grants {
         }
         guard.insert(id, Grant { scope, permission, expires_at, remaining: uses });
         Ok(Receipt { id })
+    }
+
+    /// Checks an exact scope at preflight without spending the approval.
+    /// Consumption must still happen immediately before an action starts.
+    pub fn check(
+        &self,
+        receipt: &Receipt,
+        permission: Permission,
+        scope: &Scope,
+    ) -> Result<(), String> {
+        let guard = self
+            .grants
+            .lock()
+            .map_err(|_| "Grant storage is unavailable")?;
+        let grant = guard
+            .get(&receipt.id)
+            .ok_or("Approval is missing, exhausted or revoked")?;
+        if Instant::now() >= grant.expires_at {
+            return Err("Approval has expired".into());
+        }
+        if grant.remaining == 0
+            || grant.permission != permission
+            || &grant.scope != scope
+        {
+            return Err("Approval does not cover this target or operation".into());
+        }
+        Ok(())
     }
 
     /// Consumes one use only for an exact permission and scope match.
