@@ -375,6 +375,7 @@ pub(super) struct Row {
 pub(in crate::rune_ui) struct Manager {
     rows: Vec<Row>,
     graphs: Vec<GraphEntry>,
+    graph_source: TextEdit,
     loaded: Option<std::time::Instant>,
     /// Set by anything that changes the files, so the list reloads at once.
     dirty: bool,
@@ -523,6 +524,42 @@ fn list(p: Paint, mgr: &Manager) -> El {
                 move |ui: &mut Ui, _| {
                     ui.agent.workflows.note = None;
                     ui.agent.workflows.editor = Some(WfEditor::blank(&taken));
+                },
+            )),
+    );
+    let source = input(
+        p,
+        &mgr.graph_source,
+        "wf-graph-source".into(),
+        "Path to a version 2 coding graph JSON file",
+        |ui: &mut Ui| &mut ui.agent.workflows.graph_source,
+    );
+    list = list.child(
+        row()
+            .key("wf-graph-import-row")
+            .gap(8.0)
+            .center_y()
+            .child(source)
+            .child(button(
+                p,
+                "wf-graph-import",
+                tr("Import coding graph"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _| {
+                    let path = ui.agent.workflows.graph_source.text.trim().to_string();
+                    let result = if path.is_empty() {
+                        Err("Select a JSON file path to import".to_string())
+                    } else {
+                        store().import_graph(std::path::Path::new(&path))
+                    };
+                    note(
+                        ui,
+                        result.is_ok(),
+                        result.map_or_else(
+                            |error| error,
+                            |graph| format!("Imported {}", graph.name),
+                        ),
+                    );
                 },
             )),
     );
