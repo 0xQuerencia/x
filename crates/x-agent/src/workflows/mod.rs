@@ -4,6 +4,7 @@
 
 pub mod dag;
 pub mod engine;
+pub mod harness_exec;
 pub mod model;
 pub mod paths;
 pub mod recovery;
