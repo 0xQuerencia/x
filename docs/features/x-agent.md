@@ -231,6 +231,21 @@ merge the result; **no such automatic operation is enabled here**. Git may
 write unreachable preview tree objects to its object database, but does not
 update HEAD, the index or worktree files.
 
+### Scoped approval receipts (development)
+
+X has a process-local, deny-by-default grant store for exact project metadata
+reads, individually approved harness tasks, and individually approved test
+runs. Task grants are tied to a project ID, run ID and node ID, expire after
+at most 60 seconds, and can be consumed **once only**. Project metadata grants
+are shorter-lived and use-limited. Revocation or restarting X invalidates
+outstanding receipts. A grant cannot authorize deletion, merging, secret
+access, screen capture or external transfers.
+
+This is the **policy contract only**: the native approval pane does not yet
+issue receipts to the harness scheduler. Existing Default / Autonomous mode
+behavior is unchanged. No workflow text, model response or JSON import may
+create an approval receipt.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
