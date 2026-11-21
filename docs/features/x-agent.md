@@ -323,9 +323,12 @@ issuance happens inside the service after the owner approves.
 ### Approved tests in owned worktrees (development)
 
 X's test verifier accepts only typed presets for Cargo, npm, pnpm, pytest and
-Go. It revalidates the worktree's ownership before running any test, requires
-fresh owner approval, executes without a shell, enforces a 120-second deadline
-and propagates Stop to the owned subprocess. Exit success is **Verified for that
+Go. It revalidates the worktree's ownership and now requires a live, one-use
+`RunTests` receipt matching the exact project, run, task, worktree and test preset
+before launching a process. A boolean flag alone cannot authorize tests. It
+executes without a shell, enforces a 120-second deadline and propagates Stop
+to the owned subprocess. The test runner is not yet wired to the native
+operator approval action, so this hardening alone does not expose a test button. Exit success is **Verified for that
 test suite only**; failure is **Failed**; missing, interrupted or timed-out
 evidence is **Unverified**. No process output or secrets are retained in the
 evidence record.
