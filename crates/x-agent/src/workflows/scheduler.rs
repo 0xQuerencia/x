@@ -42,6 +42,12 @@ pub struct Report {
 /// approval before the scheduler can run. There is intentionally no default.
 pub trait Executor: Send + Sync + 'static {
     fn authorized(&self, node: &Node) -> bool;
+    /// Only a trusted executor that independently verified an isolated,
+    /// owned Git checkout may return a worktree resource key. Graph JSON and
+    /// model output alone must never grant isolation.
+    fn verified_worktree_key(&self, _node: &Node) -> Option<String> {
+        None
+    }
     fn execute(&self, node: Node, stop: Cancellation) -> Outcome;
 }
 
@@ -49,12 +55,36 @@ pub trait Executor: Send + Sync + 'static {
 enum Resource {
     Desktop,
     Project(String),
+    IsolatedWorktree(String, String),
 }
 
-fn resource(node: &Node) -> Resource {
+impl Resource {
+    fn conflicts_with(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Desktop, Self::Desktop) => true,
+            (Self::Project(a), Self::Project(b)) => a == b,
+            (Self::Project(a), Self::IsolatedWorktree(b, _))
+            | (Self::IsolatedWorktree(b, _), Self::Project(a)) => a == b,
+            (Self::IsolatedWorktree(a, x), Self::IsolatedWorktree(b, y)) => a == b && x == y,
+            _ => false,
+        }
+    }
+}
+
+fn resource(node: &Node, executor: &dyn Executor) -> Resource {
     match &node.job {
         Job::Desktop { .. } => Resource::Desktop,
-        Job::Harness { project_id, .. } => Resource::Project(project_id.clone()),
+        Job::Harness { project_id, .. } => executor
+            .verified_worktree_key(node)
+            .filter(|key| {
+                !key.is_empty()
+                    && key.len() <= 80
+                    && key.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+            })
+            .map_or_else(
+                || Resource::Project(project_id.clone()),
+                |key| Resource::IsolatedWorktree(project_id.clone(), key),
+            ),
     }
 }
 
@@ -126,8 +156,11 @@ pub fn run(
                 if active.len() >= parallel {
                     break;
                 }
-                let owned_resource = resource(node);
-                if resources.contains(&owned_resource) {
+                let owned_resource = resource(node, executor.as_ref());
+                if resources
+                    .iter()
+                    .any(|existing| existing.conflicts_with(&owned_resource))
+                {
                     continue;
                 }
                 // Revoked permissions must also be checked right before dispatch.
@@ -168,7 +201,7 @@ pub fn run(
             return Err("The scheduler lost an owned worker".into());
         };
         active.remove(&index);
-        resources.remove(&resource(&graph.nodes[index]));
+        resources.remove(&resource(&graph.nodes[index], executor.as_ref()));
         finished[index] = Some(outcome);
         if matches!(outcome, Outcome::Failed | Outcome::Unverified)
             && graph.nodes[index].on_failure == super::model::OnFailure::Stop
