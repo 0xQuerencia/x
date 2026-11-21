@@ -253,6 +253,10 @@ it does not expose coding prompts, request fingerprints or provider evidence.
 X never retries or marks these jobs successful without independently
 checking delivery and obtaining fresh approval.
 
+The Rune workflow manager also shows interrupted coding claims, if any.
+It displays only the node/run identifiers and the need for manual
+reconciliation. Reading this panel never replays a harness request.
+
 ### Safe merge-back previews (development)
 
 The Git integration module checks an owned task worktree and computes a
