@@ -1914,6 +1914,47 @@ mod tests {
     use crate::dictation::vocabulary::VocabularyEntry;
 
     #[test]
+    fn registered_project_cli_commands_are_exact_and_nonexecuting() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed = Args::try_parse_from(["hex", "agent", "projects", "use", "Chamber"])
+            .unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Projects {
+                    command: ProjectCli::Use { query, .. }
+                }
+            } if query == "Chamber"
+        ));
+        let parsed = Args::try_parse_from([
+            "hex",
+            "agent",
+            "projects",
+            "alias-add",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "CA workspace",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Projects {
+                    command: ProjectCli::AliasAdd { alias, .. }
+                }
+            } if alias == "CA workspace"
+        ));
+        assert!(Args::try_parse_from(["hex", "agent", "projects", "use"]).is_err());
+        assert!(Args::try_parse_from(["hex", "agent", "projects", "alias-remove", "id"]).is_err());
+    }
+
+    #[test]
     fn openrouter_key_validation_never_echoes_secret_values() {
         assert_eq!(
             validate_agent_key(b"sk-test-valid\n").unwrap(),
