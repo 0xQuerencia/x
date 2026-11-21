@@ -31,7 +31,9 @@ fn sessions(service: &Service, resume: Option<String>) -> Result<(Vec<Session>, 
             service.select_session(selected.clone())?;
             Ok((vec![selected], true))
         } else {
-            Ok((read_sessions(get, &workspace)?, false))
+            let sessions = read_sessions(get, &workspace)?;
+            service.record_listed_sessions(&workspace, sessions.clone())?;
+            Ok((sessions, false))
         }
     })
 }

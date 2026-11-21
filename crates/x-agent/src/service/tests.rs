@@ -659,7 +659,7 @@ fn fake_opencode(dir: &std::path::Path, body: &str) -> PathBuf {
     std::fs::write(
         &p,
         format!(
-            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then printf '%s\\n' '--standalone' '--dir' '--session' '--format json'; exit 0; fi\n{body}\n"
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'opencode v2.2.7'; exit 0; fi\nif [ \"$2\" = \"--help\" ]; then printf '%s\\n' '--standalone' '--dir' '--session' '--format json'; exit 0; fi\n{body}\n"
         ),
     )
     .unwrap();
@@ -1886,4 +1886,77 @@ fn stale_named_work_never_starts_a_new_session() {
     assert!(failed.accepted_session.is_none());
     assert!(!work.path().join("should-not-run").exists());
     assert!(!workspace.join("should-not-run").exists());
+}
+
+#[test]
+fn spoken_selection_uses_the_displayed_session_and_denies_all_tools() {
+    let (s, _dir, repo) = work_rig(
+        r#"printf '%s' "$OPENCODE_CONFIG_CONTENT" > policy.json
+echo '{"type":"text","sessionID":"ses_first","part":{"text":"received selection"}}'"#,
+    );
+    let s = s.with_session_verifier(|target| {
+        assert_eq!(target.id.as_str(), "ses_first");
+        Ok(())
+    });
+    let (context, _, _) = crate::context::tests::editor();
+    s.set_context(Arc::new(context));
+    s.set_trust_actions(true);
+    let workspace = s.workspace_path().unwrap();
+    let list = ["ses_first", "ses_second"]
+        .into_iter()
+        .map(|id| {
+            harness::Session::from_open_code(
+                id.into(),
+                "A displayed session",
+                &workspace,
+                &workspace,
+                1,
+            )
+            .unwrap()
+        })
+        .collect();
+    s.record_listed_sessions(&workspace, list).unwrap();
+
+    let command = "Friday, give this to session one";
+    assert!(!s.needs_model(command));
+    let task = s.plan_spoken(command, Mode::Actions).unwrap();
+    assert_eq!(task.mode, Mode::Work);
+    assert_eq!(task.session.as_ref().unwrap().id.as_str(), "ses_first");
+    assert_eq!(task.work_access, harness::WorkAccess::SelectionOnly);
+    assert!(task.text.contains(crate::context::tests::ERROR));
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(!repo.join("policy.json").exists());
+    s.approve(task.id).unwrap();
+    let result = wait_for(&s, |snapshot| !snapshot.phase.is_busy());
+    assert_eq!(result.phase, Phase::Completed, "{:?}", result.task);
+    let raw = std::fs::read_to_string(repo.join("policy.json")).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap(),
+        serde_json::json!({
+            "permissions":[{"action":"*","resource":"*","effect":"deny"}],
+            "policies":[{"action":"tool.use","resource":"*","effect":"deny"}],
+        })
+    );
+}
+
+#[test]
+fn a_closed_selection_window_refuses_the_spoken_handoff() {
+    let (s, _dir, repo) = work_rig("touch should-not-run");
+    let s = s.with_session_verifier(|_| Ok(()));
+    let (context, windows, _) = crate::context::tests::editor();
+    s.set_context(Arc::new(context));
+    let workspace = s.workspace_path().unwrap();
+    let session =
+        harness::Session::from_open_code("ses_scoped".into(), "Test", &workspace, &workspace, 1)
+            .unwrap();
+    s.record_listed_sessions(&workspace, vec![session]).unwrap();
+    let task = s
+        .plan_spoken("give this to session one", Mode::Actions)
+        .unwrap();
+    windows.close("0xa");
+    s.approve(task.id).unwrap();
+    let result = wait_for(&s, |snapshot| !snapshot.phase.is_busy());
+    assert_eq!(result.phase, Phase::Failed);
+    assert!(result.task.unwrap().error.unwrap().contains("was closed"));
+    assert!(!repo.join("should-not-run").exists());
 }
