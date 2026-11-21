@@ -235,6 +235,14 @@ Tests use isolated real Git worktrees and fixture provider executables to
 check approval, replay refusal, changed configuration, and dirty-checkout
 preservation. Code correctness requires separate verification.
 
+### Coding workflow result history (development)
+
+After an approved graph run, X saves an outcome-only summary in its private
+workflow directory. Run `hex agent workflow last-graph <id>` to inspect the
+last per-node verified, failed, cancelled or unverified status. Private
+prompts, command output, provider messages and request fingerprints are
+excluded. This is a delivery report, not proof that generated code is correct.
+
 ### Coding workflows in Rune (development)
 
 The Agent pane's Workflows view lists imported v2 coding graphs separately
