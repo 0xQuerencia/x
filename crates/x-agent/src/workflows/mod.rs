@@ -2,6 +2,7 @@
 //! run by name or trigger phrase. See [`model`] for the format, [`engine`] for execution,
 //! [`store`] for the files on disk.
 
+pub mod dag;
 pub mod engine;
 pub mod model;
 pub mod paths;
