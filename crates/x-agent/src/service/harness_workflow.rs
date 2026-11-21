@@ -12,7 +12,7 @@ use crate::workflows::dag::{Graph, Job};
 use crate::workflows::harness_exec::{
     ApprovedHarnessExecutor, Assignment, Proof, approval_scope, to_kind,
 };
-use crate::workflows::recovery::Journal;
+use crate::workflows::recovery::{Claim, Journal};
 use crate::workflows::scheduler::{self, Outcome};
 use crate::worktrees::{Manager, OwnedWorktree};
 
@@ -38,7 +38,48 @@ struct PlannedJob {
     adapter: Arc<dyn Adapter>,
 }
 
+fn reconciliation_preview(mut claims: Vec<Claim>) -> serde_json::Value {
+    claims.sort_by(|a, b| {
+        a.run_id
+            .cmp(&b.run_id)
+            .then_with(|| a.node_id.cmp(&b.node_id))
+    });
+    let jobs = claims
+        .into_iter()
+        .map(|claim| {
+            serde_json::json!({
+                "run_id": claim.run_id,
+                "node_id": claim.node_id,
+                "status": "requires_reconciliation",
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "count": jobs.len(),
+        "jobs": jobs,
+        "executed": false,
+        "retried": false,
+        "note": "Check provider delivery independently before authorizing a new attempt",
+    })
+}
+
 impl Service {
+    /// Read unresolved coding claims without exposing prompts, request hashes or
+    /// provider evidence IDs. This never retries, settles or starts any job.
+    pub fn uncertain_coding_jobs(&self) -> Result<serde_json::Value, String> {
+        let (dir, _) = self
+            .workflow_dirs
+            .lock()
+            .map_err(|_| "Workflow storage is unavailable")?
+            .clone()
+            .ok_or("Workflow storage is not configured")?;
+        let support = dir
+            .parent()
+            .ok_or("Could not locate X's local data directory")?;
+        let claims = Journal::new(support.join("workflow-journal")).uncertain()?;
+        Ok(reconciliation_preview(claims))
+    }
+
     pub fn plan_graph_workflow(&self, id: &str) -> Result<Task, String> {
         let phase = self.lock().phase;
         if phase.is_busy() {
@@ -135,6 +176,15 @@ impl Service {
         let result = self.run_approved_graph(&workflow, stop);
         match result {
             Ok(report) => {
+                if let Err(error) = self
+                    .workflow_store()
+                    .record_graph_last(&workflow.graph.id, &report)
+                {
+                    self.emit(
+                        "warning",
+                        &format!("Could not save coding workflow outcome: {error}"),
+                    );
+                }
                 let mut complete = 0;
                 for (index, node) in report.nodes.iter().enumerate() {
                     let status = match node.outcome {
@@ -288,5 +338,52 @@ impl Service {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+    use crate::workflows::recovery::State;
+
+    #[test]
+    fn interrupted_jobs_preview_has_no_request_fingerprint_or_provider_evidence() {
+        let run_id = Uuid::new_v4();
+        let claims = vec![
+            Claim {
+                run_id,
+                node_id: "z_back".into(),
+                request_fingerprint: "private-coding-task-fingerprint".into(),
+                attempt: 1,
+                state: State::Claimed,
+                evidence_id: Some("ses_private_provider_id".into()),
+            },
+            Claim {
+                run_id,
+                node_id: "a_front".into(),
+                request_fingerprint: "another-private-fingerprint".into(),
+                attempt: 1,
+                state: State::Claimed,
+                evidence_id: None,
+            },
+        ];
+        let preview = reconciliation_preview(claims);
+        assert_eq!(preview["count"], 2);
+        assert_eq!(preview["jobs"][0]["node_id"], "a_front");
+        assert_eq!(preview["jobs"][1]["node_id"], "z_back");
+        assert_eq!(preview["executed"], false);
+        assert_eq!(preview["retried"], false);
+        let rendered = preview.to_string();
+        assert!(!rendered.contains("fingerprint"));
+        assert!(!rendered.contains("ses_private_provider_id"));
+        assert!(!rendered.contains("private-coding-task"));
+    }
+
+    #[test]
+    fn empty_reconciliation_preview_is_safe_and_nonexecuting() {
+        let preview = reconciliation_preview(vec![]);
+        assert_eq!(preview["count"], 0);
+        assert_eq!(preview["jobs"].as_array().unwrap().len(), 0);
+        assert_eq!(preview["retried"], false);
     }
 }

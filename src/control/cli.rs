@@ -509,7 +509,7 @@ pub enum AgentCommand {
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "preview", "permissions", "run", "run-graph", "last", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "preview", "permissions", "uncertain", "run", "run-graph", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
         command: String,
         /// A workflow id, or a file path for import.
         #[arg(default_value = "")]
@@ -1923,6 +1923,25 @@ mod tests {
     use super::*;
     use crate::control::{StatusReport, settings::SettingValue};
     use crate::dictation::vocabulary::VocabularyEntry;
+
+    #[test]
+    fn interrupted_workflow_status_has_a_separate_read_only_cli_command() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed = Args::try_parse_from(["hex", "agent", "workflow", "uncertain"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Workflow { command, value, .. }
+            } if command == "uncertain" && value.is_empty()
+        ));
+    }
 
     #[test]
     fn workflow_permission_review_requires_an_explicit_id() {

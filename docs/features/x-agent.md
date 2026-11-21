@@ -257,6 +257,40 @@ Tests use isolated real Git worktrees and fixture provider executables to
 check approval, replay refusal, changed configuration, and dirty-checkout
 preservation. Code correctness requires separate verification.
 
+### Coding workflow result history (development)
+
+After an approved graph run, X saves an outcome-only summary in its private
+workflow directory. Run `hex agent workflow last-graph <id>` to inspect the
+last per-node verified, failed, cancelled or unverified status. Private
+prompts, command output, provider messages and request fingerprints are
+excluded. This is a delivery report, not proof that generated code is correct.
+
+### Coding workflows in Rune (development)
+
+The Agent pane's Workflows view lists imported v2 coding graphs separately
+from sequential desktop workflows. Their names and job counts appear without
+private coding goals. "Review & run" opens the existing explicit approval
+preview; it does not start jobs directly. Mixed desktop/harness graphs are
+listed but not launchable by the coding runner. Saving a legacy workflow under
+an existing graph ID is refused rather than overwriting the graph.
+
+### Interrupted coding jobs (development)
+
+Run `hex agent workflow uncertain` to inspect workflow jobs that the
+durable journal still marks as claimed after a crash, disconnect or restart.
+The read-only result includes the run ID, node ID and reconciliation status;
+it does not expose coding prompts, request fingerprints or provider evidence.
+X never retries or marks these jobs successful without independently
+checking delivery and obtaining fresh approval.
+
+The Rune coding-workflow cards also show the saved count of verified
+delivery outcomes from the previous run (or a stopped state). This is a
+read-only status, not proof of code correctness.
+
+The Rune workflow manager also shows interrupted coding claims, if any.
+It displays only the node/run identifiers and the need for manual
+reconciliation. Reading this panel never replays a harness request.
+
 ### Safe merge-back previews (development)
 
 The Git integration module checks an owned task worktree and computes a
