@@ -53,6 +53,18 @@ pub fn service() -> &'static Service {
             }
             if let Some(home) = dirs::home_dir() {
                 service.configure_session_storage(dir.clone(), home.clone());
+                let projects = x_agent::projects::Registry::new(dir.clone(), home.clone());
+                match projects.last_selected() {
+                    Ok(Some(project)) => {
+                        if let Some(path) = project.root.to_str() {
+                            if let Err(error) = service.set_workspace(path) {
+                                tracing::warn!(%error, "could not restore X project");
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => tracing::warn!(%error, "could not read saved X project"),
+                }
                 service.set_workflow_dirs(dir.join("workflows"), home);
             }
         }
