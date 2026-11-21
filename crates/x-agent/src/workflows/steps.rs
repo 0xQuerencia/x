@@ -334,6 +334,9 @@ fn run_phrase(phrase: &str, host: &dyn Host) -> StepResult {
     };
     let mut verified = true;
     for action in &actions {
+        if host.cancelled() {
+            return StepResult::cancelled();
+        }
         if let Err(e) = action.clone().validate() {
             return StepResult::failed(e);
         }
@@ -341,7 +344,11 @@ fn run_phrase(phrase: &str, host: &dyn Host) -> StepResult {
             verified = false;
         }
         if let Err(e) = host.launch(action) {
-            return StepResult::failed(e);
+            return if host.cancelled() {
+                StepResult::cancelled()
+            } else {
+                StepResult::failed(e)
+            };
         }
     }
     if verified {

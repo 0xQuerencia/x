@@ -10,9 +10,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use crate::cancellation::Cancellation;
 use crate::context::{self, Context, Engine};
 use crate::hexcli::{Stt, SttError};
-use crate::opencode::{self, Canceller, Run, RunConfig, RunStatus};
+use crate::opencode::{self, Run, RunConfig, RunStatus};
 use crate::phase::Phase;
 use crate::tools::{self, Action, Risk};
 
@@ -156,14 +157,16 @@ pub trait Launcher: Send + Sync {
         &self,
         action: &Action,
         _target: Option<&crate::wm::CloseTarget>,
+        stop: &Cancellation,
     ) -> Result<String, String> {
+        stop.check()?;
         self.launch(action)
     }
 
     /// Waits for a window other than `before` to take focus, so typing lands in the app
     /// that was just launched. Errors when none appears.
-    fn await_launched_focus(&self) -> Result<(), String> {
-        Ok(())
+    fn await_launched_focus(&self, stop: &Cancellation) -> Result<(), String> {
+        stop.check()
     }
 }
 
@@ -224,12 +227,13 @@ impl Launcher for RealLauncher {
         &self,
         action: &Action,
         target: Option<&crate::wm::CloseTarget>,
+        stop: &Cancellation,
     ) -> Result<String, String> {
-        action.execute_for_target(target)
+        action.execute_for_target(target, stop)
     }
 
-    fn await_launched_focus(&self) -> Result<(), String> {
-        tools::wait_for_launched_focus()
+    fn await_launched_focus(&self, stop: &Cancellation) -> Result<(), String> {
+        tools::wait_for_launched_focus_scoped(stop)
     }
 }
 
@@ -240,8 +244,8 @@ struct State {
     seq: u64,
     serial: u64,
     actions: Vec<ActionRequest>,
-    canceller: Option<Canceller>,
-    stop_requested: bool,
+    stop: Cancellation,
+    model_stop: Option<Cancellation>,
     voice_mode: Mode,
     workspace: Option<PathBuf>,
     autonomy_mode: AutonomyMode,
@@ -269,6 +273,18 @@ struct PlanOptions {
     allow_command: Option<String>,
     private_context: bool,
     new_workspace: Option<PathBuf>,
+    model_plan: Option<ModelPlanning>,
+}
+
+struct ModelPlanning {
+    stop: Cancellation,
+    service: Service,
+}
+
+impl Drop for ModelPlanning {
+    fn drop(&mut self) {
+        self.service.lock().model_stop = None;
+    }
 }
 
 struct Guard {
@@ -310,8 +326,8 @@ impl Service {
             seq: 0,
             serial: 0,
             actions: vec![],
-            canceller: None,
-            stop_requested: false,
+            stop: Cancellation::default(),
+            model_stop: None,
             autonomy_mode: AutonomyMode::Default,
             review: Review::Required,
             ledger: Ok(None),
@@ -368,7 +384,13 @@ impl Service {
     pub fn snapshot(&self, since: u64) -> Snapshot {
         let s = self.lock();
         Snapshot {
-            phase: s.phase,
+            phase: if !s.phase.is_busy()
+                && s.model_stop.as_ref().is_some_and(|stop| !stop.requested())
+            {
+                Phase::Planning
+            } else {
+                s.phase
+            },
             task: s.task.clone(),
             events: s.events.iter().filter(|e| e.n > since).cloned().collect(),
             workspace: s.workspace.as_ref().map(|p| p.display().to_string()),
@@ -518,16 +540,33 @@ impl Service {
 
     /// Rules first: they are instant and never wrong about what they accept. Only speech
     /// they do not understand goes to the model, outside the state lock.
-    fn model_plan(&self, text: &str, smart: bool) -> Result<Option<Vec<Action>>, String> {
+    fn model_plan(
+        &self,
+        text: &str,
+        smart: bool,
+    ) -> Result<Option<(Vec<Action>, ModelPlanning)>, String> {
         let Some(planner) = self.planner.lock().ok().and_then(|p| p.clone()) else {
             return Ok(None);
         };
-        if self.lock().phase.is_busy() {
-            return Ok(None);
+        let stop = Cancellation::default();
+        {
+            let mut state = self.lock();
+            if state.phase.is_busy() || state.model_stop.is_some() {
+                return Ok(None);
+            }
+            state.model_stop = Some(stop.clone());
         }
+        let planning = ModelPlanning {
+            stop,
+            service: self.clone(),
+        };
         self.emit("info", &format!("Asking {} to plan", planner.name()));
-        match planner.plan(text, smart) {
-            Ok(tools::Reply::Steps(actions)) if !actions.is_empty() => Ok(Some(actions)),
+        let result = planner.plan(text, smart);
+        planning.stop.check()?;
+        match result {
+            Ok(tools::Reply::Steps(actions)) if !actions.is_empty() => {
+                Ok(Some((actions, planning)))
+            }
             Ok(tools::Reply::Dictation) => Err(tools::NOT_A_COMMAND.into()),
             Ok(_) => Err(format!("X can't do that yet: {}", text.trim())),
             Err(error) => {
@@ -543,6 +582,26 @@ impl Service {
             self.is_edit_command(text) || context::commands::parse_utterance(text).is_some();
         spoken_edit
             || tools::plan_rules(text).is_none() && self.planner.lock().is_ok_and(|p| p.is_some())
+    }
+
+    /// Recognize explicit Stop requests locally before invoking a planner.
+    pub fn request_stop_from_text(&self, text: &str) -> bool {
+        let words = tools::strip_wake_word(text);
+        let command = words
+            .trim_end_matches(['.', '!', '?'])
+            .trim()
+            .to_ascii_lowercase();
+        if !matches!(command.as_str(), "stop" | "stop task" | "stop the task") {
+            return false;
+        }
+        let active = {
+            let state = self.lock();
+            state.phase.is_busy() || state.model_stop.is_some()
+        };
+        if active {
+            self.cancel();
+        }
+        active
     }
 
     pub fn plan(&self, text: &str, mode: Mode) -> Result<Task, String> {
@@ -572,6 +631,13 @@ impl Service {
         smart: bool,
         source: InputSource,
     ) -> Result<Task, String> {
+        if self.request_stop_from_text(text) {
+            return self
+                .lock()
+                .task
+                .clone()
+                .ok_or_else(|| "Stop requested".into());
+        }
         let planning_started = Instant::now();
         if mode == Mode::Actions {
             if let Some(cmd) = context::commands::parse_utterance(text) {
@@ -610,6 +676,7 @@ impl Service {
             return self.plan_workflow(text.trim(), found?);
         }
         let mut preset = None;
+        let mut model_plan = None;
         let mut origin = Origin::Quick;
         if mode == Mode::Actions {
             preset = tools::plan_rules(text);
@@ -618,29 +685,29 @@ impl Service {
             } else {
                 Origin::Decider
             };
-            if preset.is_none() {
-                preset = self.model_plan(text.trim(), smart)?;
+            if preset.is_none()
+                && let Some((actions, planning)) = self.model_plan(text.trim(), smart)?
+            {
+                preset = Some(actions);
+                model_plan = Some(planning);
             }
             if preset.is_none() && smart {
                 return Err(tools::NOT_A_COMMAND.into());
             }
         }
+        let options = PlanOptions {
+            origin,
+            source,
+            model_plan,
+            ..PlanOptions::default()
+        };
         if let Some([Action::Session { goal }]) = preset.as_deref() {
-            return self.plan_session(&goal.clone());
+            return self.plan_session(goal, options);
         }
         if matches!(preset.as_deref(), Some([Action::Computer { .. }])) {
             self.check_screen_may_leave()?;
         }
-        let task = self.plan_task(
-            text,
-            mode,
-            preset,
-            PlanOptions {
-                origin,
-                source,
-                ..PlanOptions::default()
-            },
-        )?;
+        let task = self.plan_task(text, mode, preset, options)?;
         self.emit(
             "timing",
             &format!(
@@ -665,7 +732,7 @@ impl Service {
     }
 
     /// Preview a fresh project folder before creating it or starting Work.
-    fn plan_session(&self, goal: &str) -> Result<Task, String> {
+    fn plan_session(&self, goal: &str, options: PlanOptions) -> Result<Task, String> {
         let root = match self.session_root.lock().ok().and_then(|r| r.clone()) {
             Some(root) => root,
             None => dirs::home_dir()
@@ -683,7 +750,7 @@ impl Service {
             None,
             PlanOptions {
                 new_workspace: Some(dir),
-                ..PlanOptions::default()
+                ..options
             },
         )
     }
@@ -729,6 +796,9 @@ impl Service {
         let mut s = self.lock();
         if s.phase.is_busy() {
             return Err(busy(s.phase));
+        }
+        if let Some(planning) = &options.model_plan {
+            planning.stop.check()?;
         }
         let id = s.serial + 1;
         let (steps, actions, workspace) = match mode {
@@ -849,7 +919,7 @@ impl Service {
     }
 
     fn approve_from(&self, task_id: u64, approval: Approval) -> Result<(), String> {
-        let (task, actions, is_edit, is_workflow) = {
+        let (task, actions, is_edit, is_workflow, stop) = {
             let mut s = self.lock();
             let matches_task = s.task.as_ref().is_some_and(|t| t.id == task_id);
             if !matches_task || s.phase != Phase::AwaitingApproval {
@@ -879,20 +949,21 @@ impl Service {
                 emit(&mut s, "approval", &format!("approved task {task_id}"));
             }
             set_phase(&mut s, Phase::Running);
-            s.stop_requested = false;
+            s.stop = Cancellation::default();
             (
                 s.task.clone().ok_or("no task")?,
                 s.actions.clone(),
                 s.edit.is_some(),
                 s.workflow.is_some(),
+                s.stop.clone(),
             )
         };
         let me = self.clone();
         thread::spawn(move || match task.mode {
             Mode::Actions if is_edit => me.run_edit(&task),
             Mode::Actions if is_workflow => me.run_workflow(),
-            Mode::Actions => me.run_actions(&actions),
-            Mode::Work => me.run_work(&task),
+            Mode::Actions => me.run_actions(&actions, &stop),
+            Mode::Work => me.run_work(&task, &stop),
         });
         Ok(())
     }
@@ -935,7 +1006,7 @@ impl Service {
 
     fn claim_action(&self, id: ActionId) -> Result<bool, String> {
         let mut state = self.lock();
-        if state.stop_requested || state.phase != Phase::Running {
+        if state.stop.requested() || state.phase != Phase::Running {
             return Ok(false);
         }
         let Some(step) = state
@@ -957,7 +1028,7 @@ impl Service {
         Ok(true)
     }
 
-    fn run_actions(&self, actions: &[ActionRequest]) {
+    fn run_actions(&self, actions: &[ActionRequest], stop: &Cancellation) {
         let guard = self.lock().guard.take();
         if let Some(guard) = guard
             && let Err(why) = self
@@ -974,7 +1045,7 @@ impl Service {
             match self.claim_action(id) {
                 Ok(true) => {}
                 Ok(false) => {
-                    if self.lock().stop_requested {
+                    if stop.requested() {
                         self.finish(Phase::Cancelled, None, Some("Stopped".into()), None);
                     }
                     return;
@@ -989,22 +1060,22 @@ impl Service {
             let action = &request.action;
             self.emit("action", &action.describe());
             if let Action::Computer { app, goal } = action {
-                return self.run_computer(app, goal);
+                return self.run_computer(app, goal, stop.child());
             }
             let execution_started = Instant::now();
             let result = match action {
                 Action::Type { .. } => {
                     let waited = match actions.get(i.wrapping_sub(1)) {
                         Some(launched) if launched.action.launches_window() => {
-                            self.launcher.await_launched_focus()
+                            self.launcher.await_launched_focus(stop)
                         }
                         _ => Ok(()),
                     };
-                    waited.and_then(|()| self.launcher.launch(action))
+                    waited.and_then(|()| self.launcher.launch_prepared(action, None, stop))
                 }
                 _ => self
                     .launcher
-                    .launch_prepared(action, request.close_target.as_ref()),
+                    .launch_prepared(action, request.close_target.as_ref(), stop),
             };
             // Window Controller already waits for compositor verification;
             // ordinary launches are timed as execution, not verification.
@@ -1021,6 +1092,9 @@ impl Service {
                     execution_started.elapsed().as_millis()
                 ),
             );
+            if stop.requested() && result.is_err() {
+                return self.finish(Phase::Cancelled, None, Some("Stopped".into()), None);
+            }
             match result {
                 Ok(msg)
                     if matches!(
@@ -1076,19 +1150,22 @@ impl Service {
         self.finish(Phase::Completed, None, Some(note), None);
     }
 
-    fn run_computer(&self, app: &str, goal: &str) {
-        struct Link<'a>(&'a Service);
+    fn run_computer(&self, app: &str, goal: &str, stop: Cancellation) {
+        struct Link<'a>(&'a Service, Cancellation);
         impl crate::computer::Host for Link<'_> {
             fn emit(&self, kind: &str, text: &str) {
                 self.0.emit(kind, text);
             }
             fn stopped(&self) -> bool {
-                self.0.lock().stop_requested
+                self.1.requested()
+            }
+            fn cancellation(&self) -> Option<&Cancellation> {
+                Some(&self.1)
             }
             fn open_app(&self, app: &str) -> Result<(), String> {
                 self.0
                     .launcher
-                    .launch(&Action::App { target: app.into() })
+                    .launch_prepared(&Action::App { target: app.into() }, None, &self.1)
                     .map(drop)
             }
         }
@@ -1127,7 +1204,7 @@ impl Service {
                         .and_then(|response| crate::computer::parse(&response))
                 }
             },
-            &Link(self),
+            &Link(self, stop),
             &crate::computer::Limits::default(),
         );
         use crate::computer::Outcome;
@@ -1146,7 +1223,7 @@ impl Service {
         }
     }
 
-    fn run_work(&self, task: &Task) {
+    fn run_work(&self, task: &Task, stop: &Cancellation) {
         let (Some(exe), Some(ws)) = (
             self.opencode_exe.lock().ok().and_then(|e| e.clone()),
             task.workspace.clone(),
@@ -1160,7 +1237,7 @@ impl Service {
         };
         let create_workspace = {
             let mut state = self.lock();
-            if state.stop_requested {
+            if stop.requested() {
                 drop(state);
                 return self.finish(
                     Phase::Cancelled,
@@ -1213,24 +1290,22 @@ impl Service {
         });
         let mut config = RunConfig::new(exe, task.text.clone(), ws);
         config.allow_commands = std::mem::take(&mut self.lock().grants);
-        let run = match Run::start(config, on_event) {
+        let run = match Run::start_scoped(config, on_event, stop) {
             Ok(r) => r,
+            Err(_) if stop.requested() => {
+                return self.finish(
+                    Phase::Cancelled,
+                    None,
+                    Some("Stopped before start".into()),
+                    None,
+                );
+            }
             Err(e) => {
                 self.set_step(0, "failed");
                 return self.finish(Phase::Failed, Some(e), None, None);
             }
         };
-        {
-            let mut s = self.lock();
-            s.canceller = Some(run.canceller());
-            if s.stop_requested {
-                run.cancel(); // Stop pressed before the process existed
-            }
-        }
-        self.set_step(0, "done");
-        self.set_step(1, "running");
         let res = run.join();
-        self.lock().canceller = None;
         let ok = res.status == RunStatus::Completed;
         self.set_step(1, if ok { "done" } else { "failed" });
         self.set_step(2, if ok { "done" } else { "failed" });
@@ -1287,7 +1362,7 @@ impl Service {
         changed: Option<Vec<String>>,
     ) {
         let mut s = self.lock();
-        let phase = if s.stop_requested && phase == Phase::Completed {
+        let phase = if s.stop.requested() && phase == Phase::Completed {
             Phase::Cancelled
         } else {
             phase
@@ -1319,12 +1394,19 @@ impl Service {
     /// Stop whatever is active: discard a plan, abort a recording, or kill a run.
     pub fn cancel(&self) {
         let mut s = self.lock();
+        if s.model_stop.as_ref().is_some_and(Cancellation::request) {
+            emit(&mut s, "info", "Stop requested for the pending plan");
+        }
         match s.phase {
             Phase::AwaitingApproval => {
                 let id = s.task.as_ref().map(|task| task.id).unwrap_or_default();
                 set_phase(&mut s, Phase::Cancelled);
-                s.edit = None; // a discarded proposal never lingers in memory
+                s.edit = None;
                 s.workflow = None;
+                s.actions.clear();
+                s.guard = None;
+                s.grants.clear();
+                s.create_workspace = false;
                 if let Some(t) = s.task.as_mut() {
                     t.edit = None;
                 }
@@ -1333,14 +1415,9 @@ impl Service {
                 emit(&mut s, "approval", &format!("discarded task {id}"));
             }
             Phase::Running => {
-                if !s.stop_requested {
-                    s.stop_requested = true;
+                if s.stop.request() {
                     audit_best_effort(&mut s, AuditKind::StopRequested, None);
                     emit(&mut s, "info", "Stop requested");
-                }
-                if let Some(c) = s.canceller.clone() {
-                    drop(s);
-                    c.cancel();
                 }
             }
             Phase::Listening | Phase::Transcribing => {

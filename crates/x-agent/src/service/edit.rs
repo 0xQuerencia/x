@@ -473,7 +473,7 @@ impl Service {
         let (Some(new), engine) = (job.proposed.clone(), self.context_engine()) else {
             return self.finish(Phase::Failed, Some("Nothing to apply".into()), None, None);
         };
-        if self.lock().stop_requested {
+        if self.lock().stop.requested() {
             return self.finish(
                 Phase::Cancelled,
                 None,

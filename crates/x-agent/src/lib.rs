@@ -9,6 +9,7 @@
 //! * [`service`]: the one-task-at-a-time state machine the UI drives.
 
 pub mod browser_tab;
+pub mod cancellation;
 pub mod clipboard;
 pub mod computer;
 pub mod context;

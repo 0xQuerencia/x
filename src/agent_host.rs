@@ -795,6 +795,9 @@ pub fn handle(action: AgentAction) -> ControlReply {
             }
         },
         AgentAction::Say { text, mode } => {
+            if svc.request_stop_from_text(&text) {
+                return snapshot(0);
+            }
             if mode == "actions"
                 && let Some(result) = follow_up_window_choice(&text)
             {

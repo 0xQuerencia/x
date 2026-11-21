@@ -1519,9 +1519,9 @@ mod saved_workflows {
         assert!(!bridge.permit(&step), "planned but not approved");
         r.s.lock().phase = Phase::Running; // as approve() would, without starting the run
         assert!(bridge.permit(&step), "approved and running");
-        r.s.lock().stop_requested = true;
+        r.s.lock().stop.request();
         assert!(!bridge.permit(&step), "Stop was pressed");
-        r.s.lock().stop_requested = false;
+        r.s.lock().stop = Cancellation::default();
         r.s.lock().workflow = None;
         assert!(!bridge.permit(&step), "the approved run is gone");
         r.s.lock().phase = Phase::Idle;
@@ -1677,5 +1677,46 @@ fn a_broken_configured_audit_cannot_dispatch_an_action() {
     let error = s.approve(task.id).unwrap_err();
     assert!(error.contains("Unknown X audit ledger schema"), "{error}");
     assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
+}
+
+#[test]
+fn an_explicit_spoken_stop_discards_a_late_model_plan() {
+    use std::sync::{Barrier, mpsc};
+
+    struct HeldPlanner {
+        entered: mpsc::Sender<()>,
+        release: Arc<Barrier>,
+    }
+    impl Planner for HeldPlanner {
+        fn plan(&self, _: &str, _: bool) -> Result<tools::Reply, String> {
+            self.entered.send(()).unwrap();
+            self.release.wait();
+            Ok(tools::Reply::Steps(vec![Action::App {
+                target: "firefox".into(),
+            }]))
+        }
+        fn name(&self) -> String {
+            "fixture planner".into()
+        }
+    }
+
+    let (svc, _, launcher) = rig();
+    svc.set_trust_actions(true);
+    let (entered, entered_rx) = mpsc::channel();
+    let release = Arc::new(Barrier::new(2));
+    svc.set_planner(Some(Arc::new(HeldPlanner {
+        entered,
+        release: release.clone(),
+    })));
+    let background = svc.clone();
+    let planning = thread::spawn(move || background.plan("bring up the fox", Mode::Actions));
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(svc.snapshot(0).phase, Phase::Planning);
+    let stopped = svc.request_stop_from_text("Friday, stop the task.");
+    release.wait();
+    assert!(stopped);
+    assert_eq!(planning.join().unwrap().unwrap_err(), "Stopped");
+    assert!(svc.snapshot(0).task.is_none());
     assert!(launcher.launched.lock().unwrap().is_empty());
 }
