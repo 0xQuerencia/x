@@ -376,6 +376,7 @@ pub(in crate::rune_ui) struct Manager {
     rows: Vec<Row>,
     graphs: Vec<GraphEntry>,
     graph_source: TextEdit,
+    recovery: Option<Result<serde_json::Value, String>>,
     loaded: Option<std::time::Instant>,
     /// Set by anything that changes the files, so the list reloads at once.
     dirty: bool,
@@ -422,6 +423,7 @@ impl Manager {
             })
             .collect();
         let graphs = store.list_graphs();
+        let recovery = agent_host::service().uncertain_coding_jobs();
         let shown = serde_json::to_string(&(
             rows
                 .iter()
@@ -435,12 +437,14 @@ impl Manager {
                 })
                 .collect::<Vec<_>>(),
             &graphs,
+            &recovery,
         ))
         .unwrap_or_default();
         self.dirty = false;
         self.loaded = Some(std::time::Instant::now());
         self.rows = rows;
         self.graphs = graphs;
+        self.recovery = Some(recovery);
         let changed = shown != self.shown;
         self.shown = shown;
         changed
@@ -583,6 +587,34 @@ fn list(p: Paint, mgr: &Manager) -> El {
         for graph in &mgr.graphs {
             list = list.child(graph_card(p, graph));
         }
+    }
+    if let Some(Ok(recovery)) = &mgr.recovery
+        && let Some(jobs) = recovery["jobs"].as_array()
+        && !jobs.is_empty()
+    {
+        list = list
+            .child(section_label(p, "wf-recovery-title", tr("Interrupted coding jobs")))
+            .child(small(
+                "wf-recovery-caution".into(),
+                "Check provider delivery before trying these jobs again.".into(),
+                p.warning(),
+            ));
+        for (index, job) in jobs.iter().enumerate() {
+            let run_id = job["run_id"].as_str().unwrap_or("unknown run");
+            let node_id = job["node_id"].as_str().unwrap_or("unknown node");
+            list = list.child(small(
+                format!("wf-recovery-job-{index}"),
+                format!("{node_id} · run {run_id} · needs reconciliation"),
+                p.muted(),
+            ));
+        }
+    }
+    if mgr.recovery.as_ref().is_some_and(Result::is_err) {
+        list = list.child(small(
+            "wf-recovery-unavailable".into(),
+            "Could not inspect interrupted coding jobs; no retry was attempted.".into(),
+            p.warning(),
+        ));
     }
     if let Some((ok, message)) = &mgr.note {
         list = list.child(small(
