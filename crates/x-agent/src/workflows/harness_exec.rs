@@ -25,6 +25,8 @@ pub enum Proof {
 /// Constructed only after an exact project, task and worktree scope is
 /// explicitly authorized by the native host. The model cannot issue it.
 pub struct Assignment {
+    // The native approval bridge will consume this assignment identity.
+    #[allow(dead_code)]
     node_id: String,
     project: Project,
     worktree: OwnedWorktree,
@@ -34,6 +36,7 @@ pub struct Assignment {
 }
 
 impl Assignment {
+    #[allow(dead_code)]
     pub(crate) fn from_approved_scope(
         node: &Node,
         project: Project,
@@ -91,6 +94,7 @@ pub struct ApprovedHarnessExecutor {
 impl ApprovedHarnessExecutor {
     /// Preparation must come from the native approval path, never from a
     /// model-proposed graph or a JSON `approved: true` property.
+    #[allow(dead_code)]
     pub(crate) fn new(
         graph: &Graph,
         run_id: Uuid,
