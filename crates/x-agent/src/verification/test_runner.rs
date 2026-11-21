@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use super::{Authority, Check, Evidence, Kind, Result as Verification, Status};
 use crate::cancellation::Cancellation;
+use crate::grants::{Grants, Permission, Receipt, Scope};
 use crate::projects::Project;
 use crate::worktrees::{Manager, OwnedWorktree};
 
@@ -61,7 +62,8 @@ pub fn verify_approved(
     project: &Project,
     worktree: &OwnedWorktree,
     suite: Suite,
-    approved: bool,
+    grants: &Grants,
+    receipt: &Receipt,
     stop: &Cancellation,
 ) -> std::result::Result<Verification, String> {
     verify_with(
@@ -69,10 +71,27 @@ pub fn verify_approved(
         project,
         worktree,
         suite,
-        approved,
+        grants,
+        receipt,
         stop,
         &SystemRunner,
     )
+}
+
+/// Exact approval scope shared with the native owner-approval path.
+/// Changing the project, run, task, checkout, or test preset changes the scope.
+pub(crate) fn scope_for_suite(project: &Project, worktree: &OwnedWorktree, suite: Suite) -> Scope {
+    Scope::Task {
+        project_id: project.id,
+        run_id: worktree.run_id(),
+        node_id: worktree.task_id().to_owned(),
+        intent: format!(
+            "test:{}:{}:{}",
+            suite.label(),
+            worktree.start_commit(),
+            worktree.path().display()
+        ),
+    }
 }
 
 trait Runner {
@@ -111,22 +130,27 @@ impl Runner for SystemRunner {
     }
 }
 
+/// The extra argument is an injectable process runner used by the authorization tests.
+#[allow(clippy::too_many_arguments)]
 fn verify_with(
     manager: &Manager,
     project: &Project,
     worktree: &OwnedWorktree,
     suite: Suite,
-    approved: bool,
+    grants: &Grants,
+    receipt: &Receipt,
     stop: &Cancellation,
     runner: &dyn Runner,
 ) -> std::result::Result<Verification, String> {
-    if !approved {
-        return Err("Running project tests requires fresh owner approval".into());
-    }
     if stop.requested() {
         return Err("Stopped before launching project tests".into());
     }
     let workspace = manager.validate_owned(project, worktree)?;
+    grants.consume(
+        receipt,
+        Permission::RunTests,
+        &scope_for_suite(project, worktree, suite),
+    )?;
     let reported = runner.run(&workspace, suite, stop);
     let status = if stop.requested() {
         Status::Unknown
@@ -300,9 +324,25 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn approval(project: &Project, worktree: &OwnedWorktree, suite: Suite) -> (Grants, Receipt) {
+        let grants = Grants::default();
+        let receipt = grants
+            .issue(
+                Permission::RunTests,
+                scope_for_suite(project, worktree, suite),
+                Duration::from_secs(30),
+                1,
+                true,
+            )
+            .unwrap();
+        (grants, receipt)
+    }
+
+    #[cfg(unix)]
     #[test]
-    fn refuses_unapproved_tests_before_running_any_command() {
+    fn unapproved_suite_cannot_start_or_consume_another_grant() {
         let (_temp, project, manager, owned) = fixture();
+        let (grants, receipt) = approval(&project, &owned, Suite::Npm);
         let runner = MockRunner {
             result: Ok(true),
             calls: std::sync::atomic::AtomicUsize::new(0),
@@ -313,19 +353,30 @@ mod tests {
                 &project,
                 &owned,
                 Suite::CargoAgent,
-                false,
+                &grants,
+                &receipt,
                 &Cancellation::default(),
-                &runner
+                &runner,
             )
             .is_err()
         );
         assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(
+            grants
+                .check(
+                    &receipt,
+                    Permission::RunTests,
+                    &scope_for_suite(&project, &owned, Suite::Npm),
+                )
+                .is_ok()
+        );
     }
 
     #[cfg(unix)]
     #[test]
-    fn real_worktree_identity_is_checked_before_test_evidence() {
+    fn verified_worktree_tests_consume_exactly_one_approval() {
         let (_temp, project, manager, owned) = fixture();
+        let (grants, receipt) = approval(&project, &owned, Suite::CargoAgent);
         let runner = MockRunner {
             result: Ok(false),
             calls: std::sync::atomic::AtomicUsize::new(0),
@@ -335,13 +386,39 @@ mod tests {
             &project,
             &owned,
             Suite::CargoAgent,
-            true,
+            &grants,
+            &receipt,
             &Cancellation::default(),
             &runner,
         )
         .unwrap();
         assert_eq!(failed.outcome, super::super::Outcome::Failed);
         assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(
+            verify_with(
+                &manager,
+                &project,
+                &owned,
+                Suite::CargoAgent,
+                &grants,
+                &receipt,
+                &Cancellation::default(),
+                &runner,
+            )
+            .is_err()
+        );
+        assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_or_revoked_test_scope_cannot_launch() {
+        let (_temp, project, manager, owned) = fixture();
+        let (grants, receipt) = approval(&project, &owned, Suite::CargoAgent);
+        let runner = MockRunner {
+            result: Ok(true),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
         let mut other_project = project.clone();
         other_project.id = Uuid::new_v4();
         assert!(
@@ -350,12 +427,28 @@ mod tests {
                 &other_project,
                 &owned,
                 Suite::CargoAgent,
-                true,
+                &grants,
+                &receipt,
                 &Cancellation::default(),
-                &runner
+                &runner,
             )
             .is_err()
         );
-        assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(grants.revoke_all().unwrap(), 1);
+        assert!(
+            verify_with(
+                &manager,
+                &project,
+                &owned,
+                Suite::CargoAgent,
+                &grants,
+                &receipt,
+                &Cancellation::default(),
+                &runner,
+            )
+            .is_err()
+        );
+        assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }
