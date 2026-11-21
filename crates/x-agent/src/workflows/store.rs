@@ -44,6 +44,15 @@ pub enum Match {
     },
 }
 
+/// A safe UI summary of a saved v2 graph. Coding goals never enter the list.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct GraphEntry {
+    pub id: String,
+    pub name: String,
+    pub jobs: usize,
+    pub coding_only: bool,
+}
+
 pub struct Store {
     dir: PathBuf,
     home: PathBuf,
@@ -151,6 +160,49 @@ impl Store {
             .collect()
     }
 
+    /// Read validated v2 graph metadata for the workflow manager. Never
+    /// interpret a graph as a legacy workflow or expose its coding goals.
+    pub fn list_graphs(&self) -> Vec<GraphEntry> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return vec![];
+        };
+        let mut found = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .filter(|path| {
+                !path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".last.json"))
+            })
+            .take(MAX_WORKFLOWS)
+            .filter_map(|path| {
+                let text = Self::read(&path).ok()?;
+                let graph = super::dag::decode(&text, &self.home).ok()?;
+                if path.file_stem()?.to_str()? != graph.id {
+                    return None;
+                }
+                let coding_only = graph
+                    .nodes
+                    .iter()
+                    .all(|node| matches!(&node.job, super::dag::Job::Harness { .. }));
+                Some(GraphEntry {
+                    id: graph.id,
+                    name: graph.name,
+                    jobs: graph.nodes.len(),
+                    coding_only,
+                })
+            })
+            .collect::<Vec<_>>();
+        found.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then(a.id.cmp(&b.id))
+        });
+        found
+    }
+
     pub fn get(&self, id: &str) -> Result<Workflow, String> {
         let text = Self::read(&self.file(id)?).map_err(|e| format!("No workflow {id:?} ({e})"))?;
         serde_json::from_str(&text).map_err(|e| format!("Workflow {id:?} is not valid: {e}"))
@@ -180,8 +232,20 @@ impl Store {
                 }
             }
         }
-        let full = self.list().len();
-        let exists = self.file(&wf.id).is_ok_and(|p| p.exists());
+        let full = self.list().len() + self.list_graphs().len();
+        let target = self.file(&wf.id).map_err(|e| {
+            vec![Problem {
+                step: None,
+                message: e,
+            }]
+        })?;
+        let exists = std::fs::symlink_metadata(&target).is_ok();
+        if exists && self.get(&wf.id).is_err() {
+            problems.push(Problem {
+                step: None,
+                message: "This ID belongs to a coding graph or an unreadable file; it cannot be overwritten by a legacy workflow".into(),
+            });
+        }
         if !exists && full >= MAX_WORKFLOWS {
             problems.push(Problem {
                 step: None,
@@ -221,7 +285,12 @@ impl Store {
     /// A copy with a fresh id and name and no triggers (so it cannot collide with the original).
     pub fn duplicate(&self, id: &str) -> Result<Workflow, String> {
         let mut copy = self.get(id)?;
-        let taken: Vec<String> = self.list().into_iter().map(|e| e.workflow.id).collect();
+        let taken: Vec<String> = self
+            .list()
+            .into_iter()
+            .map(|e| e.workflow.id)
+            .chain(self.list_graphs().into_iter().map(|e| e.id))
+            .collect();
         let base = format!("{}-copy", copy.id.chars().take(34).collect::<String>());
         copy.id = (1..)
             .map(|n| {
