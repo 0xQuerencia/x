@@ -509,7 +509,7 @@ pub enum AgentCommand {
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "permissions", "uncertain", "run", "run-graph", "last", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "permissions", "uncertain", "run", "run-graph", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
         command: String,
         /// A workflow id, or a file path for import.
         #[arg(default_value = "")]
