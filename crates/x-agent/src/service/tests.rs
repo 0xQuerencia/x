@@ -42,6 +42,14 @@ impl Launcher for FakeLauncher {
         self.launched.lock().unwrap().push(a.describe());
         Ok(format!("Launched {}", a.describe()))
     }
+
+    fn open_project_folder(&self, directory: &Path) -> Result<(), String> {
+        self.launched
+            .lock()
+            .unwrap()
+            .push(directory.display().to_string());
+        Ok(())
+    }
 }
 
 fn rig() -> (Service, Arc<FakeStt>, Arc<FakeLauncher>) {
@@ -2112,4 +2120,142 @@ fn spoken_claude_request_does_not_fall_back_to_opencode() {
     assert!(error.contains("Claude Code CLI not found on PATH"));
     assert_eq!(service.snapshot(0).phase, Phase::Idle);
     assert!(!project.join("unrequested-opencode-run").exists());
+}
+
+#[test]
+fn spoken_project_commands_resolve_locally_and_pin_the_approved_project() {
+    let (service, _, launcher) = rig();
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("home");
+    let support = directory.path().join("support");
+    let first = home.join("frontend");
+    let second = home.join("backend");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    let registry = crate::projects::Registry::new(support.clone(), home.clone());
+    let (frontend, _) = registry.register("Front End", "~/frontend").unwrap();
+    let (backend, _) = registry.register("Back End", "~/backend").unwrap();
+    service.configure_session_storage(support, home);
+    service.set_autonomy_mode(AutonomyMode::Autonomous);
+    service.set_planner(Some(Arc::new(FakePlanner(Err(
+        "Unexpected remote planner".into(),
+    )))));
+    service
+        .select_registered_project(&frontend.id.to_string())
+        .unwrap();
+
+    let listing = service
+        .plan_spoken("Friday, list projects", Mode::Actions)
+        .unwrap();
+    assert_eq!(listing.phase, Phase::Completed);
+    assert!(listing.summary.unwrap().contains("Front End"));
+    let found = service
+        .plan_spoken("Friday, find project Back End", Mode::Actions)
+        .unwrap();
+    assert!(found.summary.unwrap().contains(&backend.id.to_string()));
+    assert_eq!(service.workspace_path(), Some(frontend.root.clone()));
+
+    let utterance = "Friday, switch to project Back End.";
+    assert!(!service.needs_model(utterance));
+    let plan = service.plan_smart(utterance).unwrap();
+    assert_eq!(plan.phase, Phase::AwaitingApproval);
+    assert!(plan.text.contains("Back End"));
+    assert_eq!(service.workspace_path(), Some(frontend.root.clone()));
+    service.approve(plan.id).unwrap();
+    let done = wait_for(&service, |state| !state.phase.is_busy());
+    assert_eq!(done.phase, Phase::Completed);
+    assert_eq!(service.workspace_path(), Some(backend.root.clone()));
+
+    registry
+        .add_alias(&frontend.id.to_string(), "Shared")
+        .unwrap();
+    registry
+        .add_alias(&backend.id.to_string(), "Shared")
+        .unwrap();
+    let error = service
+        .plan_spoken("Friday, open my Shared project", Mode::Actions)
+        .unwrap_err();
+    assert!(error.contains(&frontend.id.to_string()));
+    assert!(error.contains(&backend.id.to_string()));
+    assert_eq!(service.workspace_path(), Some(backend.root.clone()));
+
+    let plan = service
+        .plan_spoken("Friday, open project Back End", Mode::Actions)
+        .unwrap();
+    assert!(plan.text.contains("file manager"));
+    service.cancel();
+    assert!(service.approve(plan.id).is_err());
+    assert!(launcher.launched.lock().unwrap().is_empty());
+
+    let plan = service
+        .plan_spoken("Friday, open project Back End", Mode::Actions)
+        .unwrap();
+    service.approve(plan.id).unwrap();
+    let done = wait_for(&service, |state| !state.phase.is_busy());
+    assert_eq!(done.task.unwrap().steps[0].status, "launched");
+    assert_eq!(
+        *launcher.launched.lock().unwrap(),
+        [backend.root.display().to_string()]
+    );
+    assert_eq!(registry.last_selected().unwrap().unwrap().id, backend.id);
+}
+
+#[test]
+fn spoken_session_resume_requires_current_provider_evidence_after_approval() {
+    let (service, _, _) = rig();
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("home");
+    let support = directory.path().join("support");
+    std::fs::create_dir_all(home.join("repo")).unwrap();
+    let registry = crate::projects::Registry::new(support.clone(), home.clone());
+    let (project, _) = registry.register("Project", "~/repo").unwrap();
+    service.configure_session_storage(support, home);
+    let checks = Arc::new(AtomicUsize::new(0));
+    let verifier_checks = Arc::clone(&checks);
+    let expected_root = project.root.clone();
+    let service = service.with_session_verifier(move |session| {
+        assert_eq!(session.workspace, expected_root);
+        verifier_checks.fetch_add(1, Ordering::SeqCst);
+        if session.id.as_str() == "ses_fixture" {
+            Ok(())
+        } else {
+            Err("That exact OpenCode session is no longer available".into())
+        }
+    });
+    service
+        .select_registered_project(&project.id.to_string())
+        .unwrap();
+    let plan = service
+        .plan_spoken("Friday, resume OpenCode session ses_fixture", Mode::Actions)
+        .unwrap();
+    assert_eq!(plan.phase, Phase::AwaitingApproval);
+    assert_eq!(checks.load(Ordering::SeqCst), 0);
+    assert!(service.snapshot(0).selected_session.is_none());
+    service.approve(plan.id).unwrap();
+    let result = wait_for(&service, |state| !state.phase.is_busy());
+    assert_eq!(result.phase, Phase::Completed);
+    assert_eq!(result.selected_session.unwrap().id.as_str(), "ses_fixture");
+    let listing = service
+        .plan_spoken("Friday, list saved sessions", Mode::Actions)
+        .unwrap();
+    let summary = listing.summary.unwrap();
+    assert!(summary.contains("unverified availability"));
+    assert!(summary.contains("ses_fixture"));
+
+    let stale = service
+        .plan_spoken("Friday, resume OpenCode session ses_missing", Mode::Actions)
+        .unwrap();
+    service.approve(stale.id).unwrap();
+    let result = wait_for(&service, |state| !state.phase.is_busy());
+    assert_eq!(result.phase, Phase::Failed);
+    assert!(
+        result
+            .task
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("no longer available")
+    );
+    assert_eq!(result.selected_session.unwrap().id.as_str(), "ses_fixture");
+    assert_eq!(checks.load(Ordering::SeqCst), 2);
 }
