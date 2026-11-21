@@ -246,10 +246,12 @@ impl Journal {
                     locked = true;
                     break;
                 }
-                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                Err(std::fs::TryLockError::WouldBlock) => {
                     std::thread::sleep(std::time::Duration::from_millis(5));
                 }
-                Err(_) => return Err("Cannot lock job journal".into()),
+                Err(std::fs::TryLockError::Error(_)) => {
+                    return Err("Cannot lock job journal".into());
+                }
             }
         }
         if !locked {
