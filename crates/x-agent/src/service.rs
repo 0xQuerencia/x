@@ -526,8 +526,10 @@ impl Service {
     }
 
     pub fn snapshot(&self, since: u64) -> Snapshot {
-        let pending_job_approvals = self.scoped_grants.pending_count().ok();
+        // Stop and approved harness issuance acquire State before Grants.
+        // Maintain that order here to prevent an Agent poll/Stop deadlock.
         let s = self.lock();
+        let pending_job_approvals = self.scoped_grants.pending_count().ok();
         Snapshot {
             phase: if !s.phase.is_busy()
                 && s.model_stop.as_ref().is_some_and(|stop| !stop.requested())
