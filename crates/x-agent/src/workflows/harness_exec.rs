@@ -467,6 +467,7 @@ mod tests {
             })
             .collect(),
         };
+        let grants = Arc::new(Grants::default());
         let assignments = graph
             .nodes
             .iter()
@@ -485,6 +486,19 @@ mod tests {
                     running: Arc::clone(&running),
                     peak: Arc::clone(&peak),
                 });
+                let receipt = grants
+                    .issue(
+                        Permission::StartHarness,
+                        Scope::Task {
+                            project_id: project.id,
+                            run_id,
+                            node_id: node.id.clone(),
+                        },
+                        Duration::from_secs(30),
+                        1,
+                        true,
+                    )
+                    .unwrap();
                 Assignment::from_approved_scope(
                     node,
                     project.clone(),
@@ -492,7 +506,8 @@ mod tests {
                     "a".repeat(64),
                     adapter,
                     Proof::DeliveryOnly,
-                    true,
+                    Arc::clone(&grants),
+                    receipt,
                 )
                 .unwrap()
             })
@@ -524,22 +539,36 @@ mod tests {
                 .iter()
                 .all(|node| node.outcome == Outcome::Verified)
         );
-        // A second run with the same journal claims must never resend.
-        let replay = scheduler::run(
-            &graph,
-            Path::new("/tmp"),
-            adapter,
-            &Cancellation::default(),
-            2,
-        )
-        .unwrap();
+        // Receipts are consumed before delivery; a replay cannot pass preflight.
         assert!(
-            replay
-                .nodes
-                .iter()
-                .all(|node| node.outcome == Outcome::Unverified)
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                adapter,
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn revoked_harness_receipt_cannot_start_any_work() {
+        let (_directory, graph, executor, _peak, calls) = fixture(false);
+        let assignment = executor.assignments.get("front").unwrap();
+        assignment.grants.revoke(&assignment.receipt).unwrap();
+        assert!(
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                executor.clone(),
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
