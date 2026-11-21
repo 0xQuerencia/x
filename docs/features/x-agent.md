@@ -231,6 +231,21 @@ merge the result; **no such automatic operation is enabled here**. Git may
 write unreachable preview tree objects to its object database, but does not
 update HEAD, the index or worktree files.
 
+### Approved tests in owned worktrees (development)
+
+X's test verifier accepts only typed presets for Cargo, npm, pnpm, pytest and
+Go. It revalidates the worktree's ownership before running any test, requires
+fresh owner approval, executes without a shell, enforces a 120-second deadline
+and propagates Stop to the owned subprocess. Exit success is **Verified for that
+test suite only**; failure is **Failed**; missing, interrupted or timed-out
+evidence is **Unverified**. No process output or secrets are retained in the
+evidence record.
+
+Project test scripts can run arbitrary code despite fixed arguments, so this
+is a privileged R2 operation. The verifier API is implemented but **not yet
+exposed through a native approval screen or spoken command**; that integration
+remains gated by the P5 approval work.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
