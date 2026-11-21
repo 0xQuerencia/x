@@ -2123,6 +2123,309 @@ fn spoken_claude_request_does_not_fall_back_to_opencode() {
 }
 
 #[test]
+fn stop_revokes_native_job_receipts_without_affecting_existing_task_policy() {
+    use crate::grants::{Permission, Scope};
+    use uuid::Uuid;
+
+    let (service, _, _) = rig();
+    let grants = service.scoped_grants();
+    let scope = Scope::Task {
+        project_id: Uuid::new_v4(),
+        run_id: Uuid::new_v4(),
+        node_id: "backend".into(),
+        intent: "read-only-task-proof".into(),
+    };
+    let receipt = grants
+        .issue(
+            Permission::StartHarness,
+            scope.clone(),
+            Duration::from_secs(30),
+            1,
+            true,
+        )
+        .unwrap();
+    grants
+        .check(&receipt, Permission::StartHarness, &scope)
+        .unwrap();
+
+    let pending = service.plan("open firefox", Mode::Actions).unwrap();
+    assert_eq!(service.snapshot(0).phase, Phase::AwaitingApproval);
+    service.clone().cancel();
+    assert!(
+        grants
+            .consume(&receipt, Permission::StartHarness, &scope)
+            .is_err()
+    );
+    assert!(service.approve(pending.id).is_err());
+    assert_eq!(service.snapshot(0).phase, Phase::Cancelled);
+}
+
+#[test]
+fn service_clones_share_stop_revocation() {
+    use crate::grants::{Permission, Scope};
+    use uuid::Uuid;
+
+    let (service, _, _) = rig();
+    let grants = service.scoped_grants();
+    assert!(Arc::ptr_eq(&grants, &service.clone().scoped_grants()));
+    let project = Scope::Project {
+        project_id: Uuid::new_v4(),
+    };
+    let receipt = grants
+        .issue(
+            Permission::InspectProject,
+            project.clone(),
+            Duration::from_secs(20),
+            1,
+            true,
+        )
+        .unwrap();
+    service.cancel();
+    assert!(
+        grants
+            .check(&receipt, Permission::InspectProject, &project)
+            .is_err()
+    );
+}
+
+#[test]
+fn snapshot_reports_only_pending_grant_count_and_stop_clears_it() {
+    use crate::grants::{Permission, Scope};
+    use uuid::Uuid;
+
+    let (service, _, _) = rig();
+    assert_eq!(service.snapshot(0).pending_job_approvals, Some(0));
+    let secret_intent = "internal request text must not appear in status";
+    let scope = Scope::Task {
+        project_id: Uuid::new_v4(),
+        run_id: Uuid::new_v4(),
+        node_id: "review".into(),
+        intent: secret_intent.into(),
+    };
+    let grants = service.scoped_grants();
+    let receipt = grants
+        .issue(
+            Permission::StartHarness,
+            scope.clone(),
+            Duration::from_secs(30),
+            1,
+            true,
+        )
+        .unwrap();
+    let status = service.snapshot(0);
+    assert_eq!(status.pending_job_approvals, Some(1));
+    let serialized = serde_json::to_string(&status).unwrap();
+    assert!(serialized.contains("pending_job_approvals"));
+    assert!(!serialized.contains(secret_intent));
+    service.cancel();
+    assert_eq!(service.snapshot(0).pending_job_approvals, Some(0));
+    assert!(
+        grants
+            .consume(&receipt, Permission::StartHarness, &scope)
+            .is_err()
+    );
+}
+
+fn graph_workflow_fixture() -> (
+    Service,
+    tempfile::TempDir,
+    PathBuf,
+    crate::workflows::dag::Graph,
+) {
+    use crate::workflows::dag::{Graph, HarnessKind, Job, Node, VERSION};
+    use crate::workflows::model::OnFailure;
+
+    let (service, directory, repo) = work_rig(
+        r#"printf '%s\n' "$@" > received-args
+echo '{"type":"step_start","sessionID":"ses_graph_fixture","part":{"type":"step-start"}}'
+echo '{"type":"text","sessionID":"ses_graph_fixture","part":{"type":"text","text":"fixture delivery"}}'
+echo '{"type":"step_finish","sessionID":"ses_graph_fixture","part":{"type":"step-finish"}}'"#,
+    );
+    assert!(
+        std::process::Command::new("git")
+            .current_dir(&repo)
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "baseline"
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let home = directory.path();
+    let support = home.join("state");
+    let registry = crate::projects::Registry::new(support.clone(), home.to_path_buf());
+    let (project, _) = registry.register("Project", "~/repo").unwrap();
+    let dir = support.join("workflows");
+    std::fs::create_dir(&dir).unwrap();
+    service.set_workflow_dirs(dir.clone(), home.to_path_buf());
+    service.set_autonomy_mode(AutonomyMode::Autonomous);
+    let make_node = |id: &str, harness, requires: Vec<String>| Node {
+        id: id.into(),
+        after: vec![],
+        requires,
+        job: Job::Harness {
+            harness,
+            project_id: project.id.to_string(),
+            goal: format!("Inspect fixture {id}"),
+        },
+        on_failure: OnFailure::Continue,
+    };
+    let graph = Graph {
+        version: VERSION,
+        id: "coding-graph".into(),
+        name: "Coding graph".into(),
+        triggers: vec![],
+        nodes: vec![
+            make_node("inspect", HarnessKind::OpenCode, vec![]),
+            make_node("review", HarnessKind::ClaudeCode, vec!["inspect".into()]),
+        ],
+    };
+    let source = home.join("coding-graph.json");
+    std::fs::write(&source, serde_json::to_vec(&graph).unwrap()).unwrap();
+    assert_eq!(
+        service.workflow_store().import_graph(&source).unwrap(),
+        graph
+    );
+    assert!(
+        service
+            .workflow_store()
+            .import_graph(&source)
+            .unwrap_err()
+            .contains("already uses")
+    );
+    assert_eq!(
+        service.workflow_store().get_graph(&graph.id).unwrap(),
+        graph
+    );
+    let claude = fake_claude(
+        home,
+        true,
+        r#"printf '%s\n' "$@" > received-args
+echo '{"type":"result","subtype":"success","is_error":false,"session_id":"5e3b19e7-c7ce-42f0-919d-15a735a1ed16","result":"fixture review"}'"#,
+    );
+    (service.with_claude(Some(claude)), directory, repo, graph)
+}
+
+#[test]
+fn native_graph_approval_runs_the_previewed_goals_in_owned_worktrees() {
+    let (service, directory, repo, mut graph) = graph_workflow_fixture();
+    let home = directory.path();
+    let worktrees = home.join("X Worktrees");
+    let goal = "Inspect fixture review";
+    let preview = service.plan_graph_workflow("coding-graph").unwrap();
+    assert_eq!(preview.phase, Phase::AwaitingApproval);
+    assert!(preview.steps[1].title.contains(goal));
+    assert_eq!(service.snapshot(0).pending_job_approvals, Some(0));
+    assert!(!worktrees.exists());
+    assert!(service.approve(preview.id + 1).is_err());
+    assert!(!worktrees.exists());
+
+    if let crate::workflows::dag::Job::Harness { goal, .. } = &mut graph.nodes[1].job {
+        *goal = "MUTATED GOAL".into();
+    }
+    std::fs::write(
+        home.join("state/workflows/coding-graph.json"),
+        serde_json::to_vec(&graph).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(repo.join("local.txt"), "keep untracked work").unwrap();
+    service.approve(preview.id).unwrap();
+    let done = wait_for(&service, |snapshot| !snapshot.phase.is_busy());
+    let task = done.task.unwrap();
+    assert_eq!(done.phase, Phase::Completed, "{:?}", task.error);
+    assert!(task.steps.iter().all(|step| step.status == "done"));
+    assert_eq!(done.pending_job_approvals, Some(0));
+    assert!(service.approve(preview.id).is_err());
+    assert_eq!(
+        std::fs::read_to_string(repo.join("local.txt")).unwrap(),
+        "keep untracked work"
+    );
+    assert!(!repo.join("received-args").exists());
+
+    let project = worktrees
+        .read_dir()
+        .unwrap()
+        .map(Result::unwrap)
+        .find(|entry| entry.path().is_dir())
+        .unwrap();
+    let mut received: Vec<_> = project
+        .path()
+        .read_dir()
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            std::fs::read_to_string(entry.path().join("received-args")).unwrap()
+        })
+        .collect();
+    received.sort_unstable();
+    assert_eq!(received.len(), 2);
+    assert!(
+        received
+            .iter()
+            .any(|args| args.contains("Inspect fixture inspect"))
+    );
+    assert!(received.iter().any(|args| args.contains(goal)));
+    assert!(received.iter().all(|args| !args.contains("MUTATED GOAL")));
+}
+
+#[test]
+fn graph_stop_and_forgotten_projects_prevent_worktree_allocation() {
+    let (service, directory, _, graph) = graph_workflow_fixture();
+    let home = directory.path();
+    let staged = service.plan_graph_workflow("coding-graph").unwrap();
+    service.cancel();
+    assert!(service.approve(staged.id).is_err());
+    assert!(!home.join("X Worktrees").exists());
+
+    let staged = service.plan_graph_workflow("coding-graph").unwrap();
+    let crate::workflows::dag::Job::Harness { project_id, .. } = &graph.nodes[0].job else {
+        panic!("fixture should use a registered harness job");
+    };
+    let registry = crate::projects::Registry::new(home.join("state"), home.to_path_buf());
+    assert!(registry.forget(project_id).unwrap());
+    service.approve(staged.id).unwrap();
+    let done = wait_for(&service, |snapshot| !snapshot.phase.is_busy());
+    assert_eq!(done.phase, Phase::Failed);
+    assert!(done.task.unwrap().error.unwrap().contains("project"));
+    assert!(!home.join("X Worktrees").exists());
+    assert_eq!(done.pending_job_approvals, Some(0));
+}
+
+#[test]
+fn concurrent_status_polling_and_stop_keep_lock_order() {
+    let (service, _, _) = rig();
+    let polled = service.clone();
+    let stopped = service.clone();
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let a = Arc::clone(&barrier);
+    let reader = thread::spawn(move || {
+        a.wait();
+        for _ in 0..300 {
+            assert!(polled.snapshot(0).pending_job_approvals.is_some());
+        }
+    });
+    let b = Arc::clone(&barrier);
+    let stopper = thread::spawn(move || {
+        b.wait();
+        for _ in 0..300 {
+            stopped.cancel();
+        }
+    });
+    barrier.wait();
+    reader.join().unwrap();
+    stopper.join().unwrap();
+    assert_eq!(service.snapshot(0).pending_job_approvals, Some(0));
+}
+
+#[test]
 fn spoken_project_commands_resolve_locally_and_pin_the_approved_project() {
     let (service, _, launcher) = rig();
     let directory = tempfile::tempdir().unwrap();

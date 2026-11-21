@@ -55,7 +55,6 @@ impl Grants {
     /// Only the trusted native approval handler should issue a receipt.
     /// `owner_approved` must reflect a real, current user interaction and is
     /// intentionally inaccessible to downstream adapters and model output.
-    #[allow(dead_code)] // Native UI approval issuance is a later milestone.
     pub(crate) fn issue(
         &self,
         permission: Permission,
@@ -181,6 +180,18 @@ impl Grants {
         Ok(())
     }
 
+    /// Count unexpired, unspent receipts without revealing grant IDs or
+    /// task intent. Expired entries are evicted during the read.
+    pub fn pending_count(&self) -> Result<usize, String> {
+        let mut guard = self
+            .grants
+            .lock()
+            .map_err(|_| "Grant storage is unavailable")?;
+        let now = Instant::now();
+        guard.retain(|_, grant| grant.remaining > 0 && grant.expires_at > now);
+        Ok(guard.len())
+    }
+
     /// Clear all pending receipts when a workflow is stopped or its owner
     /// leaves the approval surface. Running child processes need their own
     /// cancellation token; clearing a receipt only blocks future dispatches.
@@ -192,6 +203,41 @@ impl Grants {
         let count = entries.len();
         entries.clear();
         Ok(count)
+    }
+
+    /// Revoke only approvals tied to one registered project. Other projects
+    /// keep their own pending receipts.
+    pub fn revoke_project(&self, project_id: Uuid) -> Result<usize, String> {
+        self.revoke_where(|scope| match scope {
+            Scope::Project { project_id: id } | Scope::Task { project_id: id, .. } => {
+                *id == project_id
+            }
+        })
+    }
+
+    /// Stop a single workflow run without invalidating other runs or a
+    /// project's read-only inspection receipts.
+    pub fn revoke_run(&self, project_id: Uuid, run_id: Uuid) -> Result<usize, String> {
+        self.revoke_where(|scope| {
+            matches!(
+                scope,
+                Scope::Task {
+                    project_id: id,
+                    run_id: run,
+                    ..
+                } if *id == project_id && *run == run_id
+            )
+        })
+    }
+
+    fn revoke_where(&self, predicate: impl Fn(&Scope) -> bool) -> Result<usize, String> {
+        let mut guard = self
+            .grants
+            .lock()
+            .map_err(|_| "Grant storage is unavailable")?;
+        let before = guard.len();
+        guard.retain(|_, grant| !predicate(&grant.scope));
+        Ok(before - guard.len())
     }
 
     /// Revocation takes effect before any new consumption, even in Autonomous mode.
@@ -464,5 +510,133 @@ mod tests {
                 .consume(&receipt, Permission::InspectProject, &scope)
                 .is_err()
         );
+    }
+    #[test]
+    fn project_revocation_does_not_cancel_other_projects() {
+        let grants = Grants::default();
+        let first = task();
+        let second = task();
+        let Scope::Task {
+            project_id: project_a,
+            ..
+        } = &first
+        else {
+            unreachable!()
+        };
+        let a = grants
+            .issue(
+                Permission::StartHarness,
+                first.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        let b = grants
+            .issue(
+                Permission::RunTests,
+                second.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        assert_eq!(grants.revoke_project(*project_a).unwrap(), 1);
+        assert!(
+            grants
+                .consume(&a, Permission::StartHarness, &first)
+                .is_err()
+        );
+        grants.consume(&b, Permission::RunTests, &second).unwrap();
+        assert_eq!(grants.revoke_project(*project_a).unwrap(), 0);
+    }
+
+    #[test]
+    fn run_revocation_preserves_other_runs_and_project_inspection() {
+        let grants = Grants::default();
+        let first = task();
+        let Scope::Task {
+            project_id, run_id, ..
+        } = &first
+        else {
+            unreachable!()
+        };
+        let (project_id, run_id) = (*project_id, *run_id);
+        let mut other = first.clone();
+        if let Scope::Task { run_id, .. } = &mut other {
+            *run_id = Uuid::new_v4();
+        }
+        let inspection = Scope::Project { project_id };
+        let a = grants
+            .issue(
+                Permission::StartHarness,
+                first.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        let b = grants
+            .issue(
+                Permission::RunTests,
+                other.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        let c = grants
+            .issue(
+                Permission::InspectProject,
+                inspection.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        assert_eq!(grants.revoke_run(project_id, run_id).unwrap(), 1);
+        assert!(
+            grants
+                .consume(&a, Permission::StartHarness, &first)
+                .is_err()
+        );
+        grants.consume(&b, Permission::RunTests, &other).unwrap();
+        grants
+            .consume(&c, Permission::InspectProject, &inspection)
+            .unwrap();
+    }
+    #[test]
+    fn pending_count_omits_expired_and_spent_receipts() {
+        let grants = Grants::default();
+        let scope = task();
+        let expired = grants
+            .issue(
+                Permission::RunTests,
+                scope.clone(),
+                Duration::from_millis(1),
+                1,
+                true,
+            )
+            .unwrap();
+        let live = grants
+            .issue(
+                Permission::StartHarness,
+                scope.clone(),
+                Duration::from_secs(30),
+                1,
+                true,
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+        assert_eq!(grants.pending_count().unwrap(), 1);
+        assert!(
+            grants
+                .consume(&expired, Permission::RunTests, &scope)
+                .is_err()
+        );
+        grants
+            .consume(&live, Permission::StartHarness, &scope)
+            .unwrap();
+        assert_eq!(grants.pending_count().unwrap(), 0);
     }
 }

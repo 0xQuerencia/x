@@ -154,7 +154,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         Phase::Completed => p.success(),
         Phase::Idle | Phase::Cancelled => p.muted(),
     };
-    let status = row()
+    let mut status = row()
         .key("agent-status")
         .gap(8.0)
         .center_y()
@@ -165,6 +165,25 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
                 .font(DESCRIPTION)
                 .color(p.text()),
         );
+    match snapshot.pending_job_approvals {
+        Some(count) if count > 0 => {
+            status = status.child(
+                text(format!("{count} unspent job grants"))
+                    .key("agent-job-grants")
+                    .font(DESCRIPTION)
+                    .color(p.warning()),
+            );
+        }
+        None => {
+            status = status.child(
+                text("Job approval status unavailable")
+                    .key("agent-grants-error")
+                    .font(DESCRIPTION)
+                    .color(p.danger()),
+            );
+        }
+        _ => {}
+    }
 
     let mode_button = |key: &'static str, label: &str, mode: Mode| {
         let kind = if pane.mode == mode {

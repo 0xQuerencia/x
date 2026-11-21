@@ -505,10 +505,11 @@ pub enum AgentCommand {
         #[command(subcommand)]
         command: ProjectCli,
     },
-    /// Saved desktop workflows. `preview <id>` validates and shows a dependency
-    /// graph without starting anything. `run <id>` still needs approval.
+    /// Saved desktop workflows, run by trigger phrase or by id. `list` shows them with their
+    /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
+    /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "preview", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "preview", "permissions", "run", "run-graph", "last", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
         command: String,
         /// A workflow id, or a file path for import.
         #[arg(default_value = "")]
@@ -913,9 +914,20 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Context { output } => (AgentAction::Context, output),
                 AgentCommand::Workflow {
                     command,
-                    value,
+                    mut value,
                     output,
-                } => (AgentAction::Workflow { command, value }, output),
+                } => {
+                    if matches!(command.as_str(), "import" | "import-graph") && !value.is_empty() {
+                        let Ok(path) = std::path::absolute(&value) else {
+                            return fail("Could not resolve the workflow file");
+                        };
+                        let Ok(path) = path.into_os_string().into_string() else {
+                            return fail("The workflow file path must be valid UTF-8");
+                        };
+                        value = path;
+                    }
+                    (AgentAction::Workflow { command, value }, output)
+                }
                 AgentCommand::Wake {
                     command,
                     value,
@@ -1911,6 +1923,28 @@ mod tests {
     use super::*;
     use crate::control::{StatusReport, settings::SettingValue};
     use crate::dictation::vocabulary::VocabularyEntry;
+
+    #[test]
+    fn workflow_permission_review_requires_an_explicit_id() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed =
+            Args::try_parse_from(["hex", "agent", "workflow", "permissions", "review"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Workflow { command, value, .. }
+            } if command == "permissions" && value == "review"
+        ));
+        assert!(Args::try_parse_from(["hex", "agent", "workflow", "permissions"]).is_ok());
+        assert!(Args::try_parse_from(["hex", "agent", "workflow", "shell"]).is_err());
+    }
 
     #[test]
     fn workflow_graph_preview_is_an_explicit_read_only_cli_command() {

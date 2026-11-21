@@ -52,6 +52,23 @@ impl Manager {
         Self { base, home }
     }
 
+    pub(crate) fn starting_commit(&self, project: &Project) -> Result<String, String> {
+        self.verify_project(project)?;
+        current_commit(&project.root)
+    }
+
+    pub(crate) fn verify_start(
+        &self,
+        project: &Project,
+        worktree: &OwnedWorktree,
+    ) -> Result<(), String> {
+        let path = self.validate_owned(project, worktree)?;
+        if current_commit(&path)? != worktree.start_commit() {
+            return Err("The task worktree changed its approved starting commit".into());
+        }
+        Ok(())
+    }
+
     /// Requires explicit user approval for this exact run/task/project tuple.
     /// The caller's policy gate must make sure `approved` came from the owner.
     pub fn allocate(
@@ -298,6 +315,15 @@ impl Manager {
         }
         Ok(common)
     }
+}
+
+fn current_commit(root: &Path) -> Result<String, String> {
+    let commit = git(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let commit = commit.trim();
+    if !valid_commit(commit) {
+        return Err("Git did not return an exact starting commit".into());
+    }
+    Ok(commit.into())
 }
 
 fn git_common_dir(root: &Path) -> Result<PathBuf, String> {

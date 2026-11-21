@@ -155,9 +155,17 @@ topological order. It migrates existing sequential workflow files in memory:
 `after` means ordering only, while `requires` still requires success.
 That distinction preserves legacy `on_failure: continue` behavior.
 
-`Store::get_graph` is **read-only**. The currently released workflow runner
-remains sequential; graph scheduling, worktree ownership and parallel execution
-are separate milestones and are not yet enabled by this schema.
+`Store::get_graph` reads both formats. The standard workflow runner
+continues to execute sequential desktop workflows.
+
+### Workflow permission review (development)
+
+Run `hex agent workflow permissions <id>` to inspect the operations in a
+validated workflow graph. The response identifies desktop and coding-harness
+nodes, distinguishes service approval from one-use task-scoped grants, and
+shows the registered project identity requested by each harness node.
+It does not echo private coding goals, issue permissions, start a harness or
+execute workflow steps.
 
 ### DAG scheduler contract (development)
 
@@ -168,9 +176,8 @@ child cancellation tokens. Without worktree isolation, mutating harness jobs
 for the same project run one at a time; desktop jobs also share one resource
 lock. Unverified outputs never unlock success-dependent tasks.
 
-The scheduler is **not attached to live harnesses or the UI**. P4.3 worktree
-isolation, a stronger verification adapter and policy bridge must land before
-concurrent editing is exposed to users.
+Approved coding graphs use two workers and require a verified, owned Git
+worktree for each job.
 
 ### Approved Git worktree isolation (development)
 
@@ -182,8 +189,8 @@ Git checkout configuration and filters still require explicit owner consent.
 
 Cleanup **requires a new owner approval**, rechecks ownership and Git identity,
 refuses tracked/untracked/ignored changes and never uses `--force`.
-There is no automatic merge or cleanup. This API is not yet wired to the DAG
-scheduler or user-facing UI; those integrations must preserve the approval gates.
+The coding graph keeps each worktree for inspection after the run. Merging
+and cleanup require their own explicit action.
 
 ### Crash-safe DAG task claims (development)
 
@@ -195,9 +202,8 @@ silently sending the same work again. A terminal result is immutable.
 A new attempt needs fresh owner approval plus independent confirmation that
 the previous attempt was never delivered, with a maximum retry budget.
 
-This is the durable journal contract only. The live scheduler and harness
-adapters do not yet call it; integrating those with actual provider
-acknowledgment/reconciliation remains a separate milestone.
+The coding graph executor records claims before launch and settles them from
+structured provider and process evidence.
 
 ### Proof-based verification (development)
 
@@ -209,8 +215,8 @@ and exit code 0 are both observed; it does not prove code correctness.
 A separate Git status check reports whether an exact project-relative file
 changed, not whether the resulting code works.
 
-These result types and unit tests are in place for future DAG integration.
-The live X workflow UI is not yet using the complete verification pipeline.
+Coding graphs currently use verified delivery. Their run summary reports how
+many jobs returned that evidence.
 
 ### Verified worktree scheduling (development)
 
@@ -221,8 +227,7 @@ the existing one-writer-per-project restriction. Mixed project-wide and
 worktree-scoped jobs still conflict, and the exact lock is preserved through
 the job's lifetime even if the executor's discovery state changes.
 
-A live policy-backed harness executor that issues these identities remains
-outstanding; model-provided worktree names cannot switch isolation on.
+X allocates and verifies these identities through Git after approval.
 
 ### Approved two-harness execution (development)
 
@@ -232,13 +237,25 @@ worktree. It rechecks project/worktree identity, uses the crash-safe job
 journal to refuse duplicate sends, and derives completion from structured
 harness delivery and the explicitly chosen verification profile.
 
-The tests use fake providers with real Git worktrees to prove same-project
-parallel isolation, failure reporting, and replay refusal without network
-calls. **It is not connected to the voice command or native approval UI.**
-The host must create exact, scoped owner approvals before constructing an
-assignment; a model-generated graph cannot approve itself. Worktrees are
-preserved after runs, and code/test success is not claimed by delivery-only
-verification.
+Use an explicit version 2 coding graph containing only harness jobs. Each
+job references a registered Git project ID.
+
+```sh
+hex agent workflow import-graph ./coding-graph.json
+hex agent workflow run-graph coding-graph
+hex agent approve <task-id>
+hex agent stop
+```
+
+The plan shows the exact goal, project, provider, and pinned commit for
+every job. The same task appears in the Agent pane for approval. Approval
+creates separate folders under `~/X Worktrees` and issues one-use grants.
+A dependency can dispatch only while its grant is current and its required
+predecessors have verified delivery.
+
+Tests use isolated real Git worktrees and fixture provider executables to
+check approval, replay refusal, changed configuration, and dirty-checkout
+preservation. Code correctness requires separate verification.
 
 ### Safe merge-back previews (development)
 
@@ -265,10 +282,9 @@ are shorter-lived and use-limited. Revocation or restarting X invalidates
 outstanding receipts. A grant cannot authorize deletion, merging, secret
 access, screen capture or external transfers.
 
-This is the **policy contract only**: the native approval pane does not yet
-issue receipts to the harness scheduler. Existing Default / Autonomous mode
-behavior is unchanged. No workflow text, model response or JSON import may
-create an approval receipt.
+The existing approval action issues receipts for the exact coding graph
+shown in the preview. Autonomous mode still requires this approval. Receipt
+issuance happens inside the service after the owner approves.
 
 ### Approved tests in owned worktrees (development)
 

@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use crate::cancellation::Cancellation;
 use crate::context::{self, Context, Engine};
+use crate::grants::Grants;
 use crate::harness::{self, RunStatus};
 use crate::hexcli::{Stt, SttError};
 use crate::opencode;
@@ -21,6 +22,7 @@ use crate::session_links::{Link as SessionLink, Store as SessionStore};
 use crate::tools::{self, Action, Risk};
 
 mod edit;
+mod harness_workflow;
 mod ledger;
 mod policy;
 mod project_commands;
@@ -158,6 +160,8 @@ pub struct Snapshot {
     #[serde(default)]
     pub trusted_actions: bool,
     pub autonomy_mode: AutonomyMode,
+    /// None means the approval store is unavailable, not that it is empty.
+    pub pending_job_approvals: Option<usize>,
     pub computer_apps: Vec<String>,
     pub computer_remote: bool,
 }
@@ -291,6 +295,7 @@ struct State {
     edit: Option<edit::Job>,
     /// The saved workflow waiting to run, or running.
     workflow: Option<crate::workflows::Workflow>,
+    graph_workflow: Option<harness_workflow::PendingGraph>,
     project_command: Option<project_commands::Pending>,
     create_workspace: bool,
     /// How to put back the last workflow run's changes.
@@ -332,6 +337,7 @@ type SessionVerifier = dyn Fn(&harness::Session) -> Result<(), String> + Send + 
 #[derive(Clone)]
 pub struct Service {
     state: Arc<Mutex<State>>,
+    scoped_grants: Arc<Grants>,
     stt: Arc<dyn Stt>,
     launcher: Arc<dyn Launcher>,
     harness: Option<Arc<dyn harness::Adapter>>,
@@ -387,6 +393,7 @@ impl Service {
             guard: None,
             edit: None,
             workflow: None,
+            graph_workflow: None,
             project_command: None,
             create_workspace: false,
             undo: vec![],
@@ -398,6 +405,7 @@ impl Service {
         };
         Self {
             state: Arc::new(Mutex::new(state)),
+            scoped_grants: Arc::new(Grants::default()),
             stt,
             launcher,
             harness,
@@ -416,6 +424,12 @@ impl Service {
 
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Share the same one-process authorization store with native-owned jobs.
+    /// This does not issue grants; only a trusted, explicit approval path can.
+    pub(crate) fn scoped_grants(&self) -> Arc<Grants> {
+        Arc::clone(&self.scoped_grants)
     }
 
     pub fn emit(&self, kind: &str, text: &str) {
@@ -523,7 +537,10 @@ impl Service {
     }
 
     pub fn snapshot(&self, since: u64) -> Snapshot {
+        // Stop and approved harness issuance acquire State before Grants.
+        // Maintain that order here to prevent an Agent poll/Stop deadlock.
         let s = self.lock();
+        let pending_job_approvals = self.scoped_grants.pending_count().ok();
         Snapshot {
             phase: if !s.phase.is_busy()
                 && s.model_stop.as_ref().is_some_and(|stop| !stop.requested())
@@ -537,6 +554,7 @@ impl Service {
             workspace: s.workspace.as_ref().map(|p| p.display().to_string()),
             trusted_actions: s.autonomy_mode == AutonomyMode::Autonomous,
             autonomy_mode: s.autonomy_mode,
+            pending_job_approvals,
             computer_apps: s.computer_apps.clone(),
             computer_remote: s.computer_remote,
             opencode_found: self.harness.is_some(),
@@ -1224,6 +1242,7 @@ impl Service {
         s.guard = options.guard;
         s.edit = None;
         s.workflow = None;
+        s.graph_workflow = None;
         s.project_command = None;
         let task = Task {
             id,
@@ -1272,7 +1291,7 @@ impl Service {
     }
 
     fn approve_from(&self, task_id: u64, approval: Approval) -> Result<(), String> {
-        let (task, actions, is_edit, is_workflow, project_command, stop) = {
+        let (task, actions, is_edit, is_workflow, graph, project_command, stop) = {
             let mut s = self.lock();
             let matches_task = s.task.as_ref().is_some_and(|t| t.id == task_id);
             if !matches_task || s.phase != Phase::AwaitingApproval {
@@ -1308,12 +1327,16 @@ impl Service {
                 s.actions.clone(),
                 s.edit.is_some(),
                 s.workflow.is_some(),
+                s.graph_workflow.take(),
                 s.project_command.take(),
                 s.stop.clone(),
             )
         };
         let me = self.clone();
         thread::spawn(move || {
+            if let Some(graph) = graph {
+                return me.run_graph_workflow(graph, &stop);
+            }
             if let Some(command) = project_command {
                 return me.run_project_command(command, &stop);
             }
@@ -1828,6 +1851,7 @@ impl Service {
         }
         s.edit = None;
         s.workflow = None;
+        s.graph_workflow = None;
         s.project_command = None;
         set_phase(&mut s, phase);
         audit_best_effort(&mut s, AuditKind::Finished, None);
@@ -1848,6 +1872,13 @@ impl Service {
     /// Stop whatever is active: discard a plan, abort a recording, or kill a run.
     pub fn cancel(&self) {
         let mut s = self.lock();
+        if let Err(error) = self.scoped_grants().revoke_all() {
+            emit(
+                &mut s,
+                "error",
+                &format!("Could not revoke pending job approvals: {error}"),
+            );
+        }
         if s.model_stop.as_ref().is_some_and(Cancellation::request) {
             emit(&mut s, "info", "Stop requested for the pending plan");
         }
@@ -1857,6 +1888,7 @@ impl Service {
                 set_phase(&mut s, Phase::Cancelled);
                 s.edit = None;
                 s.workflow = None;
+                s.graph_workflow = None;
                 s.project_command = None;
                 s.actions.clear();
                 s.guard = None;

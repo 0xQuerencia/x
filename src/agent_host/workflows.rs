@@ -4,6 +4,7 @@
 
 use x_agent::service::Service;
 use x_agent::workflows::Store;
+use x_agent::workflows::dag::{Graph, Job};
 
 use crate::control::ControlReply;
 
@@ -30,6 +31,40 @@ fn summary(store: &Store) -> serde_json::Value {
     serde_json::Value::Array(entries)
 }
 
+/// A read-only policy summary. No receipt ID or private harness goal is serialized.
+fn permission_preview(graph: &Graph) -> serde_json::Value {
+    let nodes = graph
+        .nodes
+        .iter()
+        .map(|node| match &node.job {
+            Job::Desktop { action } => serde_json::json!({
+                "node_id": node.id,
+                "operation": "desktop",
+                "approval": "service_plan",
+                "action": action,
+            }),
+            Job::Harness {
+                harness,
+                project_id,
+                ..
+            } => serde_json::json!({
+                "node_id": node.id,
+                "operation": "harness",
+                "approval": "task_scoped_one_use",
+                "provider": harness,
+                "project_id": project_id,
+                "requires_registered_project": true,
+            }),
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "workflow_id": graph.id,
+        "nodes": nodes,
+        "executed": false,
+        "permissions_issued": false,
+    })
+}
+
 pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply {
     let store = svc.workflow_store();
     let refuse = |error: String| ControlReply::error("refused", error);
@@ -43,6 +78,11 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(wf) => ControlReply::done(
                 serde_json::json!({"workflow": wf, "last": store.last(value)}).to_string(),
             ),
+            Err(error) => refuse(error),
+        },
+        "permissions" if value.is_empty() => need("a workflow id"),
+        "permissions" => match store.get_graph(value) {
+            Ok(graph) => ControlReply::done(permission_preview(&graph).to_string()),
             Err(error) => refuse(error),
         },
         "preview" if value.is_empty() => need("a workflow id"),
@@ -74,6 +114,11 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             ),
             Err(error) => refuse(error),
         },
+        "run-graph" if value.is_empty() => need("a workflow id"),
+        "run-graph" => match svc.plan_graph_workflow(value) {
+            Ok(_) => super::snapshot(0),
+            Err(error) => refuse(error),
+        },
         "delete" if value.is_empty() => need("a workflow id"),
         "delete" => match store.delete(value) {
             Ok(()) => ControlReply::done(format!("Deleted {value}")),
@@ -89,13 +134,52 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(wf) => ControlReply::done(format!("Imported {} ({})", wf.id, wf.name)),
             Err(error) => refuse(error),
         },
+        "import-graph" if value.is_empty() => need("a file path"),
+        "import-graph" => match store.import_graph(std::path::Path::new(value)) {
+            Ok(graph) => ControlReply::done(format!("Imported {} ({})", graph.id, graph.name)),
+            Err(error) => refuse(error),
+        },
         "undo" => match svc.undo_workflow() {
             Ok(message) => ControlReply::done(message),
             Err(error) => refuse(error),
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, run, last, delete, duplicate, import, undo, dir",
+            "workflow commands: list, show, preview, permissions, run, run-graph, last, delete, duplicate, import, import-graph, undo, dir",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use x_agent::workflows::dag::{HarnessKind, Node, VERSION};
+    use x_agent::workflows::model::OnFailure;
+
+    #[test]
+    fn permission_review_does_not_reveal_private_goal_or_issue_grants() {
+        let graph = Graph {
+            version: VERSION,
+            id: "review".into(),
+            name: "Review".into(),
+            triggers: vec![],
+            nodes: vec![Node {
+                id: "backend".into(),
+                after: vec![],
+                requires: vec![],
+                job: Job::Harness {
+                    harness: HarnessKind::OpenCode,
+                    project_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+                    goal: "private coding instructions".into(),
+                },
+                on_failure: OnFailure::Stop,
+            }],
+        };
+        let output = permission_preview(&graph);
+        let rendered = output.to_string();
+        assert_eq!(output["executed"], false);
+        assert_eq!(output["permissions_issued"], false);
+        assert_eq!(output["nodes"][0]["approval"], "task_scoped_one_use");
+        assert!(!rendered.contains("private coding instructions"));
     }
 }
