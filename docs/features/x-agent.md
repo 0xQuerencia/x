@@ -83,6 +83,23 @@ pane is selected.
 desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
 once: X refuses to start while any task or recording of its own is in flight.
 
+### Register a project
+
+```sh
+hex agent projects register "My project" ~/code/project
+hex agent projects list
+hex agent projects forget <project-id>
+```
+
+Each explicitly chosen folder gets a stable local ID. X resolves links and
+requires the result to stay inside your home, outside private configuration
+trees. For a Git checkout, X records the local Git common directory so linked
+worktrees share the same repository identity. Registering a folder again
+returns its existing entry. Forget removes only the registry entry.
+
+The registry tests cover restart, linked Git worktrees, private paths,
+symlink escapes, and preservation of files when forgetting a project.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation

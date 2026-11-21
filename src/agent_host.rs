@@ -17,6 +17,7 @@ use x_agent::service::{Mode, RealLauncher, Service};
 
 use crate::control::{AgentAction, ControlReply};
 
+mod projects;
 mod sessions;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod wake;
@@ -907,6 +908,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Ok(_) => snapshot(0),
             Err(error) => ControlReply::error("refused", error),
         },
+        AgentAction::Projects { command } => projects::handle(command),
         AgentAction::Sessions { resume } => sessions::handle(svc, resume),
         AgentAction::Doctor => unreachable!("doctor is handled before initializing X"),
         AgentAction::Desktop => {

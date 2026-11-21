@@ -500,6 +500,11 @@ pub enum AgentCommand {
         #[command(subcommand)]
         command: SessionCommand,
     },
+    /// Register, list, or forget explicitly chosen project directories.
+    Projects {
+        #[command(subcommand)]
+        command: ProjectCli,
+    },
     /// Saved desktop workflows, run by trigger phrase or by id. `list` shows them with their
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
@@ -642,6 +647,28 @@ pub enum SessionCommand {
     Send {
         #[arg(required = true, num_args = 1..)]
         text: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProjectCli {
+    /// List registered projects and their IDs.
+    List {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Register a folder inside your home, using an absolute path or ~/.
+    Register {
+        name: String,
+        path: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Remove a project from X's registry using its ID.
+    Forget {
+        id: String,
         #[command(flatten)]
         output: Output,
     },
@@ -839,6 +866,19 @@ pub fn run(command: ControlCli) -> u8 {
                         output,
                     ),
                 },
+                AgentCommand::Projects { command } => {
+                    use super::ProjectCommand;
+                    let (command, output) = match command {
+                        ProjectCli::List { output } => (ProjectCommand::List, output),
+                        ProjectCli::Register { name, path, output } => {
+                            (ProjectCommand::Register { name, path }, output)
+                        }
+                        ProjectCli::Forget { id, output } => {
+                            (ProjectCommand::Forget { id }, output)
+                        }
+                    };
+                    (AgentAction::Projects { command }, output)
+                }
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
                 AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),
                 AgentCommand::Key { .. } => unreachable!("key handled locally"),
