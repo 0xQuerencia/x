@@ -158,6 +158,8 @@ pub struct Snapshot {
     #[serde(default)]
     pub trusted_actions: bool,
     pub autonomy_mode: AutonomyMode,
+    /// None means the approval store is unavailable, not that it is empty.
+    pub pending_job_approvals: Option<usize>,
     pub computer_apps: Vec<String>,
     pub computer_remote: bool,
 }
@@ -521,6 +523,8 @@ impl Service {
     }
 
     pub fn snapshot(&self, since: u64) -> Snapshot {
+        // Read grants before State; Stop takes these locks in this order.
+        let pending_job_approvals = self.scoped_grants.pending_count().ok();
         let s = self.lock();
         Snapshot {
             phase: if !s.phase.is_busy()
@@ -535,6 +539,7 @@ impl Service {
             workspace: s.workspace.as_ref().map(|p| p.display().to_string()),
             trusted_actions: s.autonomy_mode == AutonomyMode::Autonomous,
             autonomy_mode: s.autonomy_mode,
+            pending_job_approvals,
             computer_apps: s.computer_apps.clone(),
             computer_remote: s.computer_remote,
             opencode_found: self.harness.is_some(),
