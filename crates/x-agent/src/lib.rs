@@ -18,6 +18,7 @@ pub mod decision;
 mod decision_computer;
 pub mod desktop;
 pub mod edit;
+pub mod harness;
 pub mod hexcli;
 pub mod opencode;
 pub mod phase;

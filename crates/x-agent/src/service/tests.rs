@@ -1720,3 +1720,75 @@ fn an_explicit_spoken_stop_discards_a_late_model_plan() {
     assert!(svc.snapshot(0).task.is_none());
     assert!(launcher.launched.lock().unwrap().is_empty());
 }
+
+#[test]
+fn work_uses_the_same_adapter_interface_with_a_fake() {
+    struct FakeHarness;
+    impl harness::Adapter for FakeHarness {
+        fn descriptor(&self) -> harness::Descriptor {
+            harness::Descriptor {
+                kind: harness::Kind::OpenCode,
+                event_schema: 1,
+                version: Some("fixture".into()),
+                capabilities: &[harness::Capability::OwnedRun],
+            }
+        }
+
+        fn start(
+            &self,
+            request: harness::Request,
+            events: harness::EventSink,
+            stop: &Cancellation,
+        ) -> Result<Box<dyn harness::OwnedRun>, String> {
+            assert!(!stop.requested());
+            assert_eq!(request.prompt, "inspect the tests");
+            assert!(request.workspace.is_dir());
+            assert!(request.allow_commands.is_empty());
+            events(harness::Event::new(
+                harness::EventKind::Text,
+                "fixture event",
+            ));
+            Ok(Box::new(FakeResult))
+        }
+    }
+
+    struct FakeResult;
+    impl harness::OwnedRun for FakeResult {
+        fn join(self: Box<Self>) -> harness::RunResult {
+            harness::RunResult {
+                status: RunStatus::Completed,
+                exit_code: Some(0),
+                errors: Vec::new(),
+                stderr: Vec::new(),
+                changed_files: None,
+            }
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("repo");
+    std::fs::create_dir(&workspace).unwrap();
+    let service = Service::with_harness(
+        Arc::new(FakeStt::default()),
+        Arc::new(FakeLauncher::default()),
+        Some(Arc::new(FakeHarness)),
+    );
+    service.set_workspace(workspace.to_str().unwrap()).unwrap();
+    let task = service.plan("inspect the tests", Mode::Work).unwrap();
+    let staged = service.snapshot(0);
+    assert_eq!(staged.phase, Phase::AwaitingApproval);
+    assert_eq!(staged.harness.unwrap().version.as_deref(), Some("fixture"));
+    assert!(
+        !staged
+            .events
+            .iter()
+            .any(|event| event.text == "fixture event")
+    );
+    service.approve(task.id).unwrap();
+    let done = wait_for(&service, |snapshot| snapshot.phase == Phase::Completed);
+    assert!(
+        done.events
+            .iter()
+            .any(|event| event.kind == "text" && event.text == "fixture event")
+    );
+}

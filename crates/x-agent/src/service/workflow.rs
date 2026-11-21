@@ -12,7 +12,8 @@ use std::sync::Arc;
 use super::edit::{step, task};
 use super::{Review, Service, busy, emit};
 use crate::cancellation::Cancellation;
-use crate::opencode::{self, Run, RunConfig, RunStatus};
+use crate::harness::{self, RunStatus};
+use crate::opencode;
 use crate::phase::Phase;
 use crate::tools::Action;
 use crate::wm::{Cap, WinInfo};
@@ -79,7 +80,7 @@ impl Host for Bridge {
     }
 
     fn opencode_ready(&self) -> Result<(), String> {
-        let found = self.svc.opencode_exe.lock().is_ok_and(|e| e.is_some());
+        let found = self.svc.harness.is_some();
         found
             .then_some(())
             .ok_or_else(|| "OpenCode CLI not found on PATH".into())
@@ -352,17 +353,20 @@ impl Service {
         dir: &Path,
         stop: &Cancellation,
     ) -> Result<String, String> {
-        let exe = self
-            .opencode_exe
-            .lock()
-            .ok()
-            .and_then(|e| e.clone())
+        let adapter = self
+            .harness
+            .as_ref()
             .ok_or("OpenCode CLI not found on PATH")?;
-        let ws = opencode::validate_workspace(dir)?;
+        let workspace = opencode::validate_workspace(dir)?;
         let me = self.clone();
-        let on_event: opencode::OnEvent = Arc::new(move |k, t| me.emit(k, t));
-        let res = match Run::start_scoped(RunConfig::new(exe, goal.to_string(), ws), on_event, stop)
-        {
+        let on_event: harness::EventSink =
+            Arc::new(move |event| me.emit(event.kind.as_str(), &event.text));
+        let request = harness::Request {
+            workspace,
+            prompt: goal.to_string(),
+            allow_commands: Vec::new(),
+        };
+        let res = match adapter.start(request, on_event, stop) {
             Ok(run) => run.join(),
             Err(_) if stop.requested() => return Err("Stopped".into()),
             Err(error) => return Err(error),

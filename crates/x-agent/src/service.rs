@@ -12,8 +12,9 @@ use serde::Serialize;
 
 use crate::cancellation::Cancellation;
 use crate::context::{self, Context, Engine};
+use crate::harness::{self, RunStatus};
 use crate::hexcli::{Stt, SttError};
-use crate::opencode::{self, Run, RunConfig, RunStatus};
+use crate::opencode;
 use crate::phase::Phase;
 use crate::tools::{self, Action, Risk};
 
@@ -135,6 +136,8 @@ pub struct Snapshot {
     pub events: Vec<Event>,
     pub workspace: Option<String>,
     pub opencode_found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness: Option<harness::Descriptor>,
     #[serde(default)]
     pub trusted_actions: bool,
     pub autonomy_mode: AutonomyMode,
@@ -297,7 +300,7 @@ pub struct Service {
     state: Arc<Mutex<State>>,
     stt: Arc<dyn Stt>,
     launcher: Arc<dyn Launcher>,
-    opencode_exe: Arc<Mutex<Option<PathBuf>>>,
+    harness: Option<Arc<dyn harness::Adapter>>,
     planner: Arc<Mutex<Option<Arc<dyn Planner>>>>,
     session_root: Arc<Mutex<Option<PathBuf>>>,
     desktop: Arc<Mutex<Arc<dyn crate::desktop::Desktop>>>,
@@ -318,6 +321,16 @@ impl Service {
         stt: Arc<dyn Stt>,
         launcher: Arc<dyn Launcher>,
         opencode_exe: Option<PathBuf>,
+    ) -> Self {
+        let adapter = opencode_exe
+            .map(|exe| Arc::new(opencode::Adapter::new(exe)) as Arc<dyn harness::Adapter>);
+        Self::with_harness(stt, launcher, adapter)
+    }
+
+    pub fn with_harness(
+        stt: Arc<dyn Stt>,
+        launcher: Arc<dyn Launcher>,
+        harness: Option<Arc<dyn harness::Adapter>>,
     ) -> Self {
         let state = State {
             phase: Phase::Idle,
@@ -346,7 +359,7 @@ impl Service {
             state: Arc::new(Mutex::new(state)),
             stt,
             launcher,
-            opencode_exe: Arc::new(Mutex::new(opencode_exe)),
+            harness,
             planner: Arc::new(Mutex::new(None)),
             session_root: Arc::new(Mutex::new(None)),
             desktop: Arc::new(Mutex::new(Arc::new(crate::desktop::AgentDesktop::detect()))),
@@ -398,11 +411,8 @@ impl Service {
             autonomy_mode: s.autonomy_mode,
             computer_apps: s.computer_apps.clone(),
             computer_remote: s.computer_remote,
-            opencode_found: self
-                .opencode_exe
-                .lock()
-                .map(|e| e.is_some())
-                .unwrap_or(false),
+            opencode_found: self.harness.is_some(),
+            harness: self.harness.as_ref().map(|adapter| adapter.descriptor()),
         }
     }
 
@@ -834,12 +844,7 @@ impl Service {
                     .as_ref()
                     .or(s.workspace.as_ref())
                     .ok_or("Choose a project workspace first")?;
-                if self
-                    .opencode_exe
-                    .lock()
-                    .map(|e| e.is_none())
-                    .unwrap_or(true)
-                {
+                if self.harness.is_none() {
                     return Err("OpenCode CLI not found on PATH".into());
                 }
                 let step = |t: &str, risk: &str| Step {
@@ -1224,10 +1229,7 @@ impl Service {
     }
 
     fn run_work(&self, task: &Task, stop: &Cancellation) {
-        let (Some(exe), Some(ws)) = (
-            self.opencode_exe.lock().ok().and_then(|e| e.clone()),
-            task.workspace.clone(),
-        ) else {
+        let (Some(adapter), Some(ws)) = (self.harness.as_ref(), task.workspace.clone()) else {
             return self.finish(
                 Phase::Failed,
                 Some("OpenCode or workspace missing".into()),
@@ -1279,18 +1281,18 @@ impl Service {
         }
         self.set_step(0, "running");
         let me = self.clone();
-        let on_event: opencode::OnEvent = Arc::new(move |k, t| {
-            let blocked = t
-                .strip_prefix("Blocked bash: ")
-                .filter(|_| k == "permission");
-            if let (Some(command), Some(task)) = (blocked, me.lock().task.as_mut()) {
-                task.blocked.push(command.to_string());
+        let on_event: harness::EventSink = Arc::new(move |event| {
+            if let (Some(command), Some(task)) = (event.blocked_command, me.lock().task.as_mut()) {
+                task.blocked.push(command);
             }
-            me.emit(k, t)
+            me.emit(event.kind.as_str(), &event.text)
         });
-        let mut config = RunConfig::new(exe, task.text.clone(), ws);
-        config.allow_commands = std::mem::take(&mut self.lock().grants);
-        let run = match Run::start_scoped(config, on_event, stop) {
+        let request = harness::Request {
+            workspace: ws,
+            prompt: task.text.clone(),
+            allow_commands: std::mem::take(&mut self.lock().grants),
+        };
+        let run = match adapter.start(request, on_event, stop) {
             Ok(r) => r,
             Err(_) if stop.requested() => {
                 return self.finish(

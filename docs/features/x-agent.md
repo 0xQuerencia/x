@@ -453,6 +453,9 @@ Native Linux process-control tests should run only on an isolated test session.
 * **Work never bypasses OpenCode's permissions.** X does not pass `--auto`. The run uses a
   private OpenCode server (`--standalone`) when the installed OpenCode has it. A run only
   counts as completed with exit code 0 **and** no error event; an error event ends the run.
+  Work and saved workflows share the adapter and its structured event parser.
+  Only a typed bash refusal can offer a command for separate review. The harness
+  descriptor in Agent status gives the event schema and the adapter's operations.
 * **Stop** discards a pending plan, prevents queued steps from starting and
   requests cancellation of workers owned by the task. A late model proposal
   is discarded. Say `Friday, stop the task` through the enabled command path or

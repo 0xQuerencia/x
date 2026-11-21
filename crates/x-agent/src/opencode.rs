@@ -17,35 +17,18 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
-
 use crate::cancellation::Cancellation;
+use crate::harness::{self, Event, EventKind, EventSink};
+pub use crate::harness::{RunResult, RunStatus};
+
+mod events;
 
 const POLL: Duration = Duration::from_millis(200);
 const KILL_GRACE: Duration = Duration::from_secs(5);
-const MAX_EVENT_CHARS: usize = 450;
 pub const STALL_AFTER: Duration = Duration::from_secs(120);
 
 /// Receives `(kind, one-line text)` for each event as it happens.
 pub type OnEvent = Arc<dyn Fn(&str, &str) + Send + Sync>;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct RunResult {
-    pub status: RunStatus,
-    pub exit_code: Option<i32>,
-    pub errors: Vec<String>,
-    pub stderr: Vec<String>,
-    /// Files whose git state changed during the run; `None` outside a git repo.
-    pub changed_files: Option<Vec<String>>,
-}
 
 /// Reject missing paths, files, `/`, and the whole home directory.
 pub fn validate_workspace(path: &Path) -> Result<PathBuf, String> {
@@ -74,68 +57,10 @@ pub fn validate_workspace(path: &Path) -> Result<PathBuf, String> {
     Ok(resolved)
 }
 
-/// Classify one parsed event into `(kind, summary)`.
+/// Summarize a parsed event for callers of the text-only runner interface.
 pub fn summarize_event(obj: &serde_json::Value) -> (String, String) {
-    let clip = |s: &str| s.chars().take(MAX_EVENT_CHARS).collect::<String>();
-    let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("event");
-    let part = obj.get("part").filter(|p| p.is_object());
-    if kind == "error" {
-        let msg = match obj.get("error") {
-            Some(e) => e
-                .get("message")
-                .and_then(|m| m.as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| e.to_string()),
-            None => "unknown error".into(),
-        };
-        return ("error".into(), clip(&msg));
-    }
-    if let Some(tool) = part.and_then(|p| p.get("tool")).and_then(|t| t.as_str()) {
-        let state = part.and_then(|p| p.get("state"));
-        let refused = state
-            .and_then(|s| s.get("error"))
-            .and_then(|e| e.as_str())
-            .is_some_and(|e| e.contains("rejected permission"));
-        if refused {
-            let command = state
-                .and_then(|s| s.get("input"))
-                .and_then(|i| {
-                    i.get("command")
-                        .or_else(|| i.get("filePath"))
-                        .or_else(|| i.get("url"))
-                })
-                .and_then(|c| c.as_str())
-                .unwrap_or("");
-            return (
-                "permission".into(),
-                clip(&format!("Blocked {tool}: {command}")),
-            );
-        }
-        let field = |k: &str| {
-            state
-                .and_then(|s| s.get(k))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-        };
-        return (
-            "tool".into(),
-            clip(format!("{tool} {} {}", field("status"), field("title")).trim()),
-        );
-    }
-    if kind == "text" {
-        let text = part
-            .and_then(|p| p.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-        return ("text".into(), clip(text));
-    }
-    if kind.contains("permission") {
-        return (
-            "permission".into(),
-            clip(&format!("{kind}: {}", part.unwrap_or(obj))),
-        );
-    }
-    (kind.into(), kind.into())
+    let event = events::parse(&obj.to_string());
+    (event.kind.as_str().into(), event.text)
 }
 
 fn git(workspace: &Path, args: &[&str]) -> Option<String> {
@@ -296,6 +221,45 @@ impl RunConfig {
     }
 }
 
+pub struct Adapter {
+    exe: PathBuf,
+}
+
+impl Adapter {
+    pub fn new(exe: PathBuf) -> Self {
+        Self { exe }
+    }
+}
+
+impl harness::Adapter for Adapter {
+    fn descriptor(&self) -> harness::Descriptor {
+        use harness::Capability::*;
+        harness::Descriptor {
+            kind: harness::Kind::OpenCode,
+            event_schema: 1,
+            version: None,
+            capabilities: &[OwnedRun, StreamEvents, StopOwnedRun],
+        }
+    }
+
+    fn start(
+        &self,
+        request: harness::Request,
+        events: EventSink,
+        stop: &Cancellation,
+    ) -> Result<Box<dyn harness::OwnedRun>, String> {
+        let mut config = RunConfig::new(self.exe.clone(), request.prompt, request.workspace);
+        config.allow_commands = request.allow_commands;
+        Ok(Box::new(Run::start_events_scoped(config, events, stop)?))
+    }
+}
+
+impl harness::OwnedRun for Run {
+    fn join(self: Box<Self>) -> RunResult {
+        (*self).join()
+    }
+}
+
 pub struct Run {
     canceller: Canceller,
     handle: Option<JoinHandle<RunResult>>,
@@ -322,6 +286,18 @@ impl Run {
     pub fn start_scoped(
         cfg: RunConfig,
         on_event: OnEvent,
+        parent: &Cancellation,
+    ) -> Result<Self, String> {
+        Self::start_events_scoped(
+            cfg,
+            Arc::new(move |event| on_event(event.kind.as_str(), &event.text)),
+            parent,
+        )
+    }
+
+    fn start_events_scoped(
+        cfg: RunConfig,
+        on_event: EventSink,
         parent: &Cancellation,
     ) -> Result<Self, String> {
         let stop = parent.child();
@@ -470,7 +446,7 @@ fn supervise(
     cfg: &RunConfig,
     before: Option<BTreeMap<String, String>>,
     stop: &Cancellation,
-    on_event: OnEvent,
+    on_event: EventSink,
 ) -> RunResult {
     let (tx, rx) = mpsc::channel();
     if let Some(s) = child.stdout.take() {
@@ -487,13 +463,13 @@ fn supervise(
             Err(RecvTimeoutError::Timeout) => {
                 if !stalled && last.elapsed() > cfg.stall_after {
                     stalled = true;
-                    on_event(
-                        "stall",
-                        &format!(
+                    on_event(Event::new(
+                        EventKind::Stall,
+                        format!(
                             "No output for {}s: the agent may be waiting on a permission or the provider. Stop to abort.",
                             cfg.stall_after.as_secs()
                         ),
-                    );
+                    ));
                 }
             }
             Err(RecvTimeoutError::Disconnected) => break,
@@ -511,17 +487,13 @@ fn supervise(
                 if l.is_empty() {
                     continue;
                 }
-                match serde_json::from_str::<serde_json::Value>(l) {
-                    Ok(v) if v.is_object() => {
-                        let (kind, text) = summarize_event(&v);
-                        on_event(&kind, &text);
-                        if kind == "error" {
-                            errors.push(text);
-                            break;
-                        }
-                    }
-                    _ => on_event("raw", &l.chars().take(MAX_EVENT_CHARS).collect::<String>()),
+                let event = events::parse(l);
+                if event.kind == EventKind::Error {
+                    errors.push(event.text.clone());
+                    on_event(event);
+                    break;
                 }
+                on_event(event);
             }
         }
     }
