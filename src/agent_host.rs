@@ -909,7 +909,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Ok(_) => snapshot(0),
             Err(error) => ControlReply::error("refused", error),
         },
-        AgentAction::Projects { command } => projects::handle(command),
+        AgentAction::Projects { command } => projects::handle(svc, command),
         AgentAction::Sessions { resume } => sessions::handle(svc, resume),
         AgentAction::Doctor => unreachable!("doctor is handled before initializing X"),
         AgentAction::Desktop => {
