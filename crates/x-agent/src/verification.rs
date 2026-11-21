@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn wrong_target_cancel_and_nonzero_exit_never_verify() {
-        let expected = SessionId::try_from("ses_expected".into()).unwrap();
+        let expected = SessionId::try_from(String::from("ses_expected")).unwrap();
         let delivered = run(RunStatus::Completed, Some(0), true);
         assert_eq!(
             Result::harness_delivery(&delivered, Some(&expected), 5).outcome,
