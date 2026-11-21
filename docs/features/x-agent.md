@@ -218,6 +218,19 @@ assignment; a model-generated graph cannot approve itself. Worktrees are
 preserved after runs, and code/test success is not claimed by delivery-only
 verification.
 
+### Safe merge-back previews (development)
+
+The Git integration module checks an owned task worktree and computes a
+possible merge result using `git merge-tree --write-tree`. It reports
+potential changed files and conflicts without changing either checkout, Git
+refs or the user's original working tree. Uncommitted task changes block the
+preview rather than being silently omitted. A conflict never applies a merge.
+
+Only a separate, freshly approved R4 operation may later integrate, push or
+merge the result; **no such automatic operation is enabled here**. Git may
+write unreachable preview tree objects to its object database, but does not
+update HEAD, the index or worktree files.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
