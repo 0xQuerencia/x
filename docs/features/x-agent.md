@@ -110,6 +110,21 @@ not the project files.
 The registry tests cover restart, linked Git worktrees, private paths,
 symlink escapes, ambiguity, and preservation of files when forgetting a project.
 
+### Explicit context attachments
+
+X's spoken selection-to-session handoff now wraps the selected excerpt in a typed,
+bounded **untrusted context bundle**. It carries the source, capture time, scope
+and redaction state. Password fields and unverified primary selections are
+refused by the existing accessibility guard; attached text cannot grant
+permissions or become an X desktop action.
+
+The same bundle contract supports bounded user-chosen log and Git diff excerpts,
+project-scoped file-line references and query-stripped browser page metadata.
+Screenshot references require explicit screen permission; **image bytes are not
+automatically captured or sent**. Only the selected-text handoff is wired into
+the command surface in this slice. Future connectors must request separate
+permission and use these typed APIs rather than ad-hoc string interpolation.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
