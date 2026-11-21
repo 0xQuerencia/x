@@ -86,9 +86,15 @@ once: X refuses to start while any task or recording of its own is in flight.
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
-report for the CLI session. `hex agent desktop` reports the same data from the
-running X service. The older `supported` list still contains the backend's
-advertised operations.
+report for the CLI session. Use `hex agent doctor --running --json` to probe
+the running service's environment through the local API. Both forms identify
+the build, OS, architecture and probe source. Plain-text output shows the same
+capability states. `hex agent desktop` retains the desktop-only service report.
+
+Doctor reports ready when the window list probe succeeds and the required
+helpers are present. An unsafe key file also blocks readiness. On Windows the
+report labels key file permissions as unchecked. The older `supported` list
+continues to describe the backend's advertised operations.
 
 - **Supported** means a read-only window list probe succeeded. Hyprland and
   Windows provide this probe.

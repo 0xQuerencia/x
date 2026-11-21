@@ -33,4 +33,10 @@ including microphone, focus, app selection, clipboard, screenshots,
 accessibility, workflows, Stop and undo. Unsupported actions must remain
 explicitly unsupported.
 
-This is a direct `x.exe` binary; no `setup.exe` or MSI has been verified.
+Run `x.exe agent doctor --json` to record the build and desktop probe from
+PowerShell. If X is already running, add `--running` to probe the service
+session. Numbered virtual desktops should report unsupported. Window listing
+can be reported as supported after a read succeeds. Other window operations
+still need the physical checks in [the Windows test guide](x-win11.md).
+
+This is a direct `x.exe` binary. A Windows installer still needs verification.

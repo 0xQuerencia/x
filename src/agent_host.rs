@@ -753,6 +753,22 @@ fn watch(svc: &Service) {
     }
 }
 
+pub(crate) fn doctor_report(source: x_agent::wm::ProbeSource) -> ControlReply {
+    let key_path = crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("openrouter-key"));
+    let doctor =
+        x_agent::wm::doctor(key_path.as_deref()).with_identity(source, env!("HEX_BUILD_VERSION"));
+    match serde_json::to_value(&doctor) {
+        Ok(report) => ControlReply::AgentDoctor {
+            report,
+            lines: doctor.lines(),
+            ready: doctor.ready,
+        },
+        Err(error) => ControlReply::error("internal", error.to_string()),
+    }
+}
+
 fn snapshot(since: u64) -> ControlReply {
     match serde_json::to_value(service().snapshot(since)) {
         Ok(snapshot) => ControlReply::Agent { snapshot },
@@ -767,6 +783,9 @@ fn background(work: impl FnOnce(&Service) + Send + 'static) {
 }
 
 pub fn handle(action: AgentAction) -> ControlReply {
+    if action == AgentAction::Doctor {
+        return doctor_report(x_agent::wm::ProbeSource::RunningService);
+    }
     if !crate::labs::x_agent() {
         return ControlReply::error("disabled", DISABLED);
     }
@@ -870,6 +889,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
         AgentAction::Trust { on } => set_trust(on),
         AgentAction::Autonomy { mode } => set_autonomy(&mode),
         AgentAction::Planner { model } => set_planner(&model),
+        AgentAction::Doctor => unreachable!("doctor is handled before initializing X"),
         AgentAction::Desktop => {
             let r = x_agent::wm::report();
             ControlReply::done(serde_json::to_string(&r).unwrap_or_default())
@@ -999,6 +1019,24 @@ mod tests {
         for model in ["decider", "decider-flash"] {
             assert!(planner_for(model).is_some());
         }
+    }
+
+    #[test]
+    fn doctor_control_keeps_structured_diagnostics_in_the_reply() {
+        let request = serde_json::from_value(serde_json::json!({"action":"doctor"})).unwrap();
+        let ControlReply::AgentDoctor {
+            report,
+            lines,
+            ready,
+        } = handle(request)
+        else {
+            panic!("expected a structured diagnostics reply");
+        };
+        assert_eq!(report["source"], "running_service");
+        assert_eq!(report["build"], env!("HEX_BUILD_VERSION"));
+        assert_eq!(report["ready"], ready);
+        assert!(report["desktop"]["capabilities"].is_array());
+        assert!(lines.contains("running X service"));
     }
 
     #[test]
