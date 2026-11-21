@@ -88,6 +88,9 @@ once: X refuses to start while any task or recording of its own is in flight.
 ```sh
 hex agent projects register "My project" ~/code/project
 hex agent projects list
+hex agent projects alias-add <project-id> "My alias"
+hex agent projects use "My alias"
+hex agent projects alias-remove <project-id> "My alias"
 hex agent projects forget <project-id>
 ```
 
@@ -97,8 +100,15 @@ trees. For a Git checkout, X records the local Git common directory so linked
 worktrees share the same repository identity. Registering a folder again
 returns its existing entry. Forget removes only the registry entry.
 
+Names and aliases resolve by exact normalized match, never fuzzy matching.
+When multiple projects share the same name or alias, select by the stable ID.
+Selecting a project validates its directory again and sets the Work workspace.
+A selected project is remembered between X restarts; it never bypasses Work approval.
+Aliases are local metadata. Forget removes the registry and saved session metadata,
+not the project files.
+
 The registry tests cover restart, linked Git worktrees, private paths,
-symlink escapes, and preservation of files when forgetting a project.
+symlink escapes, ambiguity, and preservation of files when forgetting a project.
 
 ### Desktop capability checks
 
