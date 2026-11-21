@@ -154,7 +154,9 @@ fn autonomous_computer_still_requires_scoped_screen_and_remote_consent() {
     s.cancel();
 
     s.set_computer_apps(vec!["chrome".into()]);
-    s.plan("press the button in chrome", Mode::Actions).unwrap();
+    let task = s.plan("press the button in chrome", Mode::Actions).unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    s.approve(task.id).unwrap();
     let result = wait_for(&s, |v| v.phase == Phase::Completed);
     assert!(result.task.unwrap().summary.unwrap().contains("clicked"));
 }
@@ -258,6 +260,12 @@ fn destructive_actions_are_gated_by_origin_and_speech_source() {
     assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
     assert!(launcher.launched.lock().unwrap().is_empty());
     s.cancel();
+
+    let spoken = s.plan_spoken("close this window", Mode::Actions).unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
+    s.cancel();
+    assert!(s.approve(spoken.id).is_err());
 
     // Typed commands need approval for a close too.
     s.plan("close this window", Mode::Actions).unwrap();
@@ -412,7 +420,9 @@ fn screen_access_gating() {
     s.cancel();
 
     s.set_computer_apps(vec!["chrome".into()]);
-    s.plan("press the button in chrome", Mode::Actions).unwrap();
+    let task = s.plan("press the button in chrome", Mode::Actions).unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    s.approve(task.id).unwrap();
     let done = wait_for(&s, |x| x.phase == Phase::Completed);
     assert!(done.task.unwrap().summary.unwrap().contains("clicked"));
     assert!(done.events.iter().any(|e| e.kind == "verify"));
@@ -505,6 +515,7 @@ fn a_temporary_session_is_a_work_task_in_a_fresh_folder() {
     assert_eq!(t.text, "write a poem");
     let workspace = t.workspace.unwrap();
     assert!(workspace.starts_with(root.to_str().unwrap()), "{workspace}");
+    assert!(!std::path::Path::new(&workspace).exists());
     assert_eq!(
         s.snapshot(0).phase,
         Phase::AwaitingApproval,
@@ -528,15 +539,19 @@ fn desktop_steps_are_actions_the_rules_know() {
 }
 
 #[test]
-fn trusted_typing_alone_still_asks_but_after_a_launch_it_runs() {
+fn legacy_trust_requires_approval_for_typing_after_a_launch_too() {
     let (s, _, l) = rig();
     s.set_trust_actions(true);
     s.plan("type hello there", Mode::Actions).unwrap();
     assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
     assert!(l.launched.lock().unwrap().is_empty());
     s.cancel();
-    s.plan("open a terminal and type hello there", Mode::Actions)
+    let task = s
+        .plan("open a terminal and type hello there", Mode::Actions)
         .unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(l.launched.lock().unwrap().is_empty());
+    s.approve(task.id).unwrap();
     wait_for(&s, |x| x.phase == Phase::Completed);
     assert_eq!(l.launched.lock().unwrap().len(), 2);
 }
@@ -901,11 +916,23 @@ mod contextual {
     fn trusted_command_stops_when_focus_moved_during_the_command() {
         let (s, l, ..) = setup(1); // the capture is read 1, the recheck is read 2 and flips
         s.set_trust_actions(true);
-        s.plan("search this on github", Mode::Actions).unwrap();
+        s.plan("copy this", Mode::Actions).unwrap();
         let done = wait_for(&s, |x| x.phase == Phase::Failed);
         let error = done.task.unwrap().error.unwrap();
         assert!(error.contains("Focus moved"), "{error}");
         assert!(l.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_selected_search_requires_approval_even_with_legacy_trust() {
+        let (s, launcher, ..) = setup(usize::MAX);
+        s.set_trust_actions(true);
+        let task = s.plan("search this on github", Mode::Actions).unwrap();
+        assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+        assert!(launcher.launched.lock().unwrap().is_empty());
+        s.approve(task.id).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        assert!(launcher.launched.lock().unwrap()[0].contains(ERROR));
     }
 
     #[test]
@@ -1399,6 +1426,28 @@ mod saved_workflows {
         thread::sleep(Duration::from_millis(200));
         assert_eq!(r.s.snapshot(0).phase, Phase::AwaitingApproval, "{t:?}");
         assert!(t.steps[0].risk.contains("modify files"));
+    }
+
+    #[test]
+    fn legacy_trust_cannot_start_a_workflow_that_closes_a_window() {
+        let r = rig();
+        r.s.set_trust_actions(true);
+        let mut workflow = r.s.workflow_store().get("coding").unwrap();
+        workflow.steps.push(crate::workflows::Step {
+            id: "cleanup".into(),
+            action: StepAction::CloseOpenedWindow {
+                opened_by: workflow.steps[0].id.clone(),
+            },
+            requires: vec![workflow.steps[0].id.clone()],
+            timeout_secs: None,
+            on_failure: crate::workflows::model::OnFailure::Stop,
+        });
+        r.s.workflow_store().save(&workflow).unwrap();
+        let task = r.s.plan("start coding", Mode::Actions).unwrap();
+        assert_eq!(r.s.snapshot(0).phase, Phase::AwaitingApproval);
+        assert!(task.steps.iter().all(|step| step.status == "pending"));
+        r.s.approve(task.id).unwrap();
+        wait_for(&r.s, |snapshot| snapshot.phase == Phase::Completed);
     }
 
     #[test]

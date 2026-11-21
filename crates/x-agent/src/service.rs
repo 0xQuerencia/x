@@ -17,9 +17,12 @@ use crate::phase::Phase;
 use crate::tools::{self, Action, Risk};
 
 mod edit;
+mod policy;
 mod request;
 mod workflow;
 pub use edit::Preview;
+pub use policy::AutonomyMode;
+use policy::{Approval, Review};
 pub use request::RequestMetadata;
 use request::{ActionId, ActionRequest};
 
@@ -33,6 +36,9 @@ fn action_risk_label(action: &Action) -> &'static str {
         Risk::Safe => "reads local desktop state",
         Risk::Reversible => "changes desktop state; may be undoable",
         Risk::Destructive => "closes a window; cannot be undone",
+        Risk::Consequential if matches!(action, Action::Opencode | Action::Session { .. }) => {
+            "creates a folder for a coding session"
+        }
         Risk::Consequential => "may type or act inside an application",
     }
 }
@@ -45,19 +51,6 @@ const MAX_EVENTS: usize = 400;
 pub enum Mode {
     Actions,
     Work,
-}
-
-/// Approval behavior is separate from the speech mode (Dictate, Auto, Smart)
-/// and separate from the Action/Work task type.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AutonomyMode {
-    /// Each desktop task awaits approval unless another legacy trust setting
-    /// was explicitly enabled. Selecting Default turns that trust setting off.
-    Default,
-    /// Approved low-risk Actions and explicitly granted computer-app sessions
-    /// run automatically. Work and consequential operations remain gated.
-    Autonomous,
 }
 
 /// Where the action was constructed. Remote choices are never treated as
@@ -81,31 +74,6 @@ pub enum InputSource {
     Text,
     PushToTalk,
     HandsFree,
-}
-
-impl AutonomyMode {
-    pub fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "default" => Ok(Self::Default),
-            "autonomous" => Ok(Self::Autonomous),
-            _ => Err("Mode must be default or autonomous".into()),
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Default => "default",
-            Self::Autonomous => "autonomous",
-        }
-    }
-
-    pub fn from_trust(trusted: bool) -> Self {
-        if trusted {
-            Self::Autonomous
-        } else {
-            Self::Default
-        }
-    }
 }
 
 impl Mode {
@@ -274,7 +242,8 @@ struct State {
     stop_requested: bool,
     voice_mode: Mode,
     workspace: Option<PathBuf>,
-    trust_actions: bool,
+    autonomy_mode: AutonomyMode,
+    review: Review,
     grants: Vec<String>,
     computer_apps: Vec<String>,
     computer_remote: bool,
@@ -284,6 +253,7 @@ struct State {
     edit: Option<edit::Job>,
     /// The saved workflow waiting to run, or running.
     workflow: Option<crate::workflows::Workflow>,
+    create_workspace: bool,
     /// How to put back the last workflow run's changes.
     undo: Vec<crate::workflows::engine::Reversal>,
 }
@@ -294,6 +264,8 @@ struct PlanOptions {
     source: InputSource,
     guard: Option<Guard>,
     allow_command: Option<String>,
+    private_context: bool,
+    new_workspace: Option<PathBuf>,
 }
 
 struct Guard {
@@ -337,13 +309,15 @@ impl Service {
             actions: vec![],
             canceller: None,
             stop_requested: false,
-            trust_actions: false,
+            autonomy_mode: AutonomyMode::Default,
+            review: Review::Required,
             grants: vec![],
             computer_apps: vec![],
             computer_remote: false,
             guard: None,
             edit: None,
             workflow: None,
+            create_workspace: false,
             undo: vec![],
             voice_mode: Mode::Actions,
             workspace: None,
@@ -378,8 +352,8 @@ impl Service {
             task: s.task.clone(),
             events: s.events.iter().filter(|e| e.n > since).cloned().collect(),
             workspace: s.workspace.as_ref().map(|p| p.display().to_string()),
-            trusted_actions: s.trust_actions,
-            autonomy_mode: AutonomyMode::from_trust(s.trust_actions),
+            trusted_actions: s.autonomy_mode == AutonomyMode::Autonomous,
+            autonomy_mode: s.autonomy_mode,
             computer_apps: s.computer_apps.clone(),
             computer_remote: s.computer_remote,
             opencode_found: self
@@ -408,14 +382,14 @@ impl Service {
     /// validated launches. Work and anything unplanned always wait for approval.
     pub fn set_autonomy_mode(&self, mode: AutonomyMode) {
         let mut s = self.lock();
-        s.trust_actions = mode == AutonomyMode::Autonomous;
+        s.autonomy_mode = mode;
         emit(
             &mut s,
             "info",
             match mode {
                 AutonomyMode::Default => "Default mode: approval before each task",
                 AutonomyMode::Autonomous => {
-                    "Autonomous mode: safe Actions and granted computer apps run without a prompt"
+                    "Autonomous mode: low-risk desktop actions can start without approval"
                 }
             },
         );
@@ -425,6 +399,13 @@ impl Service {
     /// Both commands manipulate the same state; there are no conflicting toggles.
     pub fn set_trust_actions(&self, on: bool) {
         self.set_autonomy_mode(AutonomyMode::from_trust(on));
+    }
+
+    pub fn note_policy_upgrade(&self) {
+        self.emit(
+            "info",
+            "Saved Autonomous mode now runs only low-risk desktop tasks automatically. Typing, closing windows, and operating apps ask for approval.",
+        );
     }
 
     pub fn set_session_root(&self, root: PathBuf) {
@@ -475,11 +456,12 @@ impl Service {
         for note in &resolved.notes {
             self.emit("info", note);
         }
-        // Text from the primary selection can be stale or from another window, so it is
-        // always shown for approval, even with Trusted Actions on.
-        let from_primary = ctx.selection.source == context::Source::PrimarySelection;
-        let automatic =
-            self.lock().trust_actions && !from_primary && tools::is_low_risk(&resolved.actions);
+        // A guessed primary selection or data sent off-device needs explicit review.
+        let private_context = ctx.selection.source == context::Source::PrimarySelection
+            || matches!(
+                cmd,
+                context::commands::Command::Search { .. } | context::commands::Command::OpenLink
+            );
         let task = self.plan_task(
             text,
             Mode::Actions,
@@ -488,15 +470,13 @@ impl Service {
                 source,
                 guard: Some(Guard {
                     ctx,
-                    strict_focus: automatic,
+                    strict_focus: false,
                 }),
+                private_context,
                 ..PlanOptions::default()
             },
         )?;
-        if automatic && self.lock().trust_actions {
-            self.emit("info", "Trusted Actions: running without a prompt");
-            self.approve(task.id)?;
-        }
+        self.approve_if_automatic(task.id)?;
         Ok(task)
     }
 
@@ -628,25 +608,9 @@ impl Service {
         if let Some([Action::Session { goal }]) = preset.as_deref() {
             return self.plan_session(&goal.clone());
         }
-        let computer_app = match preset.as_deref() {
-            Some([Action::Computer { app, .. }]) => Some(app.clone()),
-            _ => None,
-        };
-        if computer_app.is_some() {
+        if matches!(preset.as_deref(), Some([Action::Computer { .. }])) {
             self.check_screen_may_leave()?;
         }
-        let exact_close = origin == Origin::Rules
-            && source == InputSource::PushToTalk
-            && matches!(
-                preset.as_deref(),
-                Some([Action::Window {
-                    op: crate::wm::Op::Close,
-                    target: crate::wm::Target { app, pick: None },
-                    ..
-                }]) if app.is_empty()
-            );
-        let auto_close = exact_close && self.lock().trust_actions;
-        let low_risk = preset.as_deref().is_some_and(tools::is_low_risk);
         let task = self.plan_task(
             text,
             mode,
@@ -654,10 +618,6 @@ impl Service {
             PlanOptions {
                 origin,
                 source,
-                guard: auto_close.then(|| Guard {
-                    ctx: self.context_engine().capture(false),
-                    strict_focus: true,
-                }),
                 ..PlanOptions::default()
             },
         )?;
@@ -668,21 +628,7 @@ impl Service {
                 planning_started.elapsed().as_millis()
             ),
         );
-        if let Some(app) = computer_app {
-            let granted = self.lock().computer_apps.contains(&app);
-            if granted && self.lock().trust_actions {
-                self.emit(
-                    "info",
-                    &format!("Screen access to {app} is granted: starting"),
-                );
-                self.approve(task.id)?;
-            }
-            return Ok(task);
-        }
-        if mode == Mode::Actions && (auto_close || low_risk) && self.lock().trust_actions {
-            self.emit("info", "Trusted Actions: running without a prompt");
-            self.approve(task.id)?;
-        }
+        self.approve_if_automatic(task.id)?;
         Ok(task)
     }
 
@@ -698,9 +644,7 @@ impl Service {
         }
     }
 
-    /// A throwaway project folder under `~/x-sessions`, then an ordinary Work task in it.
-    /// The folder is never deleted for you. With Trusted Actions on the session starts
-    /// at once: it is confined to the new folder and OpenCode's permission policy.
+    /// Preview a fresh project folder before creating it or starting Work.
     fn plan_session(&self, goal: &str) -> Result<Task, String> {
         let root = match self.session_root.lock().ok().and_then(|r| r.clone()) {
             Some(root) => root,
@@ -708,13 +652,20 @@ impl Service {
                 .ok_or("No home folder for the session")?
                 .join("x-sessions"),
         };
-        let dir = root.join(format!("session-{}", now()));
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
-        self.set_workspace(&dir.display().to_string())?;
-        // Autonomous mode is for local desktop Actions, not for generated
-        // OpenCode edits. Even a fresh workspace still needs Work approval.
-        self.plan_task(goal, Mode::Work, None, PlanOptions::default())
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = root.join(format!("session-{stamp}"));
+        self.plan_task(
+            goal,
+            Mode::Work,
+            None,
+            PlanOptions {
+                new_workspace: Some(dir),
+                ..PlanOptions::default()
+            },
+        )
     }
 
     fn plan_task(
@@ -788,9 +739,10 @@ impl Service {
                 (steps, actions, None)
             }
             Mode::Work => {
-                let ws = s
-                    .workspace
-                    .clone()
+                let ws = options
+                    .new_workspace
+                    .as_ref()
+                    .or(s.workspace.as_ref())
                     .ok_or("Choose a project workspace first")?;
                 if self
                     .opencode_exe
@@ -819,6 +771,17 @@ impl Service {
             }
         };
         s.serial = id;
+        s.review = if mode == Mode::Actions
+            && !options.private_context
+            && actions
+                .iter()
+                .all(|request| request.metadata.risk.is_low_risk())
+        {
+            Review::LowRisk
+        } else {
+            Review::Required
+        };
+        s.create_workspace = options.new_workspace.is_some();
         s.grants = options.allow_command.into_iter().collect();
         s.guard = options.guard;
         s.edit = None;
@@ -857,16 +820,37 @@ impl Service {
     // ---- execution ---------------------------------------------------------------------
 
     pub fn approve(&self, task_id: u64) -> Result<(), String> {
+        self.approve_from(task_id, Approval::User)
+    }
+
+    fn approve_if_automatic(&self, task_id: u64) -> Result<(), String> {
+        self.approve_from(task_id, Approval::Automatic)
+    }
+
+    fn approve_from(&self, task_id: u64, approval: Approval) -> Result<(), String> {
         let (task, actions, is_edit, is_workflow) = {
             let mut s = self.lock();
             let matches_task = s.task.as_ref().is_some_and(|t| t.id == task_id);
             if !matches_task || s.phase != Phase::AwaitingApproval {
-                return Err("No matching task awaiting approval".into());
+                return match approval {
+                    Approval::Automatic => Ok(()),
+                    Approval::User => Err("No matching task awaiting approval".into()),
+                };
+            }
+            if !s.review.allows(s.autonomy_mode, approval) {
+                return Ok(());
+            }
+            if approval == Approval::Automatic {
+                if let Some(guard) = s.guard.as_mut() {
+                    guard.strict_focus = true;
+                }
+                emit(&mut s, "approval", &format!("automatic task {task_id}"));
+            } else {
+                emit(&mut s, "info", "Approved");
+                emit(&mut s, "approval", &format!("approved task {task_id}"));
             }
             set_phase(&mut s, Phase::Running);
             s.stop_requested = false;
-            emit(&mut s, "info", "Approved");
-            emit(&mut s, "approval", &format!("approved task {task_id}"));
             (
                 s.task.clone().ok_or("no task")?,
                 s.actions.clone(),
@@ -1131,7 +1115,37 @@ impl Service {
                 None,
             );
         };
-        let Ok(ws) = opencode::validate_workspace(ws.as_ref()) else {
+        let create_workspace = {
+            let mut state = self.lock();
+            if state.stop_requested {
+                drop(state);
+                return self.finish(
+                    Phase::Cancelled,
+                    None,
+                    Some("Stopped before start".into()),
+                    None,
+                );
+            }
+            std::mem::take(&mut state.create_workspace)
+        };
+        let ws = std::path::Path::new(&ws);
+        if create_workspace {
+            let created = ws
+                .parent()
+                .ok_or_else(|| std::io::Error::other("Missing session root"))
+                .and_then(std::fs::create_dir_all)
+                .and_then(|()| std::fs::create_dir(ws));
+            if let Err(error) = created {
+                self.set_step(0, "failed");
+                return self.finish(
+                    Phase::Failed,
+                    Some(format!("Could not create session folder: {error}")),
+                    None,
+                    None,
+                );
+            }
+        }
+        let Ok(ws) = opencode::validate_workspace(ws) else {
             self.set_step(0, "failed");
             return self.finish(
                 Phase::Failed,
@@ -1140,13 +1154,8 @@ impl Service {
                 None,
             );
         };
-        if self.lock().stop_requested {
-            return self.finish(
-                Phase::Cancelled,
-                None,
-                Some("Stopped before start".into()),
-                None,
-            );
+        if create_workspace {
+            self.lock().workspace = Some(ws.clone());
         }
         self.set_step(0, "running");
         let me = self.clone();

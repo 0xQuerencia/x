@@ -23,7 +23,7 @@ X's *execution policy* is separate from the dictation shortcut's voice modes
 | Execution mode | Behavior |
 | --- | --- |
 | **Default** | Every new desktop task pauses for approval before execution. |
-| **Autonomous** | Low-risk local Actions start without per-task approval. A Decider computer-use task can also run immediately **only** when that app already has a specific screen grant and remote-screen permission has been explicitly enabled if needed. |
+| **Autonomous** | Low-risk desktop actions start automatically. Typing, closing a window, operating an app, sending selected text to a website, and Work each require approval. |
 
 Choose in the **Agent pane → Execution** controls or by CLI:
 
@@ -46,9 +46,9 @@ jobs and risky or untrusted operations require human review.
 
 The prior `hex agent trust on|off` command is maintained as an alias for
 Autonomous/Default, using the same owner-controlled persisted setting; it
-doesn't create a second conflicting mode. The default for a fresh install
-is **Default**. A previously enabled Trusted Actions setting is interpreted
-as Autonomous until switched off.
+keeps the same saved setting. A fresh install starts in **Default**. An
+existing Trusted Actions setting keeps automatic execution for low-risk actions.
+X shows the tighter approval rules once after upgrading.
 
 A task runs through the same phases, but Autonomous may skip
 `awaiting_approval` on permitted tasks:
