@@ -2390,3 +2390,29 @@ fn graph_stop_and_forgotten_projects_prevent_worktree_allocation() {
     assert!(!home.join("X Worktrees").exists());
     assert_eq!(done.pending_job_approvals, Some(0));
 }
+
+#[test]
+fn concurrent_status_polling_and_stop_keep_lock_order() {
+    let (service, _, _) = rig();
+    let polled = service.clone();
+    let stopped = service.clone();
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let a = Arc::clone(&barrier);
+    let reader = thread::spawn(move || {
+        a.wait();
+        for _ in 0..300 {
+            assert!(polled.snapshot(0).pending_job_approvals.is_some());
+        }
+    });
+    let b = Arc::clone(&barrier);
+    let stopper = thread::spawn(move || {
+        b.wait();
+        for _ in 0..300 {
+            stopped.cancel();
+        }
+    });
+    barrier.wait();
+    reader.join().unwrap();
+    stopper.join().unwrap();
+    assert_eq!(service.snapshot(0).pending_job_approvals, Some(0));
+}
