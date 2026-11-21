@@ -310,9 +310,7 @@ mod tests {
             // disks. Keep the first fake session alive until both actually
             // start, without allowing a deadlock to hang this test.
             let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            while self.peak.load(Ordering::SeqCst) < 2
-                && std::time::Instant::now() < deadline
-            {
+            while self.peak.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
             }
             std::thread::sleep(Duration::from_millis(45));
