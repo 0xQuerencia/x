@@ -256,7 +256,7 @@ mod tests {
         Workflow {
             id: "example".into(),
             name: "Example".into(),
-            triggers: vec![],
+            triggers: vec!["sequence demo".into()],
             steps: vec![
                 Step {
                     id: "first".into(),
