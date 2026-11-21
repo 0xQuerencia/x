@@ -1,8 +1,9 @@
 # X on Windows 11 — experimental native backend
 
-The **X fork** does not yet have a Windows installer or a Windows release asset.
-The upstream Hex Windows installer is a different product/build and must not be
-presented as an X release.
+The X fork publishes an unsigned, portable `x.exe` as an experimental GitHub
+prerelease. See the [Windows preview instructions](x-win11-preview.md) for
+downloads and checksum verification. X has no stable Windows installer. The
+upstream Hex Windows installer belongs to Hex.
 
 The native backend is built into Windows source builds. It uses Win32 APIs,
 not PowerShell, shell commands or text from speech.
