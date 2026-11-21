@@ -1134,6 +1134,9 @@ mod storage {
         std::fs::write(&source, serde_json::to_vec(&graph).unwrap()).unwrap();
         s.import_graph(&source).unwrap();
         assert!(s.list().is_empty());
+        let legacy_workflow = coding(h.path());
+        s.save(&legacy_workflow).unwrap();
+        assert_eq!(s.list().len(), 1);
         let entries = s.list_graphs();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "Review backend");
