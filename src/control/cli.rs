@@ -356,6 +356,12 @@ pub enum AgentKeyCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum AgentCommand {
+    /// Local, opt-in review of heard Actions speech.
+    Heard {
+        #[arg(value_parser = ["on", "off", "list", "promote", "clear"])]
+        command: String,
+        index: Option<usize>,
+    },
     /// Store the Decider key securely from standard input, or show whether
     /// one is configured. The actual credential is never printed or passed in argv.
     Key {
@@ -788,6 +794,18 @@ pub fn run(command: ControlCli) -> u8 {
             command => offline_model(command),
         },
         ControlCli::Agent { command } => {
+            if let AgentCommand::Heard { command, index } = &command {
+                return match crate::agent_host::heard::command(command, *index) {
+                    Ok(message) => {
+                        println!("{message}");
+                        0
+                    }
+                    Err(error) => {
+                        eprintln!("{error}");
+                        EXIT_REFUSED
+                    }
+                };
+            }
             if let AgentCommand::Key { command } = &command {
                 return match command {
                     AgentKeyCommand::Set => match set_agent_key() {
@@ -910,6 +928,7 @@ pub fn run(command: ControlCli) -> u8 {
                 }
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
                 AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),
+                AgentCommand::Heard { .. } => unreachable!("heard handled locally"),
                 AgentCommand::Key { .. } => unreachable!("key handled locally"),
                 AgentCommand::Context { output } => (AgentAction::Context, output),
                 AgentCommand::Workflow {
