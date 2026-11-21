@@ -16,6 +16,8 @@ use crate::projects::Project;
 use crate::verification::{Outcome as VerifiedOutcome, Result as Verification};
 use crate::worktrees::{Manager, OwnedWorktree};
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Proof {
     /// Only the provider delivery and clean process exit are verified.
     DeliveryOnly,
@@ -71,11 +73,7 @@ impl Assignment {
         {
             return Err("The expected changed file path is unsafe".into());
         }
-        let scope = Scope::Task {
-            project_id: project.id,
-            run_id: worktree.run_id(),
-            node_id: node.id.clone(),
-        };
+        let scope = approval_scope(node, project.id, worktree.run_id(), &proof)?;
         grants.check(&receipt, Permission::StartHarness, &scope)?;
         Ok(Self {
             node_id: node.id.clone(),
@@ -161,18 +159,18 @@ impl ApprovedHarnessExecutor {
                 .worktrees
                 .validate_owned(&assignment.project, &assignment.worktree)
                 .is_ok()
-            && assignment
-                .grants
-                .check(
-                    &assignment.receipt,
-                    Permission::StartHarness,
-                    &Scope::Task {
-                        project_id: assignment.project.id,
-                        run_id: assignment.worktree.run_id(),
-                        node_id: node.id.clone(),
-                    },
-                )
-                .is_ok())
+            && approval_scope(
+                node,
+                assignment.project.id,
+                assignment.worktree.run_id(),
+                &assignment.proof,
+            )
+            .and_then(|scope| {
+                assignment
+                    .grants
+                    .check(&assignment.receipt, Permission::StartHarness, &scope)
+            })
+            .is_ok())
         .then_some(assignment)
     }
 }
@@ -197,10 +195,13 @@ impl Executor for ApprovedHarnessExecutor {
         if stop.requested() {
             return Outcome::Cancelled;
         }
-        let scope = Scope::Task {
-            project_id: assignment.project.id,
-            run_id: assignment.worktree.run_id(),
-            node_id: node.id.clone(),
+        let Ok(scope) = approval_scope(
+            &node,
+            assignment.project.id,
+            assignment.worktree.run_id(),
+            &assignment.proof,
+        ) else {
+            return Outcome::Failed;
         };
         if assignment
             .grants
@@ -289,6 +290,22 @@ impl Executor for ApprovedHarnessExecutor {
         }
         outcome
     }
+}
+
+fn approval_scope(
+    node: &Node,
+    project_id: Uuid,
+    run_id: Uuid,
+    proof: &Proof,
+) -> Result<Scope, String> {
+    let intent = serde_json::to_string(&(&node.job, proof))
+        .map_err(|_| "Could not identify the approved task request")?;
+    Ok(Scope::Task {
+        project_id,
+        run_id,
+        node_id: node.id.clone(),
+        intent,
+    })
 }
 
 fn to_kind(kind: HarnessKind) -> Kind {
@@ -496,11 +513,8 @@ mod tests {
                 let receipt = grants
                     .issue(
                         Permission::StartHarness,
-                        Scope::Task {
-                            project_id: project.id,
-                            run_id,
-                            node_id: node.id.clone(),
-                        },
+                        approval_scope(node, project.id, run_id, &Proof::DeliveryOnly)
+                            .unwrap(),
                         Duration::from_secs(30),
                         1,
                         true,
