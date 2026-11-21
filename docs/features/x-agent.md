@@ -125,6 +125,18 @@ automatically captured or sent**. Only the selected-text handoff is wired into
 the command surface in this slice. Future connectors must request separate
 permission and use these typed APIs rather than ad-hoc string interpolation.
 
+### Workflow DAG schema (development)
+
+The new `workflows::dag` module validates versioned graph JSON, detects
+cycles, unknown dependencies and duplicate edges, and computes a deterministic
+topological order. It migrates existing sequential workflow files in memory:
+`after` means ordering only, while `requires` still requires success.
+That distinction preserves legacy `on_failure: continue` behavior.
+
+`Store::get_graph` is **read-only**. The currently released workflow runner
+remains sequential; graph scheduling, worktree ownership and parallel execution
+are separate milestones and are not yet enabled by this schema.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation

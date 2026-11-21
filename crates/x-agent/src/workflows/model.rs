@@ -315,7 +315,7 @@ fn check_text(label: &str, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn check_action(action: &StepAction, home: &Path) -> Result<(), String> {
+pub(super) fn check_action(action: &StepAction, home: &Path) -> Result<(), String> {
     match action {
         StepAction::OpenApp { app, workspace } => {
             check_app(app)?;
