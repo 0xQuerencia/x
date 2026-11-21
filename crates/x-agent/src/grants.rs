@@ -394,7 +394,8 @@ mod tests {
         assert_eq!(
             handles
                 .into_iter()
-                .filter(|handle| handle.join().unwrap())
+                .map(|handle| handle.join().unwrap())
+                .filter(|won| *won)
                 .count(),
             1
         );
