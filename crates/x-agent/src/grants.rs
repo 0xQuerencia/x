@@ -238,8 +238,16 @@ mod tests {
                 true,
             )
             .unwrap();
-        assert!(grants.consume(&receipt, Permission::StartHarness, &task()).is_err());
-        assert!(grants.consume(&receipt, Permission::RunTests, &target).is_err());
+        assert!(
+            grants
+                .consume(&receipt, Permission::StartHarness, &task())
+                .is_err()
+        );
+        assert!(
+            grants
+                .consume(&receipt, Permission::RunTests, &target)
+                .is_err()
+        );
         let mut different_goal = target.clone();
         if let Scope::Task { intent, .. } = &mut different_goal {
             *intent = "an unauthorized replacement request".into();
@@ -249,8 +257,14 @@ mod tests {
                 .consume(&receipt, Permission::StartHarness, &different_goal)
                 .is_err()
         );
-        grants.consume(&receipt, Permission::StartHarness, &target).unwrap();
-        assert!(grants.consume(&receipt, Permission::StartHarness, &target).is_err());
+        grants
+            .consume(&receipt, Permission::StartHarness, &target)
+            .unwrap();
+        assert!(
+            grants
+                .consume(&receipt, Permission::StartHarness, &target)
+                .is_err()
+        );
     }
 
     #[test]
@@ -411,7 +425,11 @@ mod tests {
             .unwrap();
         assert_eq!(grants.revoke_all().unwrap(), 2);
         assert!(grants.consume(&a, Permission::RunTests, &first).is_err());
-        assert!(grants.consume(&b, Permission::StartHarness, &second).is_err());
+        assert!(
+            grants
+                .consume(&b, Permission::StartHarness, &second)
+                .is_err()
+        );
         assert_eq!(grants.revoke_all().unwrap(), 0);
     }
 
