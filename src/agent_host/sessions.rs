@@ -101,12 +101,13 @@ fn read_selected(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::desktop::opencode_service::tests::state_root;
     use serde_json::json;
 
     #[test]
     fn discover_filters_to_open_unique_sessions_in_the_exact_project() {
-        let directory = tempfile::tempdir().unwrap();
-        let workspace = directory.path().canonicalize().unwrap();
+        let directory = state_root("scoped-session-list");
+        let workspace = directory.canonicalize().unwrap();
         let nested = workspace.join("nested");
         std::fs::create_dir(&nested).unwrap();
         let mut get = |path: &str| {
@@ -125,12 +126,13 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id.as_str(), "ses_valid");
         assert_eq!(sessions[0].title, "real");
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn resume_requires_identity_from_a_fresh_exact_lookup() {
-        let directory = tempfile::tempdir().unwrap();
-        let workspace = directory.path().canonicalize().unwrap();
+        let directory = state_root("exact-session-resume");
+        let workspace = directory.canonicalize().unwrap();
         let id = SessionId::try_from("ses_requested".to_string()).unwrap();
         let mut get = |path: &str| {
             assert_eq!(path, "/api/session/ses_requested");
@@ -149,5 +151,6 @@ mod tests {
             )
         };
         assert_eq!(read_selected(&mut get, &workspace, &id).unwrap().id, id);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
