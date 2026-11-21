@@ -215,7 +215,7 @@ impl Store {
             .map_err(|e| format!("Cannot open session index lock: {e}"))?;
         lock.try_lock()
             .map_err(|e| format!("Cannot lock session index: {e}"))?;
-        let result = (|| {
+        let result: Result<T, String> = (|| {
             let mut data = self.read()?;
             let (value, changed) = modify(&mut data)?;
             if changed {
