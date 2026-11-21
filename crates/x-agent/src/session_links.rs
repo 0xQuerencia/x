@@ -72,9 +72,11 @@ impl Store {
     ) -> Result<Link, String> {
         validate_project_session(project, session)?;
         self.update(|data| {
-            if let Some(link) = data.links.iter_mut().find(|link| {
-                link.project_id == project.id && link.session_id == session.id
-            }) {
+            if let Some(link) = data
+                .links
+                .iter_mut()
+                .find(|link| link.project_id == project.id && link.session_id == session.id)
+            {
                 link.presence = Presence::Observed;
                 link.last_seen_at = observed_at.max(link.last_seen_at);
                 return Ok((link.clone(), true));
@@ -113,9 +115,11 @@ impl Store {
             }
         }
         self.update(|data| {
-            for link in data.links.iter_mut().filter(|link| {
-                link.project_id == project.id && link.session_id.kind() == kind
-            }) {
+            for link in data
+                .links
+                .iter_mut()
+                .filter(|link| link.project_id == project.id && link.session_id.kind() == kind)
+            {
                 link.presence = match sessions {
                     None => Presence::Unverified,
                     Some(sessions) if sessions.iter().any(|s| s.id == link.session_id) => {
@@ -127,9 +131,11 @@ impl Store {
             }
             if let Some(sessions) = sessions {
                 for session in sessions {
-                    if data.links.iter().any(|link| {
-                        link.project_id == project.id && link.session_id == session.id
-                    }) {
+                    if data
+                        .links
+                        .iter()
+                        .any(|link| link.project_id == project.id && link.session_id == session.id)
+                    {
                         continue;
                     }
                     if data.links.len() >= MAX_LINKS {
@@ -311,25 +317,33 @@ mod tests {
     #[test]
     fn acknowledged_session_is_persisted_but_unverified_after_restart() {
         let (dir, project, store) = fixture();
-        let seen = store.observe(&project, &session("ses_one", &project), 10).unwrap();
+        let seen = store
+            .observe(&project, &session("ses_one", &project), 10)
+            .unwrap();
         assert_eq!(seen.presence, Presence::Observed);
         let restarted = Store::new(dir.path().join("metadata"));
         let old = restarted.list(&project).unwrap();
         assert_eq!(old.len(), 1);
         assert_eq!(old[0].session_id.as_str(), "ses_one");
         assert_eq!(old[0].presence, Presence::Unverified);
-        assert!(!fs::read_to_string(dir.path().join("metadata/x-session-links.json"))
-            .unwrap()
-            .contains("title never persisted"));
+        assert!(
+            !fs::read_to_string(dir.path().join("metadata/x-session-links.json"))
+                .unwrap()
+                .contains("title never persisted")
+        );
     }
 
     #[test]
     fn absent_provider_is_unknown_not_missing_or_success() {
         let (_dir, project, store) = fixture();
-        store.observe(&project, &session("ses_one", &project), 10).unwrap();
+        store
+            .observe(&project, &session("ses_one", &project), 10)
+            .unwrap();
         let result = store.reconcile(&project, Kind::OpenCode, None, 20).unwrap();
         assert_eq!(result[0].presence, Presence::Unverified);
-        let absent = store.reconcile(&project, Kind::OpenCode, Some(&[]), 30).unwrap();
+        let absent = store
+            .reconcile(&project, Kind::OpenCode, Some(&[]), 30)
+            .unwrap();
         assert_eq!(absent[0].presence, Presence::Missing);
         assert_eq!(absent[0].last_seen_at, 10);
     }
@@ -365,16 +379,25 @@ mod tests {
         assert!(store.observe(&project, &wrong, 10).is_err());
         assert!(store.list(&project).unwrap().is_empty());
         fs::remove_dir(&project.root).unwrap();
-        assert!(store.observe(&project, &session("ses_one", &project), 20).is_err());
+        assert!(
+            store
+                .observe(&project, &session("ses_one", &project), 20)
+                .is_err()
+        );
     }
 
     #[test]
     fn removing_link_metadata_does_not_touch_project_files() {
         let (_dir, project, store) = fixture();
         fs::write(project.root.join("file.txt"), "keep").unwrap();
-        store.observe(&project, &session("ses_one", &project), 10).unwrap();
+        store
+            .observe(&project, &session("ses_one", &project), 10)
+            .unwrap();
         store.forget_project(project.id).unwrap();
         assert!(store.list(&project).unwrap().is_empty());
-        assert_eq!(fs::read_to_string(project.root.join("file.txt")).unwrap(), "keep");
+        assert_eq!(
+            fs::read_to_string(project.root.join("file.txt")).unwrap(),
+            "keep"
+        );
     }
 }
