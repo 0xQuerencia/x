@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn migrating_old_workflows_preserves_order_without_requiring_success() {
-        let graph = Graph::from_legacy(legacy(), &home()).unwrap();
+        let mut graph = Graph::from_legacy(legacy(), &home()).unwrap();
         assert_eq!(graph.order().unwrap(), ["first", "second"]);
         assert_eq!(graph.nodes[1].after, ["first"]);
         assert!(graph.nodes[1].requires.is_empty());
