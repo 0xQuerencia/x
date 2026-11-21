@@ -370,6 +370,42 @@ mod tests {
     }
 
     #[test]
+    fn symlinked_worktree_base_is_refused() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, project, manager, sha) = fixture();
+        let redirected = dir.path().join("redirected");
+        fs::create_dir(&redirected).unwrap();
+        let alias = manager.home.join("redirected-worktrees");
+        symlink(&redirected, &alias).unwrap();
+        let unsafe_manager = Manager::new(alias, manager.home.clone());
+        assert!(
+            unsafe_manager
+                .allocate(&project, Uuid::new_v4(), "backend", &sha, true)
+                .is_err()
+        );
+        assert!(fs::read_dir(&redirected).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn task_ids_and_cleanup_ownership_are_rechecked() {
+        let (_dir, project, manager, sha) = fixture();
+        let run_id = Uuid::new_v4();
+        let owned = manager
+            .allocate(&project, run_id, "backend", &sha, true)
+            .unwrap();
+        assert!(
+            manager
+                .allocate(&project, run_id, "backend", &sha, true)
+                .is_err()
+        );
+        let mut different = project.clone();
+        different.id = Uuid::new_v4();
+        assert!(manager.remove_if_clean(&different, &owned, true).is_err());
+        assert!(owned.path().exists());
+    }
+
+    #[test]
     fn explicit_approval_and_clean_tree_are_required_for_cleanup() {
         let (_dir, project, manager, sha) = fixture();
         assert!(manager.allocate(&project, Uuid::new_v4(), "api", &sha, false).is_err());
