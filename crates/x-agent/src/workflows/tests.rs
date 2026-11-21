@@ -1290,6 +1290,39 @@ mod storage {
     }
 
     #[test]
+    fn saved_graph_result_omits_provider_text_and_rejects_corruption() {
+        use crate::workflows::scheduler::{NodeReport, Outcome, Report as DagReport};
+
+        let h = home();
+        let s = store(h.path());
+        let report = DagReport {
+            nodes: vec![NodeReport {
+                id: "backend".into(),
+                outcome: Outcome::Verified,
+                reason: "sensitive provider result must not be persisted".into(),
+            }],
+            stopped: false,
+            max_concurrent: 1,
+        };
+        s.record_graph_last("coding-graph", &report).unwrap();
+        let saved = s.last_graph("coding-graph").unwrap().unwrap();
+        assert_eq!(saved.graph_id, "coding-graph");
+        assert_eq!(saved.verified, 1);
+        assert!(!saved.stopped);
+        assert_eq!(saved.nodes[0].outcome, Outcome::Verified);
+        let path = s.dir().join("coding-graph.last.json");
+        let bytes = std::fs::read_to_string(&path).unwrap();
+        assert!(!bytes.contains("sensitive provider result"));
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(s.last_graph("unseen").unwrap().is_none());
+        std::fs::write(&path, b"not json").unwrap();
+        assert!(s.last_graph("coding-graph").is_err());
+    }
+
+    #[test]
     fn remembers_the_last_result() {
         let h = home();
         let s = store(h.path());
