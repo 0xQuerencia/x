@@ -176,6 +176,12 @@ impl Service {
         let result = self.run_approved_graph(&workflow, stop);
         match result {
             Ok(report) => {
+                if let Err(error) = self
+                    .workflow_store()
+                    .record_graph_last(&workflow.graph.id, &report)
+                {
+                    self.emit("warning", &format!("Could not save coding workflow outcome: {error}"));
+                }
                 let mut complete = 0;
                 for (index, node) in report.nodes.iter().enumerate() {
                     let status = match node.outcome {
