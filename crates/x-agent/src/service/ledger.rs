@@ -67,7 +67,7 @@ impl Ledger {
             path,
             instance: format!("{}-{stamp}", std::process::id()),
         };
-        ledger.open_for_append()?;
+        ledger.with_locked(|_| Ok(()))?;
         Ok(ledger)
     }
 
@@ -80,23 +80,24 @@ impl Ledger {
         step: Option<usize>,
         action: Option<&RequestMetadata>,
     ) -> io::Result<()> {
-        let mut file = self.open_for_append()?;
-        let record = Record {
-            offset: file.metadata()?.len(),
-            timestamp: now(),
-            instance: &self.instance,
-            task,
-            phase,
-            mode,
-            kind,
-            step,
-            action,
-        };
-        append_json(&mut file, &record)?;
-        file.sync_data()
+        self.with_locked(|file| {
+            let record = Record {
+                offset: file.metadata()?.len(),
+                timestamp: now(),
+                instance: &self.instance,
+                task,
+                phase,
+                mode,
+                kind,
+                step,
+                action,
+            };
+            append_json(&mut *file, &record)?;
+            file.sync_data()
+        })
     }
 
-    fn open_for_append(&self) -> io::Result<File> {
+    fn with_locked<T>(&self, write: impl FnOnce(&mut File) -> io::Result<T>) -> io::Result<T> {
         if !fs::symlink_metadata(&self.path)?.is_file() {
             return Err(io::Error::other("X audit ledger must be a regular file"));
         }
@@ -109,17 +110,25 @@ impl Ledger {
         }
         let mut file = options.open(&self.path)?;
         file.try_lock().map_err(io::Error::from)?;
-        let mut header = [0; HEADER.len()];
-        file.read_exact(&mut header)?;
-        if header != HEADER {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Unknown X audit ledger schema",
-            ));
-        }
-        recover_tail(&mut file)?;
-        file.seek(SeekFrom::End(0))?;
-        Ok(file)
+        let result = (|| {
+            let mut header = [0; HEADER.len()];
+            file.read_exact(&mut header)?;
+            if header != HEADER {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Unknown X audit ledger schema",
+                ));
+            }
+            recover_tail(&mut file)?;
+            file.seek(SeekFrom::End(0))?;
+            write(&mut file)
+        })();
+        // A concurrent process spawn can temporarily keep this file description
+        // alive after the original handle closes. Release the lock explicitly.
+        let unlocked = file.unlock();
+        let value = result?;
+        unlocked?;
+        Ok(value)
     }
 }
 
@@ -272,6 +281,24 @@ mod tests {
         let complete = fs::read(&path).unwrap();
         assert!(complete.starts_with(&committed));
         assert_eq!(rows(&path).len(), 3);
+    }
+
+    #[test]
+    fn lock_is_released_while_a_duplicate_file_handle_is_still_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(directory.path()).unwrap();
+        let duplicate = ledger.with_locked(|file| file.try_clone()).unwrap();
+        ledger
+            .record(
+                1,
+                Mode::Work,
+                Phase::AwaitingApproval,
+                Kind::Approved,
+                None,
+                None,
+            )
+            .unwrap();
+        drop(duplicate);
     }
 
     #[test]
