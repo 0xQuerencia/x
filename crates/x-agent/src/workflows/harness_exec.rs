@@ -175,6 +175,15 @@ impl ApprovedHarnessExecutor {
     }
 }
 
+impl Drop for ApprovedHarnessExecutor {
+    fn drop(&mut self) {
+        // Unlaunched jobs must not keep usable receipts after the executor is closed.
+        for assignment in self.assignments.values() {
+            let _ = assignment.grants.revoke(&assignment.receipt);
+        }
+    }
+}
+
 impl Executor for ApprovedHarnessExecutor {
     fn authorized(&self, node: &Node) -> bool {
         self.assignment(node).is_some()
@@ -616,6 +625,40 @@ mod tests {
                 &graph,
                 Path::new("/tmp"),
                 executor.clone(),
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn dropping_executor_revokes_unspent_harness_approvals() {
+        let (_directory, _graph, runner, _peak, calls) = fixture(false);
+        let grants = Arc::clone(&runner.assignments.get("front").unwrap().grants);
+        assert_eq!(grants.pending_count().unwrap(), 2);
+        drop(runner);
+        assert_eq!(grants.pending_count().unwrap(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn revoking_a_workflow_run_blocks_all_jobs_before_dispatch() {
+        let (_directory, graph, executor, _peak, calls) = fixture(false);
+        let assignment = executor.assignments.get("front").unwrap();
+        assert_eq!(
+            assignment
+                .grants
+                .revoke_run(assignment.project.id, assignment.worktree.run_id())
+                .unwrap(),
+            2
+        );
+        assert!(
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                executor,
                 &Cancellation::default(),
                 2,
             )
