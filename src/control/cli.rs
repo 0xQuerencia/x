@@ -666,6 +666,26 @@ pub enum ProjectCli {
         #[command(flatten)]
         output: Output,
     },
+    /// Select a registered project by exact name, alias or ID.
+    Use {
+        query: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Give a registered project another exact name.
+    AliasAdd {
+        id: String,
+        alias: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Remove an exact alias by project ID.
+    AliasRemove {
+        id: String,
+        alias: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// Remove a project from X's registry using its ID.
     Forget {
         id: String,
@@ -872,6 +892,15 @@ pub fn run(command: ControlCli) -> u8 {
                         ProjectCli::List { output } => (ProjectCommand::List, output),
                         ProjectCli::Register { name, path, output } => {
                             (ProjectCommand::Register { name, path }, output)
+                        }
+                        ProjectCli::Use { query, output } => {
+                            (ProjectCommand::Use { query }, output)
+                        }
+                        ProjectCli::AliasAdd { id, alias, output } => {
+                            (ProjectCommand::AliasAdd { id, alias }, output)
+                        }
+                        ProjectCli::AliasRemove { id, alias, output } => {
+                            (ProjectCommand::AliasRemove { id, alias }, output)
                         }
                         ProjectCli::Forget { id, output } => {
                             (ProjectCommand::Forget { id }, output)
