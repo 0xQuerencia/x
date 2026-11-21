@@ -575,6 +575,39 @@ mod tests {
     }
 
     #[test]
+    fn changing_the_goal_or_verification_profile_invalidates_consent() {
+        let (_directory, mut graph, executor, _peak, calls) = fixture(false);
+        let assignment = executor.assignments.get("front").unwrap();
+        assert!(
+            Assignment::from_approved_scope(
+                &graph.nodes[0],
+                assignment.project.clone(),
+                assignment.worktree.clone(),
+                assignment.fingerprint.clone(),
+                Arc::clone(&assignment.adapter),
+                Proof::ChangedFile("src/app.rs".into()),
+                Arc::clone(&assignment.grants),
+                assignment.receipt,
+            )
+            .is_err()
+        );
+        if let Job::Harness { goal, .. } = &mut graph.nodes[0].job {
+            *goal = "A different task that the user never approved".into();
+        }
+        assert!(
+            scheduler::run(
+                &graph,
+                Path::new("/tmp"),
+                executor,
+                &Cancellation::default(),
+                2,
+            )
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
     fn revoked_harness_receipt_cannot_start_any_work() {
         let (_directory, graph, executor, _peak, calls) = fixture(false);
         let assignment = executor.assignments.get("front").unwrap();
