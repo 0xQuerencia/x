@@ -41,7 +41,7 @@ pub struct Assignment {
 }
 
 impl Assignment {
-    #[allow(dead_code)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) fn from_approved_scope(
         node: &Node,
         project: Project,
