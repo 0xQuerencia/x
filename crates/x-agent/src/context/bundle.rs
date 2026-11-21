@@ -371,7 +371,7 @@ mod tests {
             .push_text(
                 Source::ErrorLog,
                 Scope::Project,
-                "-----BEGIN RSA PRIVATE KEY-----\\nTOPSECRETCONTENT\\n-----END RSA PRIVATE KEY-----\\nnormal",
+                "-----BEGIN RSA PRIVATE KEY-----\nTOPSECRETCONTENT\n-----END RSA PRIVATE KEY-----\nnormal",
                 5,
             )
             .unwrap();
