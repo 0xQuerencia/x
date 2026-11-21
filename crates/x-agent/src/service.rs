@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use crate::cancellation::Cancellation;
 use crate::context::{self, Context, Engine};
+use crate::grants::Grants;
 use crate::harness::{self, RunStatus};
 use crate::hexcli::{Stt, SttError};
 use crate::opencode;
@@ -322,6 +323,7 @@ type SessionVerifier = dyn Fn(&harness::Session) -> Result<(), String> + Send + 
 #[derive(Clone)]
 pub struct Service {
     state: Arc<Mutex<State>>,
+    scoped_grants: Arc<Grants>,
     stt: Arc<dyn Stt>,
     launcher: Arc<dyn Launcher>,
     harness: Option<Arc<dyn harness::Adapter>>,
@@ -387,6 +389,7 @@ impl Service {
         };
         Self {
             state: Arc::new(Mutex::new(state)),
+            scoped_grants: Arc::new(Grants::default()),
             stt,
             launcher,
             harness,
@@ -405,6 +408,12 @@ impl Service {
 
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Share the same one-process authorization store with native-owned jobs.
+    /// This does not issue grants; only a trusted, explicit approval path can.
+    pub(crate) fn scoped_grants(&self) -> Arc<Grants> {
+        Arc::clone(&self.scoped_grants)
     }
 
     pub fn emit(&self, kind: &str, text: &str) {
@@ -1827,7 +1836,13 @@ impl Service {
 
     /// Stop whatever is active: discard a plan, abort a recording, or kill a run.
     pub fn cancel(&self) {
+        // Revoke unspent native job approvals before cancellation can race
+        // against a job starting. Already-running jobs also need Stop tokens.
+        let revoked = self.scoped_grants.revoke_all();
         let mut s = self.lock();
+        if let Err(error) = revoked {
+            emit(&mut s, "error", &format!("Could not revoke pending job approvals: {error}"));
+        }
         if s.model_stop.as_ref().is_some_and(Cancellation::request) {
             emit(&mut s, "info", "Stop requested for the pending plan");
         }
