@@ -160,14 +160,22 @@ impl Registry {
 
     pub fn last_selected(&self) -> Result<Option<Project>, String> {
         let data = self.read()?;
-        data.selected
-            .map(|id| {
-                data.projects
-                    .into_iter()
-                    .find(|project| project.id == id)
-                    .ok_or("The saved project selection no longer exists".into())
-            })
-            .transpose()
+        let Some(id) = data.selected else {
+            return Ok(None);
+        };
+        let project = data
+            .projects
+            .into_iter()
+            .find(|project| project.id == id)
+            .ok_or("The saved project selection no longer exists")?;
+        let root = project
+            .root
+            .to_str()
+            .ok_or("The project folder has an unsupported path")?;
+        if project_root(root, &self.home)? != project.root {
+            return Err("The selected project's folder changed. Register it again".into());
+        }
+        Ok(Some(project))
     }
 
     fn read(&self) -> Result<Data, String> {
@@ -587,6 +595,19 @@ mod tests {
         fs::remove_dir(registry.home.join("second")).unwrap();
         assert!(registry.select(&second.id.to_string()).is_err());
         assert_eq!(registry.last_selected().unwrap().unwrap().id, first.id);
+    }
+
+    #[test]
+    fn stale_remembered_selection_is_not_reported_as_valid() {
+        let (_directory, registry) = fixture();
+        let path = registry.home.join("source");
+        fs::create_dir(&path).unwrap();
+        registry.register("Source", "~/source").unwrap();
+        registry.select("source").unwrap();
+        fs::remove_dir(&path).unwrap();
+        assert!(registry.last_selected().is_err());
+        assert!(registry.resolve("this project").is_ok());
+        assert!(registry.select("this project").is_err());
     }
 
     #[test]
