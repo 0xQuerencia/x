@@ -2,6 +2,7 @@
 //! built here from validated ids and numbers only.
 
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use super::{Backend, Cap, Cmd, MINIMIZED, Place, WinInfo, WmError};
 use crate::desktop::hypr;
@@ -21,13 +22,17 @@ fn dispatch(lua: &str, legacy: Option<Vec<String>>) -> Result<(), WmError> {
     let mut last = String::new();
     let attempts = std::iter::once(vec!["dispatch".to_string(), lua.to_string()]).chain(legacy);
     for args in attempts {
-        let out = Command::new("hyprctl")
-            .args(&args)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| WmError::Backend(format!("could not run hyprctl: {e}")))?;
-        last = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if out.status.success() && last.eq_ignore_ascii_case("ok") {
+        let (ok, output) = crate::desktop::capture(
+            Command::new("hyprctl")
+                .args(&args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null()),
+            Duration::from_secs(5),
+        )
+        .map_err(|e| WmError::Backend(format!("could not run hyprctl: {e}")))?;
+        last = String::from_utf8_lossy(&output).trim().to_string();
+        if ok && last.eq_ignore_ascii_case("ok") {
             return Ok(());
         }
     }
