@@ -79,7 +79,9 @@ fn resource(node: &Node, executor: &dyn Executor) -> Resource {
             .filter(|key| {
                 !key.is_empty()
                     && key.len() <= 80
-                    && key.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+                    && key
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
             })
             .map_or_else(
                 || Resource::Project(project_id.clone()),
