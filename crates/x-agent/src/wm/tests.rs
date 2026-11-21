@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 
+pub(super) mod contract;
+
 #[derive(Default)]
 struct World {
     wins: Vec<WinInfo>,
@@ -12,6 +14,9 @@ struct World {
     /// window that is not there.
     inert: bool,
     dead: bool,
+    probe_list: bool,
+    disconnect_on_command: bool,
+    reuse_identity_on_command: bool,
     log: Vec<Cmd>,
 }
 
@@ -87,6 +92,11 @@ impl Backend for Fake {
     fn caps(&self) -> Vec<Cap> {
         self.0.lock().unwrap().caps.clone()
     }
+    fn probe_window_list(&self) -> Option<Result<(), WmError>> {
+        let enabled = self.0.lock().unwrap().probe_list;
+        enabled.then(|| self.windows().map(drop))
+    }
+
     fn windows(&self) -> Result<Vec<WinInfo>, WmError> {
         let w = self.0.lock().unwrap();
         if w.dead {
@@ -103,6 +113,15 @@ impl Backend for Fake {
     fn run(&self, cmd: &Cmd) -> Result<(), WmError> {
         let mut w = self.0.lock().unwrap();
         w.log.push(cmd.clone());
+        if w.disconnect_on_command {
+            w.dead = true;
+            return Ok(());
+        }
+        if w.reuse_identity_on_command
+            && let Some(window) = w.wins.first_mut()
+        {
+            window.pid += 1;
+        }
         if w.inert {
             return Ok(());
         }
@@ -310,6 +329,24 @@ fn minimize_maximize_round_trip() {
 }
 
 #[test]
+fn close_needs_a_successful_read_to_verify_disappearance() {
+    let (mut controller, fake) = setup();
+    fake.0.lock().unwrap().disconnect_on_command = true;
+    let result = ask(&mut controller, "close this");
+    assert!(matches!(result, Err(WmError::Backend(_))), "{result:?}");
+    assert_eq!(fake.0.lock().unwrap().log.len(), 1);
+}
+
+#[test]
+fn a_reused_window_id_does_not_verify_a_move() {
+    let (mut controller, fake) = setup();
+    fake.0.lock().unwrap().reuse_identity_on_command = true;
+    let result = ask(&mut controller, "move this to workspace 3");
+    assert!(matches!(result, Err(WmError::Unverified(_))), "{result:?}");
+    assert!(controller.history.is_empty());
+}
+
+#[test]
 fn close_reports_a_window_that_stays_open() {
     let (mut c, fake) = setup();
     fake.0.lock().unwrap().inert = true;
@@ -438,6 +475,7 @@ fn live_hyprland() {
         .spawn()
         .expect("foot");
     let mut c = Controller::new(Box::new(hypr::Hypr));
+    contract::assert_live_report(c.backend.as_ref());
     let me = |c: &Controller| {
         c.backend
             .windows()
@@ -512,6 +550,7 @@ fn live_sway() {
         bin: "swaymsg",
         label: "Sway",
     }));
+    contract::assert_live_report(controller.backend.as_ref());
     let own_window = |c: &Controller| {
         c.backend
             .windows()

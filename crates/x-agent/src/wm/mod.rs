@@ -60,6 +60,10 @@ pub struct WinInfo {
 }
 
 impl WinInfo {
+    fn same_identity(&self, other: &Self) -> bool {
+        self.id == other.id && self.pid == other.pid && self.class == other.class
+    }
+
     /// Identity that must still match before an old reference is trusted again.
     fn key(&self) -> (String, u32, String) {
         (self.id.clone(), self.pid, self.class.clone())
@@ -592,12 +596,19 @@ impl Controller {
         Err(WmError::Unverified(format!("{what} did not take effect")))
     }
 
-    fn window(&self, id: &str) -> Option<WinInfo> {
-        self.backend
-            .windows()
-            .ok()?
+    fn window(&self, expected: &WinInfo) -> Result<Option<WinInfo>, WmError> {
+        Ok(self
+            .backend
+            .windows()?
             .into_iter()
-            .find(|w| w.id == id)
+            .find(|w| w.same_identity(expected)))
+    }
+
+    fn has_focus(&self, expected: &WinInfo) -> bool {
+        self.backend
+            .focused()
+            .is_ok_and(|id| id.as_deref() == Some(expected.id.as_str()))
+            && self.window(expected).is_ok_and(|window| window.is_some())
     }
 
     fn switch(&mut self, ws: i64) -> Result<Outcome, WmError> {
@@ -618,6 +629,7 @@ impl Controller {
             return Ok(done(format!("{} already has focus", label(win)), false));
         }
         if win.minimized {
+            self.require(&Cmd::Focus(win.id.clone()))?;
             let mut restore = win.clone();
             if let Ok(ws) = self.backend.workspace() {
                 restore.place = Place::N(ws);
@@ -625,7 +637,10 @@ impl Controller {
             self.backend.restore_minimized(&restore)?;
             let mut restored = false;
             for _ in 0..VERIFY_TRIES {
-                if self.window(&win.id).is_some_and(|w| !w.minimized) {
+                if self
+                    .window(win)
+                    .is_ok_and(|w| w.is_some_and(|w| !w.minimized))
+                {
                     restored = true;
                     break;
                 }
@@ -637,10 +652,7 @@ impl Controller {
                 ));
             }
         }
-        let id = win.id.clone();
-        self.apply(&Cmd::Focus(id.clone()), "Focus", |c| {
-            c.backend.focused().ok().flatten().as_deref() == Some(id.as_str())
-        })?;
+        self.apply(&Cmd::Focus(win.id.clone()), "Focus", |c| c.has_focus(win))?;
         if let Some(before) = before {
             self.push(Undo::Focus(before));
         }
@@ -662,8 +674,8 @@ impl Controller {
             },
             "The move",
             |c| {
-                c.window(&id)
-                    .is_some_and(|w| w.workspace == ws && !w.minimized)
+                c.window(win)
+                    .is_ok_and(|w| w.is_some_and(|w| w.workspace == ws && !w.minimized))
             },
         )?;
         self.push(Undo::Move(win.clone()));
@@ -684,7 +696,7 @@ impl Controller {
                 on: true,
             },
             "Maximize",
-            |c| c.window(&id).is_some_and(|w| w.maximized),
+            |c| c.window(win).is_ok_and(|w| w.is_some_and(|w| w.maximized)),
         )?;
         self.push(Undo::Maximize(win.clone()));
         Ok(done(format!("Maximized {}", label(win)), true))
@@ -693,7 +705,7 @@ impl Controller {
     fn minimize(&mut self, win: &WinInfo) -> Result<Outcome, WmError> {
         let id = win.id.clone();
         self.apply(&Cmd::Minimize { win: id.clone() }, "Minimize", |c| {
-            c.window(&id).is_some_and(|w| w.minimized)
+            c.window(win).is_ok_and(|w| w.is_some_and(|w| w.minimized))
         })?;
         self.push(Undo::Minimize(win.clone()));
         Ok(done(format!("Minimized {}", label(win)), true))
@@ -706,7 +718,7 @@ impl Controller {
         self.require(&Cmd::Close(id.clone()))?;
         self.backend.run(&Cmd::Close(id.clone()))?;
         for _ in 0..VERIFY_TRIES {
-            if self.window(&id).is_none() {
+            if self.window(win)?.is_none() {
                 return Ok(done(format!("Closed {}", label(win)), false));
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -742,10 +754,7 @@ impl Controller {
         let outcome = match (undo, now) {
             (Undo::Workspace(ws), _) => self.switch_quiet(ws)?,
             (Undo::Focus(old), Some(_)) => {
-                let id = old.id.clone();
-                self.apply(&Cmd::Focus(id.clone()), "Focus", |c| {
-                    c.backend.focused().ok().flatten().as_deref() == Some(id.as_str())
-                })?;
+                self.apply(&Cmd::Focus(old.id.clone()), "Focus", |c| c.has_focus(&old))?;
                 format!("Focus back on {}", label(&old))
             }
             (Undo::Move(old), Some(_)) => {
@@ -756,7 +765,10 @@ impl Controller {
                         to: to.clone(),
                     },
                     "The move back",
-                    |c| c.window(&id).is_some_and(|w| w.place == to),
+                    |c| {
+                        c.window(&old)
+                            .is_ok_and(|w| w.is_some_and(|w| w.place == to))
+                    },
                 )?;
                 format!("Moved {} back", label(&old))
             }
@@ -768,7 +780,10 @@ impl Controller {
                         on: false,
                     },
                     "Restore",
-                    |c| c.window(&id).is_some_and(|w| !w.maximized),
+                    |c| {
+                        c.window(&old)
+                            .is_ok_and(|w| w.is_some_and(|w| !w.maximized))
+                    },
                 )?;
                 format!("Restored {}", label(&old))
             }
@@ -777,8 +792,8 @@ impl Controller {
                 let mut restored = false;
                 for _ in 0..VERIFY_TRIES {
                     if self
-                        .window(&old.id)
-                        .is_some_and(|w| !w.minimized && w.place == old.place)
+                        .window(&old)
+                        .is_ok_and(|w| w.is_some_and(|w| !w.minimized && w.place == old.place))
                     {
                         restored = true;
                         break;

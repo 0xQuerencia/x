@@ -141,7 +141,9 @@ fn stop_reports_partial_changes() {
         thread::sleep(Duration::from_millis(100));
     }
     run.cancel();
-    assert_eq!(run.join().changed_files, Some(vec!["b.py".to_string()]));
+    let result = run.join();
+    assert_eq!(result.status, RunStatus::Cancelled);
+    assert_eq!(result.changed_files, Some(vec!["b.py".to_string()]));
 }
 
 #[test]
