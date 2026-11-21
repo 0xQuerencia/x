@@ -1,7 +1,7 @@
 use x_agent::projects::Registry;
+use x_agent::service::Service;
 use x_agent::session_links::Store as SessionStore;
 use x_agent::workflows::paths;
-use x_agent::service::Service;
 
 use crate::control::{ControlReply, ProjectCommand};
 
@@ -34,15 +34,24 @@ fn run(service: &Service, command: ProjectCommand) -> Result<ControlReply, Strin
             )?;
             let (_, changed) = registry.select(&project.id.to_string())?;
             if changed {
-                Ok(ControlReply::done(format!("Selected {} ({shown})", project.name)))
+                Ok(ControlReply::done(format!(
+                    "Selected {} ({shown})",
+                    project.name
+                )))
             } else {
-                Ok(ControlReply::unchanged(format!("Already selected {} ({shown})", project.name)))
+                Ok(ControlReply::unchanged(format!(
+                    "Already selected {} ({shown})",
+                    project.name
+                )))
             }
         }
         ProjectCommand::AliasAdd { id, alias } => {
             let (project, changed) = registry.add_alias(&id, &alias)?;
             if changed {
-                Ok(ControlReply::done(format!("Added alias for {}", project.name)))
+                Ok(ControlReply::done(format!(
+                    "Added alias for {}",
+                    project.name
+                )))
             } else {
                 Ok(ControlReply::unchanged("That alias already exists"))
             }
@@ -50,7 +59,10 @@ fn run(service: &Service, command: ProjectCommand) -> Result<ControlReply, Strin
         ProjectCommand::AliasRemove { id, alias } => {
             let (project, changed) = registry.remove_alias(&id, &alias)?;
             if changed {
-                Ok(ControlReply::done(format!("Removed alias from {}", project.name)))
+                Ok(ControlReply::done(format!(
+                    "Removed alias from {}",
+                    project.name
+                )))
             } else {
                 Ok(ControlReply::unchanged("That alias was not registered"))
             }
