@@ -20,7 +20,9 @@ pub enum Permission {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Scope {
-    Project { project_id: Uuid },
+    Project {
+        project_id: Uuid,
+    },
     Task {
         project_id: Uuid,
         run_id: Uuid,
@@ -73,8 +75,8 @@ impl Grants {
             return Err("Grant exceeds its permitted lifetime or use count".into());
         }
         match (&permission, &scope) {
-            (Permission::InspectProject, Scope::Project { project_id })
-                if !project_id.is_nil() => {}
+            (Permission::InspectProject, Scope::Project { project_id }) if !project_id.is_nil() => {
+            }
             (
                 Permission::StartHarness | Permission::RunTests,
                 Scope::Task {
@@ -104,7 +106,15 @@ impl Grants {
         if guard.len() >= 256 {
             return Err("Too many outstanding approvals".into());
         }
-        guard.insert(id, Grant { scope, permission, expires_at, remaining: uses });
+        guard.insert(
+            id,
+            Grant {
+                scope,
+                permission,
+                expires_at,
+                remaining: uses,
+            },
+        );
         Ok(Receipt { id })
     }
 
@@ -126,10 +136,7 @@ impl Grants {
         if Instant::now() >= grant.expires_at {
             return Err("Approval has expired".into());
         }
-        if grant.remaining == 0
-            || grant.permission != permission
-            || &grant.scope != scope
-        {
+        if grant.remaining == 0 || grant.permission != permission || &grant.scope != scope {
             return Err("Approval does not cover this target or operation".into());
         }
         Ok(())
@@ -199,7 +206,9 @@ impl Grants {
 fn valid_node_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 40
-        && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_'))
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_'))
         && id.as_bytes()[0].is_ascii_alphanumeric()
 }
 
@@ -246,24 +255,100 @@ mod tests {
     fn no_approval_no_lease_and_no_broad_workflow_task_grants() {
         let grants = Grants::default();
         let target = task();
-        assert!(grants.issue(Permission::StartHarness, target.clone(), Duration::from_secs(20), 1, false).is_err());
-        assert!(grants.issue(Permission::StartHarness, target.clone(), Duration::from_secs(20), 2, true).is_err());
-        assert!(grants.issue(Permission::StartHarness, target.clone(), Duration::from_secs(61), 1, true).is_err());
-        assert!(grants.issue(Permission::RunTests, Scope::Project { project_id: Uuid::new_v4() }, Duration::from_secs(10), 1, true).is_err());
-        assert!(grants.issue(Permission::InspectProject, target, Duration::from_secs(5), 1, true).is_err());
+        assert!(
+            grants
+                .issue(
+                    Permission::StartHarness,
+                    target.clone(),
+                    Duration::from_secs(20),
+                    1,
+                    false
+                )
+                .is_err()
+        );
+        assert!(
+            grants
+                .issue(
+                    Permission::StartHarness,
+                    target.clone(),
+                    Duration::from_secs(20),
+                    2,
+                    true
+                )
+                .is_err()
+        );
+        assert!(
+            grants
+                .issue(
+                    Permission::StartHarness,
+                    target.clone(),
+                    Duration::from_secs(61),
+                    1,
+                    true
+                )
+                .is_err()
+        );
+        assert!(
+            grants
+                .issue(
+                    Permission::RunTests,
+                    Scope::Project {
+                        project_id: Uuid::new_v4()
+                    },
+                    Duration::from_secs(10),
+                    1,
+                    true
+                )
+                .is_err()
+        );
+        assert!(
+            grants
+                .issue(
+                    Permission::InspectProject,
+                    target,
+                    Duration::from_secs(5),
+                    1,
+                    true
+                )
+                .is_err()
+        );
     }
 
     #[test]
     fn expiration_and_revocation_block_consumption() {
         let grants = Grants::default();
         let target = task();
-        let receipt = grants.issue(Permission::RunTests, target.clone(), Duration::from_millis(20), 1, true).unwrap();
+        let receipt = grants
+            .issue(
+                Permission::RunTests,
+                target.clone(),
+                Duration::from_millis(20),
+                1,
+                true,
+            )
+            .unwrap();
         let late = Instant::now() + Duration::from_secs(1);
-        assert!(grants.consume_at(&receipt, Permission::RunTests, &target, late).is_err());
-        let receipt = grants.issue(Permission::RunTests, target.clone(), Duration::from_secs(20), 1, true).unwrap();
+        assert!(
+            grants
+                .consume_at(&receipt, Permission::RunTests, &target, late)
+                .is_err()
+        );
+        let receipt = grants
+            .issue(
+                Permission::RunTests,
+                target.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
         assert!(grants.revoke(&receipt).unwrap());
         assert!(!grants.revoke(&receipt).unwrap());
-        assert!(grants.consume(&receipt, Permission::RunTests, &target).is_err());
+        assert!(
+            grants
+                .consume(&receipt, Permission::RunTests, &target)
+                .is_err()
+        );
     }
 
     #[test]
@@ -333,10 +418,30 @@ mod tests {
         let grants = Grants::default();
         let project_id = Uuid::new_v4();
         let scope = Scope::Project { project_id };
-        let receipt = grants.issue(Permission::InspectProject, scope.clone(), Duration::from_secs(60), 2, true).unwrap();
-        assert!(grants.consume(&receipt, Permission::StartHarness, &task()).is_err());
-        grants.consume(&receipt, Permission::InspectProject, &scope).unwrap();
-        grants.consume(&receipt, Permission::InspectProject, &scope).unwrap();
-        assert!(grants.consume(&receipt, Permission::InspectProject, &scope).is_err());
+        let receipt = grants
+            .issue(
+                Permission::InspectProject,
+                scope.clone(),
+                Duration::from_secs(60),
+                2,
+                true,
+            )
+            .unwrap();
+        assert!(
+            grants
+                .consume(&receipt, Permission::StartHarness, &task())
+                .is_err()
+        );
+        grants
+            .consume(&receipt, Permission::InspectProject, &scope)
+            .unwrap();
+        grants
+            .consume(&receipt, Permission::InspectProject, &scope)
+            .unwrap();
+        assert!(
+            grants
+                .consume(&receipt, Permission::InspectProject, &scope)
+                .is_err()
+        );
     }
 }
