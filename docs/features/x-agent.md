@@ -107,6 +107,19 @@ A selected project is remembered between X restarts; it never bypasses Work appr
 Aliases are local metadata. Forget removes the registry and saved session metadata,
 not the project files.
 
+In Actions or Smart voice mode, say “Friday, list projects,” “find project
+Chamber,” “switch to project Chamber,” or “open my Chamber project.”
+Listing and finding read the local registry. Switching and requesting the
+file manager wait for approval with the exact project and directory in the
+preview. Opening uses the system file manager and reports the launch as
+unverified.
+
+“List saved sessions” displays remembered IDs for the selected project with
+unverified availability. “Resume OpenCode session ses_…” previews an exact
+session selection. “Resume session one” also accepts an ordinal from the
+current, unexpired OpenCode listing. Approval confirms the session with
+the provider before selecting it. A separate Work task sends a goal.
+
 The registry tests cover restart, linked Git worktrees, private paths,
 symlink escapes, ambiguity, and preservation of files when forgetting a project.
 
@@ -124,6 +137,15 @@ Screenshot references require explicit screen permission; **image bytes are not
 automatically captured or sent**. Only the selected-text handoff is wired into
 the command surface in this slice. Future connectors must request separate
 permission and use these typed APIs rather than ad-hoc string interpolation.
+
+### Read-only workflow graph preview
+
+Run `hex agent workflow preview <id>` to validate a saved workflow or v2
+graph and print its ordered nodes, dependencies and actions as JSON. The
+response explicitly says `executed: false` and `authorization:
+not_requested`; no desktop action, coding harness, approval or merge is
+triggered by this command. Execution still uses the existing separate
+`workflow run` path with its approval requirements.
 
 ### Workflow DAG schema (development)
 
@@ -263,6 +285,21 @@ access, screen capture or external transfers.
 The existing approval action issues receipts for the exact coding graph
 shown in the preview. Autonomous mode still requires this approval. Receipt
 issuance happens inside the service after the owner approves.
+
+### Approved tests in owned worktrees (development)
+
+X's test verifier accepts only typed presets for Cargo, npm, pnpm, pytest and
+Go. It revalidates the worktree's ownership before running any test, requires
+fresh owner approval, executes without a shell, enforces a 120-second deadline
+and propagates Stop to the owned subprocess. Exit success is **Verified for that
+test suite only**; failure is **Failed**; missing, interrupted or timed-out
+evidence is **Unverified**. No process output or secrets are retained in the
+evidence record.
+
+Project test scripts can run arbitrary code despite fixed arguments, so this
+is a privileged R2 operation. The verifier API is implemented but **not yet
+exposed through a native approval screen or spoken command**; that integration
+remains gated by the P5 approval work.
 
 ### Desktop capability checks
 
@@ -424,7 +461,9 @@ original prose, summarize a page, reason through coding tasks, or complete
 payments/posts. A question requiring a generative answer or writing new
 content still needs a separate model. Provider errors and low-confidence
 choices fail closed rather than guessing or falling back to paid inference.
-Deterministic commands still run without contacting the provider.
+Deterministic commands still run without contacting the provider. Built-in window
+phrases take precedence over speech corrections based on installed app names
+and keywords.
 Work-mode OpenCode still needs its own configured coding model.
 
 Source: `crates/x-agent/src/decision.rs`, `crates/x-agent/src/decision_computer.rs`, `crates/x-agent/src/decider.rs`,
@@ -792,3 +831,11 @@ on when comfortable sharing visible pixels with OpenRouter/Perplexity.
 Images are supporting context for **existing allowlisted accessible UI
 targets**; X cannot use ungrounded coordinates to click inaccessible
 buttons, and screen text never grants new permissions. Model quotas apply.
+
+### Captured-context expiry
+
+Before targeting a previously observed window or applying a selection-based edit,
+X rechecks both window identity and snapshot age. Context older than 15 seconds
+is rejected even when the same window still exists and even after an approval
+prompt temporarily changes focus. The user must issue the command again to
+obtain fresh evidence.

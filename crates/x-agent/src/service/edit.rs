@@ -147,7 +147,7 @@ impl Service {
         s.serial += 1;
         let id = s.serial;
         s.task = Some(task(id, text, vec![], None));
-        emit(&mut s, "plan", &format!("Edit: {text}"));
+        emit(&mut s, "plan", text);
         Ok(())
     }
 

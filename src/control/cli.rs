@@ -509,7 +509,7 @@ pub enum AgentCommand {
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "permissions", "run", "run-graph", "last", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "preview", "permissions", "run", "run-graph", "last", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
         command: String,
         /// A workflow id, or a file path for import.
         #[arg(default_value = "")]
@@ -1944,6 +1944,27 @@ mod tests {
         ));
         assert!(Args::try_parse_from(["hex", "agent", "workflow", "permissions"]).is_ok());
         assert!(Args::try_parse_from(["hex", "agent", "workflow", "shell"]).is_err());
+    }
+
+    #[test]
+    fn workflow_graph_preview_is_an_explicit_read_only_cli_command() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed =
+            Args::try_parse_from(["hex", "agent", "workflow", "preview", "my-workflow"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Workflow { command, value, .. }
+            } if command == "preview" && value == "my-workflow"
+        ));
+        assert!(Args::try_parse_from(["hex", "agent", "workflow", "execute-anything"]).is_err());
     }
 
     #[test]

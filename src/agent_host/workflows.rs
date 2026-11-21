@@ -85,6 +85,23 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(graph) => ControlReply::done(permission_preview(&graph).to_string()),
             Err(error) => refuse(error),
         },
+        "preview" if value.is_empty() => need("a workflow id"),
+        "preview" => match store.get_graph(value) {
+            Ok(graph) => match graph.order() {
+                Ok(order) => ControlReply::done(
+                    serde_json::json!({
+                        "graph": graph,
+                        "order": order,
+                        "executed": false,
+                        "authorization": "not_requested",
+                        "note": "Read-only preview; no actions or harnesses were started",
+                    })
+                    .to_string(),
+                ),
+                Err(error) => refuse(error),
+            },
+            Err(error) => refuse(error),
+        },
         "last" if value.is_empty() => need("a workflow id"),
         "last" => match store.last(value) {
             Some(report) => ControlReply::done(serde_json::to_string(&report).unwrap_or_default()),
@@ -128,7 +145,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, permissions, run, run-graph, last, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, run, run-graph, last, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }

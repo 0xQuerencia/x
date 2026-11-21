@@ -3,6 +3,8 @@
 
 use serde::Serialize;
 
+pub mod test_runner;
+
 use crate::harness::{RunResult, RunStatus, SessionId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
