@@ -56,10 +56,10 @@ pub fn service() -> &'static Service {
                 let projects = x_agent::projects::Registry::new(dir.clone(), home.clone());
                 match projects.last_selected() {
                     Ok(Some(project)) => {
-                        if let Some(path) = project.root.to_str() {
-                            if let Err(error) = service.set_workspace(path) {
-                                tracing::warn!(%error, "could not restore X project");
-                            }
+                        if let Some(path) = project.root.to_str()
+                            && let Err(error) = service.set_workspace(path)
+                        {
+                            tracing::warn!(%error, "could not restore X project");
                         }
                     }
                     Ok(None) => {}
