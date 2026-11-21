@@ -74,8 +74,7 @@ impl Manager {
                 return Err("X worktree directory is not a regular folder".into());
             }
         } else {
-            fs::create_dir(&parent)
-                .map_err(|_| "Cannot create the X worktree directory")?;
+            fs::create_dir(&parent).map_err(|_| "Cannot create the X worktree directory")?;
         }
         let name = format!("{run_id}-{task_id}");
         let destination = parent.join(name);
@@ -83,7 +82,8 @@ impl Manager {
             return Err("This task already has a worktree path".into());
         }
         let lock = open_lock(&base.join("x-worktrees.lock"))?;
-        lock.try_lock().map_err(|_| "Another worktree operation is running")?;
+        lock.try_lock()
+            .map_err(|_| "Another worktree operation is running")?;
         let result = (|| {
             // A fresh check under the lock prevents collisions during concurrent runs.
             if fs::symlink_metadata(&destination).is_ok() {
@@ -99,7 +99,14 @@ impl Manager {
                 .ok_or("The worktree path cannot be represented")?;
             git(
                 &project.root,
-                &["worktree", "add", "--detach", "--", destination_text, start_commit],
+                &[
+                    "worktree",
+                    "add",
+                    "--detach",
+                    "--",
+                    destination_text,
+                    start_commit,
+                ],
             )?;
             let resolved = destination
                 .canonicalize()
@@ -164,14 +171,23 @@ impl Manager {
             return Err("That path is no longer a worktree of the chosen project".into());
         }
         let lock = open_lock(&base.join("x-worktrees.lock"))?;
-        lock.try_lock().map_err(|_| "Another worktree operation is running")?;
+        lock.try_lock()
+            .map_err(|_| "Another worktree operation is running")?;
         let result = (|| {
             let dirty = git(
                 &worktree.path,
-                &["status", "--porcelain=v1", "--untracked-files=all", "--ignored"],
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                    "--ignored",
+                ],
             )?;
             if !dirty.trim().is_empty() {
-                return Err("Worktree contains changes or untracked/ignored files; nothing was removed".into());
+                return Err(
+                    "Worktree contains changes or untracked/ignored files; nothing was removed"
+                        .into(),
+                );
             }
             let path = worktree
                 .path
@@ -246,7 +262,10 @@ impl Manager {
 }
 
 fn git_common_dir(root: &Path) -> Result<PathBuf, String> {
-    let output = git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let output = git(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
     let common = Path::new(output.trim())
         .canonicalize()
         .map_err(|_| "Git common directory is unavailable")?;
@@ -302,7 +321,9 @@ fn open_lock(path: &Path) -> Result<File, String> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
-    options.open(path).map_err(|_| "Could not open the X worktree lock".into())
+    options
+        .open(path)
+        .map_err(|_| "Could not open the X worktree lock".into())
 }
 
 #[cfg(all(test, unix))]
@@ -328,8 +349,17 @@ mod tests {
         };
         run(&["init", "-q"]);
         run(&[
-            "-c", "user.name=X fixture", "-c", "user.email=x@invalid.example",
-            "-c", "core.hooksPath=", "commit", "--allow-empty", "-q", "-m", "fixture",
+            "-c",
+            "user.name=X fixture",
+            "-c",
+            "user.email=x@invalid.example",
+            "-c",
+            "core.hooksPath=",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "fixture",
         ]);
         let source = source.canonicalize().unwrap();
         let common = source.join(".git").canonicalize().unwrap();
@@ -340,7 +370,10 @@ mod tests {
             root: source.clone(),
             git_common_dir: Some(common),
         };
-        let sha = git(&source, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        let sha = git(&source, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
         (dir, project, Manager::new(base, home), sha)
     }
 
@@ -354,8 +387,14 @@ mod tests {
             .unwrap();
         assert!(owned.path().is_dir());
         assert_eq!(owned.start_commit(), sha);
-        assert_eq!(git_common_dir(owned.path()).unwrap(), project.git_common_dir.unwrap());
-        assert_eq!(git(&project.root, &["status", "--porcelain=v1"]).unwrap(), before);
+        assert_eq!(
+            git_common_dir(owned.path()).unwrap(),
+            project.git_common_dir.unwrap()
+        );
+        assert_eq!(
+            git(&project.root, &["status", "--porcelain=v1"]).unwrap(),
+            before
+        );
     }
 
     #[test]
@@ -366,7 +405,10 @@ mod tests {
             .unwrap();
         fs::write(owned.path().join("untracked.txt"), "keep").unwrap();
         assert!(manager.remove_if_clean(&project, &owned, true).is_err());
-        assert_eq!(fs::read_to_string(owned.path().join("untracked.txt")).unwrap(), "keep");
+        assert_eq!(
+            fs::read_to_string(owned.path().join("untracked.txt")).unwrap(),
+            "keep"
+        );
     }
 
     #[test]
@@ -408,7 +450,11 @@ mod tests {
     #[test]
     fn explicit_approval_and_clean_tree_are_required_for_cleanup() {
         let (_dir, project, manager, sha) = fixture();
-        assert!(manager.allocate(&project, Uuid::new_v4(), "api", &sha, false).is_err());
+        assert!(
+            manager
+                .allocate(&project, Uuid::new_v4(), "api", &sha, false)
+                .is_err()
+        );
         let owned = manager
             .allocate(&project, Uuid::new_v4(), "api", &sha, true)
             .unwrap();
