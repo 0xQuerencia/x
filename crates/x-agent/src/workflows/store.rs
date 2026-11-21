@@ -4,7 +4,7 @@
 
 use std::io::Write;
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
 use super::engine::Report;
@@ -119,16 +119,14 @@ impl Store {
 
     fn write_private(&self, path: &Path, bytes: &[u8]) -> Result<(), String> {
         self.ensure_private_dir()?;
-        let tmp = path.with_extension("tmp");
-        let mut open = std::fs::OpenOptions::new();
-        open.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        open.mode(0o600);
-        let mut f = open.open(&tmp).map_err(|e| e.to_string())?;
-        f.write_all(bytes)
-            .and_then(|()| f.sync_all())
+        let mut temp = tempfile::NamedTempFile::new_in(&self.dir)
+            .map_err(|e| format!("Cannot create private temporary file: {e}"))?;
+        temp.write_all(bytes)
+            .and_then(|()| temp.as_file().sync_all())
             .map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+        temp.persist(path)
+            .map(|_| ())
+            .map_err(|e| format!("Cannot save workflow atomically: {}", e.error))
     }
 
     /// Every workflow file, with its validation result and trigger conflicts.
