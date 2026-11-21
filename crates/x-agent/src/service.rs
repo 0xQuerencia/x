@@ -15,9 +15,9 @@ use crate::context::{self, Context, Engine};
 use crate::harness::{self, RunStatus};
 use crate::hexcli::{Stt, SttError};
 use crate::opencode;
+use crate::phase::Phase;
 use crate::projects::Registry;
 use crate::session_links::{Link as SessionLink, Store as SessionStore};
-use crate::phase::Phase;
 use crate::tools::{self, Action, Risk};
 
 mod edit;
@@ -461,16 +461,25 @@ impl Service {
             store.observe(&project, session, now()).map(drop)
         });
         if let Err(error) = result {
-            self.emit("warning", &format!("Could not remember coding session: {error}"));
+            self.emit(
+                "warning",
+                &format!("Could not remember coding session: {error}"),
+            );
         }
     }
 
-    fn reconcile_provider_sessions(&self, workspace: &std::path::Path, sessions: &[harness::Session]) {
+    fn reconcile_provider_sessions(
+        &self,
+        workspace: &std::path::Path,
+        sessions: &[harness::Session],
+    ) {
         let Some((registry, store)) = self.session_store() else {
             return;
         };
         let result = registry.list().and_then(|projects| {
-            let Some(project) = projects.into_iter().find(|project| project.root == workspace)
+            let Some(project) = projects
+                .into_iter()
+                .find(|project| project.root == workspace)
             else {
                 return Ok(());
             };
@@ -479,12 +488,18 @@ impl Service {
                 .map(drop)
         });
         if let Err(error) = result {
-            self.emit("warning", &format!("Could not reconcile coding sessions: {error}"));
+            self.emit(
+                "warning",
+                &format!("Could not reconcile coding sessions: {error}"),
+            );
         }
     }
 
     /// Remembered entries are unverified until a fresh harness lookup succeeds.
-    pub fn remembered_sessions(&self, workspace: &std::path::Path) -> Result<Vec<SessionLink>, String> {
+    pub fn remembered_sessions(
+        &self,
+        workspace: &std::path::Path,
+    ) -> Result<Vec<SessionLink>, String> {
         let (registry, store) = self
             .session_store()
             .ok_or("Session persistence is not configured")?;
