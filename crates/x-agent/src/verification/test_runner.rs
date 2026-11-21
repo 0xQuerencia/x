@@ -80,11 +80,7 @@ pub fn verify_approved(
 
 /// Exact approval scope shared with the native owner-approval path.
 /// Changing the project, run, task, checkout, or test preset changes the scope.
-pub(crate) fn scope_for_suite(
-    project: &Project,
-    worktree: &OwnedWorktree,
-    suite: Suite,
-) -> Scope {
+pub(crate) fn scope_for_suite(project: &Project, worktree: &OwnedWorktree, suite: Suite) -> Scope {
     Scope::Task {
         project_id: project.id,
         run_id: worktree.run_id(),
@@ -328,11 +324,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn approval(
-        project: &Project,
-        worktree: &OwnedWorktree,
-        suite: Suite,
-    ) -> (Grants, Receipt) {
+    fn approval(project: &Project, worktree: &OwnedWorktree, suite: Suite) -> (Grants, Receipt) {
         let grants = Grants::default();
         let receipt = grants
             .issue(
@@ -459,5 +451,4 @@ mod tests {
         );
         assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
-
 }
