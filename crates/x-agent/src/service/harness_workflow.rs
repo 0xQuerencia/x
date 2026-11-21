@@ -38,7 +38,6 @@ struct PlannedJob {
     adapter: Arc<dyn Adapter>,
 }
 
-
 fn reconciliation_preview(mut claims: Vec<Claim>) -> serde_json::Value {
     claims.sort_by(|a, b| {
         a.run_id
