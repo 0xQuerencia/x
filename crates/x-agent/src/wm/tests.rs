@@ -681,6 +681,18 @@ fn an_app_launched_inside_a_terminal_is_not_the_terminals_window() {
 }
 
 #[test]
+fn a_valid_window_command_takes_precedence_over_catalog_repairs() {
+    let entry = apps::parse_entry(
+        "com.usebottles.bottles.desktop",
+        "[Desktop Entry]\nType=Application\nName=Bottles\nExec=bottles\nKeywords=windows;\n",
+    )
+    .unwrap();
+    let request = parse::parse_with("close this window", &[entry]).unwrap();
+    assert_eq!(request.op, Op::Close);
+    assert_eq!(request.target, Target::default());
+}
+
+#[test]
 fn a_split_installed_app_name_resolves_from_catalog() {
     let mut entries = catalog();
     entries.push(

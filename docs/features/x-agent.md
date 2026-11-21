@@ -163,7 +163,9 @@ original prose, summarize a page, reason through coding tasks, or complete
 payments/posts. A question requiring a generative answer or writing new
 content still needs a separate model. Provider errors and low-confidence
 choices fail closed rather than guessing or falling back to paid inference.
-Deterministic commands still run without contacting the provider.
+Deterministic commands still run without contacting the provider. Built-in window
+phrases take precedence over speech corrections based on installed app names
+and keywords.
 Work-mode OpenCode still needs its own configured coding model.
 
 Source: `crates/x-agent/src/decision.rs`, `crates/x-agent/src/decision_computer.rs`, `crates/x-agent/src/decider.rs`,
