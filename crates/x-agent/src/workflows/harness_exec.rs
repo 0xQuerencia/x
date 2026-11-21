@@ -316,8 +316,8 @@ mod tests {
                 exit_code: Some(if success { 0 } else { 1 }),
                 accepted_session: Some(
                     crate::harness::SessionId::try_from(match self.kind {
-                        Kind::OpenCode => "ses_fixture".into(),
-                        Kind::ClaudeCode => "123e4567-e89b-12d3-a456-426614174000".into(),
+                        Kind::OpenCode => String::from("ses_fixture"),
+                        Kind::ClaudeCode => String::from("123e4567-e89b-12d3-a456-426614174000"),
                     })
                     .unwrap(),
                 ),
