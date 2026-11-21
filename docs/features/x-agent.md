@@ -137,6 +137,19 @@ That distinction preserves legacy `on_failure: continue` behavior.
 remains sequential; graph scheduling, worktree ownership and parallel execution
 are separate milestones and are not yet enabled by this schema.
 
+### DAG scheduler contract (development)
+
+A bounded coordinator is available behind the new graph contract. It requires an
+executor to approve **every node** before launch, checks authorization again
+on dispatch, limits concurrent jobs (at most four), and propagates Stop to
+child cancellation tokens. Without worktree isolation, mutating harness jobs
+for the same project run one at a time; desktop jobs also share one resource
+lock. Unverified outputs never unlock success-dependent tasks.
+
+The scheduler is **not attached to live harnesses or the UI**. P4.3 worktree
+isolation, a stronger verification adapter and policy bridge must land before
+concurrent editing is exposed to users.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
