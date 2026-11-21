@@ -294,6 +294,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("project");
         fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
         let project = Project {
             id: Uuid::new_v4(),
             name: "example".into(),
