@@ -19,6 +19,8 @@ pub struct Preview {
     pub primary_head: String,
     pub task_head: String,
     pub clean: bool,
+    /// The primary checkout has uncommitted files and is not ready for merge.
+    pub primary_dirty: bool,
     pub merge_tree: Option<String>,
     pub changed_files: Vec<String>,
     pub change_list_truncated: bool,
@@ -36,6 +38,14 @@ pub fn preview(
     let task_root = manager.validate_owned(project, owned)?;
     let primary_head = commit(&project.root)?;
     let task_head = commit(&task_root)?;
+    let (primary_ok, primary_status) = git(
+        &project.root,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+    )?;
+    if !primary_ok {
+        return Err("Git could not inspect the primary checkout status".into());
+    }
+    let primary_dirty = !primary_status.trim().is_empty();
     let dirty = git(
         &task_root,
         &["status", "--porcelain=v1", "--untracked-files=all"],
@@ -100,6 +110,7 @@ pub fn preview(
         primary_head,
         task_head,
         clean: success,
+        primary_dirty,
         merge_tree: success.then_some(result_tree).flatten(),
         changed_files,
         change_list_truncated,
@@ -225,6 +236,7 @@ mod tests {
         let before = commit(&project.root).unwrap();
         let result = preview(&manager, &project, &task).unwrap();
         assert!(result.clean);
+        assert!(result.primary_dirty);
         assert!(result.merge_tree.is_some());
         assert!(result.changed_files.contains(&"backend.rs".into()));
         assert!(result.needs_explicit_merge_approval);
