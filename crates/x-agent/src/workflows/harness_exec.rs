@@ -329,11 +329,17 @@ mod tests {
         kind: Kind,
         fail: bool,
         running: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
     }
 
     impl OwnedRun for FakeRun {
         fn join(self: Box<Self>) -> RunResult {
             let success = !self.fail;
+            // Keep short mock tasks overlapping despite slow journal fsyncs.
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while self.peak.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
             std::thread::sleep(Duration::from_millis(45));
             self.running.fetch_sub(1, Ordering::SeqCst);
             RunResult {
@@ -345,8 +351,8 @@ mod tests {
                 exit_code: Some(if success { 0 } else { 1 }),
                 accepted_session: Some(
                     crate::harness::SessionId::try_from(match self.kind {
-                        Kind::OpenCode => "ses_fixture".into(),
-                        Kind::ClaudeCode => "123e4567-e89b-12d3-a456-426614174000".into(),
+                        Kind::OpenCode => String::from("ses_fixture"),
+                        Kind::ClaudeCode => String::from("123e4567-e89b-12d3-a456-426614174000"),
                     })
                     .unwrap(),
                 ),
@@ -380,6 +386,7 @@ mod tests {
                 kind: self.kind,
                 fail: self.fail,
                 running: Arc::clone(&self.running),
+                peak: Arc::clone(&self.peak),
             }))
         }
     }
