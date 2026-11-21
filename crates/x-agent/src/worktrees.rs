@@ -84,7 +84,7 @@ impl Manager {
         let lock = open_lock(&base.join("x-worktrees.lock"))?;
         lock.try_lock()
             .map_err(|_| "Another worktree operation is running")?;
-        let result = (|| {
+        let result: Result<OwnedWorktree, String> = (|| {
             // A fresh check under the lock prevents collisions during concurrent runs.
             if fs::symlink_metadata(&destination).is_ok() {
                 return Err("This task already has a worktree path".into());
@@ -173,7 +173,7 @@ impl Manager {
         let lock = open_lock(&base.join("x-worktrees.lock"))?;
         lock.try_lock()
             .map_err(|_| "Another worktree operation is running")?;
-        let result = (|| {
+        let result: Result<(), String> = (|| {
             let dirty = git(
                 &worktree.path,
                 &[
