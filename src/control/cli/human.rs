@@ -43,8 +43,13 @@ pub(crate) fn print(reply: ControlReply, output: Output) -> u8 {
             }
             for project in projects {
                 let prefix = if registered { "Registered " } else { "" };
+                let aliases = if project.aliases.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (aka {})", project.aliases.join(", "))
+                };
                 println!(
-                    "{prefix}{}  {}  {}",
+                    "{prefix}{}  {}{aliases}  {}",
                     project.id,
                     project.name,
                     project.root.display()

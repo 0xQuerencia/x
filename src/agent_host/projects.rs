@@ -1,14 +1,15 @@
 use x_agent::projects::Registry;
+use x_agent::service::Service;
 use x_agent::session_links::Store as SessionStore;
 use x_agent::workflows::paths;
 
 use crate::control::{ControlReply, ProjectCommand};
 
-pub(super) fn handle(command: ProjectCommand) -> ControlReply {
-    run(command).unwrap_or_else(|error| ControlReply::error("refused", error))
+pub(super) fn handle(service: &Service, command: ProjectCommand) -> ControlReply {
+    run(service, command).unwrap_or_else(|error| ControlReply::error("refused", error))
 }
 
-fn run(command: ProjectCommand) -> Result<ControlReply, String> {
+fn run(service: &Service, command: ProjectCommand) -> Result<ControlReply, String> {
     let directory = crate::app_paths::support_dir().map_err(|error| error.to_string())?;
     let registry = Registry::new(directory.clone(), paths::home()?);
     match command {
@@ -22,6 +23,49 @@ fn run(command: ProjectCommand) -> Result<ControlReply, String> {
                 projects: vec![project],
                 registered,
             })
+        }
+        ProjectCommand::Use { query } => {
+            let project = registry.validated_resolve(&query)?;
+            let shown = service.set_workspace(
+                project
+                    .root
+                    .to_str()
+                    .ok_or("The project folder has an unsupported path")?,
+            )?;
+            let (_, changed) = registry.select(&project.id.to_string())?;
+            if changed {
+                Ok(ControlReply::done(format!(
+                    "Selected {} ({shown})",
+                    project.name
+                )))
+            } else {
+                Ok(ControlReply::unchanged(format!(
+                    "Already selected {} ({shown})",
+                    project.name
+                )))
+            }
+        }
+        ProjectCommand::AliasAdd { id, alias } => {
+            let (project, changed) = registry.add_alias(&id, &alias)?;
+            if changed {
+                Ok(ControlReply::done(format!(
+                    "Added alias for {}",
+                    project.name
+                )))
+            } else {
+                Ok(ControlReply::unchanged("That alias already exists"))
+            }
+        }
+        ProjectCommand::AliasRemove { id, alias } => {
+            let (project, changed) = registry.remove_alias(&id, &alias)?;
+            if changed {
+                Ok(ControlReply::done(format!(
+                    "Removed alias from {}",
+                    project.name
+                )))
+            } else {
+                Ok(ControlReply::unchanged("That alias was not registered"))
+            }
         }
         ProjectCommand::Forget { id } => {
             let project = registry

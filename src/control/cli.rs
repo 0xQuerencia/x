@@ -666,6 +666,26 @@ pub enum ProjectCli {
         #[command(flatten)]
         output: Output,
     },
+    /// Select a registered project by exact name, alias or ID.
+    Use {
+        query: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Give a registered project another exact name.
+    AliasAdd {
+        id: String,
+        alias: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Remove an exact alias by project ID.
+    AliasRemove {
+        id: String,
+        alias: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// Remove a project from X's registry using its ID.
     Forget {
         id: String,
@@ -872,6 +892,15 @@ pub fn run(command: ControlCli) -> u8 {
                         ProjectCli::List { output } => (ProjectCommand::List, output),
                         ProjectCli::Register { name, path, output } => {
                             (ProjectCommand::Register { name, path }, output)
+                        }
+                        ProjectCli::Use { query, output } => {
+                            (ProjectCommand::Use { query }, output)
+                        }
+                        ProjectCli::AliasAdd { id, alias, output } => {
+                            (ProjectCommand::AliasAdd { id, alias }, output)
+                        }
+                        ProjectCli::AliasRemove { id, alias, output } => {
+                            (ProjectCommand::AliasRemove { id, alias }, output)
                         }
                         ProjectCli::Forget { id, output } => {
                             (ProjectCommand::Forget { id }, output)
@@ -1883,6 +1912,46 @@ mod tests {
     use super::*;
     use crate::control::{StatusReport, settings::SettingValue};
     use crate::dictation::vocabulary::VocabularyEntry;
+
+    #[test]
+    fn registered_project_cli_commands_are_exact_and_nonexecuting() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed = Args::try_parse_from(["hex", "agent", "projects", "use", "Chamber"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Projects {
+                    command: ProjectCli::Use { query, .. }
+                }
+            } if query == "Chamber"
+        ));
+        let parsed = Args::try_parse_from([
+            "hex",
+            "agent",
+            "projects",
+            "alias-add",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "CA workspace",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Projects {
+                    command: ProjectCli::AliasAdd { alias, .. }
+                }
+            } if alias == "CA workspace"
+        ));
+        assert!(Args::try_parse_from(["hex", "agent", "projects", "use"]).is_err());
+        assert!(Args::try_parse_from(["hex", "agent", "projects", "alias-remove", "id"]).is_err());
+    }
 
     #[test]
     fn openrouter_key_validation_never_echoes_secret_values() {

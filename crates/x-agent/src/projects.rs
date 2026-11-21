@@ -144,6 +144,13 @@ impl Registry {
         resolve_in(&data, query).cloned()
     }
 
+    /// Resolve a named project for an actual workspace switch, rejecting moved folders.
+    pub fn validated_resolve(&self, query: &str) -> Result<Project, String> {
+        let project = self.resolve(query)?;
+        validate_saved_root(&project.root, &self.home)?;
+        Ok(project)
+    }
+
     /// Remember an explicit project selection across app restarts.
     pub fn select(&self, query: &str) -> Result<(Project, bool), String> {
         self.update_data(|data| {
@@ -587,6 +594,7 @@ mod tests {
         fs::write(registry.home.join("ripple/source.txt"), "keep").unwrap();
         let (project, _) = registry.register("Ripple", "~/ripple").unwrap();
         assert!(registry.resolve("it").is_err());
+        assert_eq!(registry.validated_resolve("ripple").unwrap().id, project.id);
         let (selected, changed) = registry.select("ripple").unwrap();
         assert!(changed);
         assert_eq!(selected.id, project.id);
@@ -614,6 +622,7 @@ mod tests {
         let (second, _) = registry.register("Second", "~/second").unwrap();
         registry.select(&first.id.to_string()).unwrap();
         fs::remove_dir(registry.home.join("second")).unwrap();
+        assert!(registry.validated_resolve(&second.id.to_string()).is_err());
         assert!(registry.select(&second.id.to_string()).is_err());
         assert_eq!(registry.last_selected().unwrap().unwrap().id, first.id);
     }
