@@ -236,7 +236,9 @@ update HEAD, the index or worktree files.
 X has a process-local, deny-by-default grant store for exact project metadata
 reads, individually approved harness tasks, and individually approved test
 runs. Task grants are tied to a project ID, run ID and node ID, expire after
-at most 60 seconds, and can be consumed **once only**. Project metadata grants
+at most 60 seconds, and can be consumed **once only**. Harness grants also
+bind the exact typed job request and required verification profile, so an
+edited goal or weaker proof cannot reuse consent. Project metadata grants
 are shorter-lived and use-limited. Revocation or restarting X invalidates
 outstanding receipts. A grant cannot authorize deletion, merging, secret
 access, screen capture or external transfers.
