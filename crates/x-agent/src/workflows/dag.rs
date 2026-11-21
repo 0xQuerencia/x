@@ -51,6 +51,8 @@ pub struct Graph {
     pub version: u16,
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub triggers: Vec<String>,
     pub nodes: Vec<Node>,
 }
 
@@ -87,13 +89,14 @@ impl Graph {
             version: VERSION,
             id: legacy.id,
             name: legacy.name,
+            triggers: legacy.triggers,
             nodes,
         };
-        graph.validate()?;
+        graph.validate_with_home(home)?;
         Ok(graph)
     }
 
-    /// Validate the graph before writing it to disk or scheduling any task.
+    /// Validate graph structure. This alone does not authorize any operation.
     pub fn validate(&self) -> Result<(), String> {
         if self.version != VERSION {
             return Err("Unsupported workflow graph version".into());
@@ -138,6 +141,32 @@ impl Graph {
             }
         }
         self.order()?;
+        Ok(())
+    }
+
+    /// Also verify the closed desktop action registry against the approved home scope.
+    pub fn validate_with_home(&self, home: &Path) -> Result<(), String> {
+        self.validate()?;
+        if self.triggers.len() > super::model::MAX_TRIGGERS {
+            return Err("Too many trigger phrases".into());
+        }
+        let mut triggers = HashSet::new();
+        for trigger in &self.triggers {
+            let normalized = super::model::normalize(trigger);
+            if normalized.is_empty()
+                || normalized.split_whitespace().count() > 6
+                || normalized.chars().count() > 60
+                || super::model::is_builtin_phrase(&normalized)
+                || !triggers.insert(normalized)
+            {
+                return Err("Invalid or duplicated trigger phrase".into());
+            }
+        }
+        for node in &self.nodes {
+            if let Job::Desktop { action } = &node.job {
+                super::model::check_action(action, home)?;
+            }
+        }
         Ok(())
     }
 
@@ -207,7 +236,7 @@ pub fn decode(input: &str, home: &Path) -> Result<Graph, String> {
         Some(version) if version.as_u64() == Some(u64::from(VERSION)) => {
             let graph: Graph = serde_json::from_value(value)
                 .map_err(|e| format!("Invalid workflow graph: {e}"))?;
-            graph.validate()?;
+            graph.validate_with_home(home)?;
             Ok(graph)
         }
         _ => Err("Unsupported workflow graph version".into()),
@@ -254,6 +283,7 @@ mod tests {
         assert_eq!(graph.nodes[1].after, ["first"]);
         assert!(graph.nodes[1].requires.is_empty());
         assert_eq!(graph.nodes[0].on_failure, OnFailure::Continue);
+        assert_eq!(graph.triggers, legacy().triggers);
         let original = serde_json::to_string(&legacy()).unwrap();
         assert_eq!(decode(&original, &home()).unwrap(), graph);
     }
@@ -297,7 +327,11 @@ mod tests {
         let mut value: serde_json::Value = serde_json::from_str(&serialized).unwrap();
         value["nodes"][0]["unapproved"] = serde_json::json!({ "run": "rm -rf /" });
         assert!(decode(&value.to_string(), &home()).is_err());
-        value.as_object_mut().unwrap().remove("unrecognized");
+        let mut invalid = graph.clone();
+        invalid.nodes[0].job = Job::Desktop {
+            action: StepAction::SwitchWorkspace { workspace: 255 },
+        };
+        assert!(decode(&serde_json::to_string(&invalid).unwrap(), &home()).is_err());
     }
 
     #[test]
