@@ -202,6 +202,22 @@ the job's lifetime even if the executor's discovery state changes.
 A live policy-backed harness executor that issues these identities remains
 outstanding; model-provided worktree names cannot switch isolation on.
 
+### Approved two-harness execution (development)
+
+The new `workflows::harness_exec` adapter can route a typed DAG node to
+either an approved OpenCode or Claude Code adapter in a separately owned Git
+worktree. It rechecks project/worktree identity, uses the crash-safe job
+journal to refuse duplicate sends, and derives completion from structured
+harness delivery and the explicitly chosen verification profile.
+
+The tests use fake providers with real Git worktrees to prove same-project
+parallel isolation, failure reporting, and replay refusal without network
+calls. **It is not connected to the voice command or native approval UI.**
+The host must create exact, scoped owner approvals before constructing an
+assignment; a model-generated graph cannot approve itself. Worktrees are
+preserved after runs, and code/test success is not claimed by delivery-only
+verification.
+
 ### Desktop capability checks
 
 Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
