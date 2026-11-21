@@ -42,6 +42,12 @@ pub struct Report {
 /// approval before the scheduler can run. There is intentionally no default.
 pub trait Executor: Send + Sync + 'static {
     fn authorized(&self, node: &Node) -> bool;
+    /// Only a trusted executor that independently verified an isolated,
+    /// owned Git checkout may return a worktree resource key. Graph JSON and
+    /// model output alone must never grant isolation.
+    fn verified_worktree_key(&self, _node: &Node) -> Option<String> {
+        None
+    }
     fn execute(&self, node: Node, stop: Cancellation) -> Outcome;
 }
 
@@ -49,12 +55,38 @@ pub trait Executor: Send + Sync + 'static {
 enum Resource {
     Desktop,
     Project(String),
+    IsolatedWorktree(String, String),
 }
 
-fn resource(node: &Node) -> Resource {
+impl Resource {
+    fn conflicts_with(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Desktop, Self::Desktop) => true,
+            (Self::Project(a), Self::Project(b)) => a == b,
+            (Self::Project(a), Self::IsolatedWorktree(b, _))
+            | (Self::IsolatedWorktree(b, _), Self::Project(a)) => a == b,
+            (Self::IsolatedWorktree(a, x), Self::IsolatedWorktree(b, y)) => a == b && x == y,
+            _ => false,
+        }
+    }
+}
+
+fn resource(node: &Node, executor: &dyn Executor) -> Resource {
     match &node.job {
         Job::Desktop { .. } => Resource::Desktop,
-        Job::Harness { project_id, .. } => Resource::Project(project_id.clone()),
+        Job::Harness { project_id, .. } => executor
+            .verified_worktree_key(node)
+            .filter(|key| {
+                !key.is_empty()
+                    && key.len() <= 80
+                    && key
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+            })
+            .map_or_else(
+                || Resource::Project(project_id.clone()),
+                |key| Resource::IsolatedWorktree(project_id.clone(), key),
+            ),
     }
 }
 
@@ -87,6 +119,7 @@ pub fn run(
     let mut finished: Vec<Option<Outcome>> = vec![None; count];
     let mut active: HashSet<usize> = HashSet::new();
     let mut resources: HashSet<Resource> = HashSet::new();
+    let mut resource_leases: HashMap<usize, Resource> = HashMap::new();
     let mut notes = vec![String::new(); count];
     let (send, receive) = mpsc::channel::<(usize, Outcome)>();
     let mut stop_new = false;
@@ -126,8 +159,11 @@ pub fn run(
                 if active.len() >= parallel {
                     break;
                 }
-                let owned_resource = resource(node);
-                if resources.contains(&owned_resource) {
+                let owned_resource = resource(node, executor.as_ref());
+                if resources
+                    .iter()
+                    .any(|existing| existing.conflicts_with(&owned_resource))
+                {
                     continue;
                 }
                 // Revoked permissions must also be checked right before dispatch.
@@ -140,7 +176,8 @@ pub fn run(
                     progressed = true;
                     continue;
                 }
-                resources.insert(owned_resource);
+                resources.insert(owned_resource.clone());
+                resource_leases.insert(index, owned_resource);
                 active.insert(index);
                 max_concurrent = max_concurrent.max(active.len());
                 progressed = true;
@@ -168,7 +205,9 @@ pub fn run(
             return Err("The scheduler lost an owned worker".into());
         };
         active.remove(&index);
-        resources.remove(&resource(&graph.nodes[index]));
+        if let Some(lease) = resource_leases.remove(&index) {
+            resources.remove(&lease);
+        }
         finished[index] = Some(outcome);
         if matches!(outcome, Outcome::Failed | Outcome::Unverified)
             && graph.nodes[index].on_failure == super::model::OnFailure::Stop
@@ -220,6 +259,7 @@ mod tests {
 
     struct Mock {
         authorized: bool,
+        isolated: bool,
         running: AtomicUsize,
         peak: AtomicUsize,
         calls: AtomicUsize,
@@ -230,6 +270,7 @@ mod tests {
         fn new(outcome: Outcome) -> Self {
             Self {
                 authorized: true,
+                isolated: false,
                 running: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
                 calls: AtomicUsize::new(0),
@@ -241,6 +282,10 @@ mod tests {
     impl Executor for Mock {
         fn authorized(&self, _node: &Node) -> bool {
             self.authorized
+        }
+
+        fn verified_worktree_key(&self, node: &Node) -> Option<String> {
+            self.isolated.then(|| node.id.clone())
         }
 
         fn execute(&self, _node: Node, cancel: Cancellation) -> Outcome {
@@ -323,6 +368,25 @@ mod tests {
         assert_eq!(report.max_concurrent, 1);
         assert_eq!(mock.peak.load(Ordering::SeqCst), 1);
         assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn verified_distinct_worktrees_can_run_in_parallel_within_one_project() {
+        let project = uuid::Uuid::new_v4().to_string();
+        let graph = graph(&project, &project);
+        let mut mock = Mock::new(Outcome::Verified);
+        mock.isolated = true;
+        let mock = Arc::new(mock);
+        let report = run(
+            &graph,
+            Path::new("/tmp"),
+            mock.clone(),
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
+        assert_eq!(report.max_concurrent, 2);
+        assert_eq!(mock.peak.load(Ordering::SeqCst), 2);
     }
 
     #[test]
