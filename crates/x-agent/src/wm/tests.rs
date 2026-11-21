@@ -468,12 +468,24 @@ fn parse_phrases() {
 #[test]
 #[ignore = "needs a running Hyprland session"]
 fn live_hyprland() {
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("foot")
-        .args(["-a", "xwm-live", "-T", "x-wm-live", "sleep", "120"])
-        .stdin(Stdio::null())
-        .spawn()
-        .expect("foot");
+    use std::process::{Child, Command, Stdio};
+
+    struct Fixture(Child);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let class = format!("xwm-live-{}", std::process::id());
+    let fixture = Fixture(
+        Command::new("foot")
+            .args(["-a", &class, "-T", &class, "sleep", "35"])
+            .stdin(Stdio::null())
+            .spawn()
+            .expect("foot"),
+    );
     let mut c = Controller::new(Box::new(hypr::Hypr));
     contract::assert_live_report(c.backend.as_ref());
     let me = |c: &Controller| {
@@ -481,58 +493,60 @@ fn live_hyprland() {
             .windows()
             .unwrap()
             .into_iter()
-            .find(|w| w.class == "xwm-live")
+            .find(|w| w.class == class && w.pid == fixture.0.id())
     };
-    for _ in 0..50 {
-        if me(&c).is_some() && c.backend.focused().unwrap() == me(&c).map(|w| w.id) {
-            break;
+    let timeout = std::time::Instant::now() + Duration::from_secs(8);
+    let start = loop {
+        if let Some(window) = me(&c) {
+            break window;
         }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let start = me(&c).expect("window mapped");
+        assert!(
+            std::time::Instant::now() < timeout,
+            "the fixture window did not map"
+        );
+        std::thread::sleep(Duration::from_millis(75));
+    };
+    let workspace = if start.workspace == 7 { 8 } else { 7 };
+    assert!(
+        c.move_exact(&start.id, start.pid ^ 1, &start.class, workspace)
+            .is_err(),
+        "the wrong PID cannot move the fixture window"
+    );
+    assert_eq!(me(&c).unwrap().place, start.place);
+    c.focus_exact(&start.id, start.pid, &start.class).unwrap();
     assert_eq!(
         c.backend.focused().unwrap().as_deref(),
-        Some(start.id.as_str()),
-        "focus was stolen"
+        Some(start.id.as_str())
     );
-    let t = std::time::Instant::now();
-    let out = ask(&mut c, "move this window to workspace 7").unwrap();
-    eprintln!("move: {} in {:?}", out.message, t.elapsed());
-    assert_eq!(me(&c).unwrap().workspace, 7);
+
+    c.move_exact(&start.id, start.pid, &start.class, workspace)
+        .unwrap();
+    assert_eq!(me(&c).unwrap().workspace, workspace);
     ask(&mut c, "undo").unwrap();
     assert_eq!(me(&c).unwrap().place, start.place);
-    // A moved-away window loses focus. Every later "this" must still be the test window.
-    let mine = |c: &mut Controller| {
-        let id = me(c).unwrap().id;
-        c.backend.run(&Cmd::Focus(id.clone())).unwrap();
-        for _ in 0..30 {
-            if c.backend.focused().unwrap().as_deref() == Some(id.as_str()) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        panic!("could not focus the test window");
-    };
-    for step in ["maximize this", "undo", "minimize this", "undo"] {
-        if step != "undo" {
-            mine(&mut c);
-        }
-        eprintln!(
-            "{step}: {}",
-            ask(&mut c, step)
-                .map(|o| o.message)
-                .unwrap_or_else(|e| e.to_string())
-        );
-    }
-    assert!(!me(&c).unwrap().minimized);
-    mine(&mut c);
-    eprintln!(
-        "close: {}",
-        ask(&mut c, "close this window").unwrap().message
-    );
-    let _ = child.kill();
-    let _ = child.wait();
+
+    let previous_workspace = c.backend.workspace().unwrap();
+    c.switch(workspace).unwrap();
+    assert_eq!(c.backend.workspace().unwrap(), workspace);
+    ask(&mut c, "undo").unwrap();
+    assert_eq!(c.backend.workspace().unwrap(), previous_workspace);
+
+    assert!(!me(&c).unwrap().maximized);
+    c.maximize(&start).unwrap();
+    assert!(me(&c).unwrap().maximized);
+    ask(&mut c, "undo").unwrap();
+    assert!(!me(&c).unwrap().maximized);
+
+    c.minimize(&start).unwrap();
+    assert!(me(&c).unwrap().minimized);
+    ask(&mut c, "undo").unwrap();
+    let restored = me(&c).unwrap();
+    assert!(!restored.minimized);
+    assert_eq!(restored.place, start.place);
+
+    c.close_exact(&start.id, start.pid, &start.class).unwrap();
     assert!(me(&c).is_none());
+    assert!(c.focus_exact(&start.id, start.pid, &start.class).is_err());
 }
 
 /// Real Sway in a headless compositor; run via scripts/smoke-x/sway-ci.sh.
