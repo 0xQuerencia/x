@@ -114,10 +114,9 @@ pub fn run(
                 if !all_finished {
                     continue;
                 }
-                let required_ok = node
-                    .requires
-                    .iter()
-                    .all(|dependency| finished[ids[dependency.as_str()]] == Some(Outcome::Verified));
+                let required_ok = node.requires.iter().all(|dependency| {
+                    finished[ids[dependency.as_str()]] == Some(Outcome::Verified)
+                });
                 if !required_ok {
                     finished[index] = Some(Outcome::Skipped);
                     notes[index] = "Required predecessor was not verified".into();
@@ -213,9 +212,9 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::dag::{HarnessKind, Node};
     use super::super::model::OnFailure;
+    use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
@@ -290,11 +289,22 @@ mod tests {
         let b = uuid::Uuid::new_v4().to_string();
         let graph = graph(&a, &b);
         let mock = Arc::new(Mock::new(Outcome::Verified));
-        let report = run(&graph, Path::new("/tmp"), mock.clone(), &Cancellation::default(), 2)
-            .unwrap();
+        let report = run(
+            &graph,
+            Path::new("/tmp"),
+            mock.clone(),
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
         assert_eq!(report.max_concurrent, 2);
         assert_eq!(mock.peak.load(Ordering::SeqCst), 2);
-        assert!(report.nodes.iter().all(|node| node.outcome == Outcome::Verified));
+        assert!(
+            report
+                .nodes
+                .iter()
+                .all(|node| node.outcome == Outcome::Verified)
+        );
     }
 
     #[test]
@@ -302,8 +312,14 @@ mod tests {
         let id = uuid::Uuid::new_v4().to_string();
         let graph = graph(&id, &id);
         let mock = Arc::new(Mock::new(Outcome::Verified));
-        let report = run(&graph, Path::new("/tmp"), mock.clone(), &Cancellation::default(), 2)
-            .unwrap();
+        let report = run(
+            &graph,
+            Path::new("/tmp"),
+            mock.clone(),
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
         assert_eq!(report.max_concurrent, 1);
         assert_eq!(mock.peak.load(Ordering::SeqCst), 1);
         assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
@@ -316,8 +332,14 @@ mod tests {
         let mut graph = graph(&a, &b);
         graph.nodes[1].requires = vec!["front".into()];
         let mock = Arc::new(Mock::new(Outcome::Unverified));
-        let report = run(&graph, Path::new("/tmp"), mock.clone(), &Cancellation::default(), 2)
-            .unwrap();
+        let report = run(
+            &graph,
+            Path::new("/tmp"),
+            mock.clone(),
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
         assert_eq!(report.nodes[0].outcome, Outcome::Unverified);
         assert_eq!(report.nodes[1].outcome, Outcome::Skipped);
         assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
@@ -327,14 +349,22 @@ mod tests {
     fn no_work_starts_without_preflight_approval() {
         struct Deny;
         impl Executor for Deny {
-            fn authorized(&self, _node: &Node) -> bool { false }
+            fn authorized(&self, _node: &Node) -> bool {
+                false
+            }
             fn execute(&self, _node: Node, _stop: Cancellation) -> Outcome {
                 panic!("unapproved work was executed");
             }
         }
         let a = uuid::Uuid::new_v4().to_string();
         let b = uuid::Uuid::new_v4().to_string();
-        let result = run(&graph(&a, &b), Path::new("/tmp"), Arc::new(Deny), &Cancellation::default(), 2);
+        let result = run(
+            &graph(&a, &b),
+            Path::new("/tmp"),
+            Arc::new(Deny),
+            &Cancellation::default(),
+            2,
+        );
         assert!(result.is_err());
     }
 
