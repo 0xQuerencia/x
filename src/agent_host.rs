@@ -53,8 +53,13 @@ pub fn service() -> &'static Service {
             opencode_exe(),
         );
         restore_execution_policy(&service);
-        if let (Ok(dir), Some(home)) = (crate::app_paths::support_dir(), dirs::home_dir()) {
-            service.set_workflow_dirs(dir.join("workflows"), home);
+        if let Ok(dir) = crate::app_paths::support_dir() {
+            if let Err(error) = service.configure_ledger(&dir) {
+                tracing::warn!(%error, "could not open X audit ledger");
+            }
+            if let Some(home) = dirs::home_dir() {
+                service.set_workflow_dirs(dir.join("workflows"), home);
+            }
         }
         service.set_computer_apps(load_computer_apps());
         service.set_computer_remote(computer_remote_file().is_some_and(|path| path.is_file()));
@@ -205,13 +210,9 @@ fn wake_words_command(command: &str, value: &str) -> ControlReply {
     ControlReply::done(wake_summary())
 }
 
-fn private_file(path: &std::path::Path, append: bool) -> std::io::Result<std::fs::File> {
+fn private_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
-    options
-        .create(true)
-        .write(true)
-        .append(append)
-        .truncate(!append);
+    options.create(true).write(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let file = options.open(path)?;
@@ -224,11 +225,7 @@ fn private_file(path: &std::path::Path, append: bool) -> std::io::Result<std::fs
 }
 
 fn write_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
-    std::io::Write::write_all(&mut private_file(path, false)?, contents)
-}
-
-fn append_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
-    std::io::Write::write_all(&mut private_file(path, true)?, contents)
+    std::io::Write::write_all(&mut private_file(path)?, contents)
 }
 
 fn computer_apps_file() -> Option<PathBuf> {
@@ -247,12 +244,6 @@ fn computer_vision_file() -> Option<PathBuf> {
     crate::app_paths::support_dir()
         .ok()
         .map(|dir| dir.join("x-computer-vision"))
-}
-
-fn approval_audit_file() -> Option<PathBuf> {
-    crate::app_paths::support_dir()
-        .ok()
-        .map(|dir| dir.join("x-approval-audit.ndjson"))
 }
 
 fn load_computer_apps() -> Vec<String> {
@@ -734,17 +725,6 @@ fn watch(svc: &Service) {
             seen = last.n;
         }
         for event in &snapshot.events {
-            if event.kind == "approval"
-                && let Some(path) = approval_audit_file()
-            {
-                let line = serde_json::json!({"timestamp": event.t, "event": event.text});
-                if let Ok(mut bytes) = serde_json::to_vec(&line) {
-                    bytes.push(b'\n');
-                    if let Err(error) = append_private(&path, &bytes) {
-                        tracing::warn!(%error, "could not append X approval audit");
-                    }
-                }
-            }
             match event.kind.as_str() {
                 "error" => toast("X: problem", &event.text),
                 "permission" if event.text.starts_with("Blocked ") => toast(

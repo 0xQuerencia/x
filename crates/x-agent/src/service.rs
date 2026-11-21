@@ -17,10 +17,12 @@ use crate::phase::Phase;
 use crate::tools::{self, Action, Risk};
 
 mod edit;
+mod ledger;
 mod policy;
 mod request;
 mod workflow;
 pub use edit::Preview;
+use ledger::{Kind as AuditKind, Ledger};
 pub use policy::AutonomyMode;
 use policy::{Approval, Review};
 pub use request::RequestMetadata;
@@ -244,6 +246,7 @@ struct State {
     workspace: Option<PathBuf>,
     autonomy_mode: AutonomyMode,
     review: Review,
+    ledger: Result<Option<Ledger>, String>,
     grants: Vec<String>,
     computer_apps: Vec<String>,
     computer_remote: bool,
@@ -311,6 +314,7 @@ impl Service {
             stop_requested: false,
             autonomy_mode: AutonomyMode::Default,
             review: Review::Required,
+            ledger: Ok(None),
             grants: vec![],
             computer_apps: vec![],
             computer_remote: false,
@@ -343,6 +347,22 @@ impl Service {
 
     pub fn emit(&self, kind: &str, text: &str) {
         emit(&mut self.lock(), kind, text);
+    }
+
+    /// Enable the local, redacted action audit before starting the service.
+    pub fn configure_ledger(&self, directory: &std::path::Path) -> std::io::Result<()> {
+        let result = Ledger::open(directory);
+        let mut s = self.lock();
+        match result {
+            Ok(ledger) => {
+                s.ledger = Ok(Some(ledger));
+                Ok(())
+            }
+            Err(error) => {
+                s.ledger = Err(error.to_string());
+                Err(error)
+            }
+        }
     }
 
     pub fn snapshot(&self, since: u64) -> Snapshot {
@@ -802,6 +822,7 @@ impl Service {
         s.phase = Phase::AwaitingApproval;
         s.actions = actions;
         s.task = Some(task.clone());
+        audit_best_effort(&mut s, AuditKind::Planned, None);
         emit(
             &mut s,
             "plan",
@@ -839,6 +860,14 @@ impl Service {
             }
             if !s.review.allows(s.autonomy_mode, approval) {
                 return Ok(());
+            }
+            let kind = match approval {
+                Approval::User => AuditKind::Approved,
+                Approval::Automatic => AuditKind::Automatic,
+            };
+            if let Err(error) = audit(&s, kind, None) {
+                emit(&mut s, "error", &error);
+                return Err(error);
             }
             if approval == Approval::Automatic {
                 if let Some(guard) = s.guard.as_mut() {
@@ -904,22 +933,28 @@ impl Service {
         Ok(task)
     }
 
-    fn claim_action(&self, id: ActionId) -> bool {
+    fn claim_action(&self, id: ActionId) -> Result<bool, String> {
         let mut state = self.lock();
         if state.stop_requested || state.phase != Phase::Running {
-            return false;
+            return Ok(false);
         }
         let Some(step) = state
             .task
-            .as_mut()
+            .as_ref()
             .filter(|task| task.id == id.task)
-            .and_then(|task| task.steps.get_mut(id.step))
+            .and_then(|task| task.steps.get(id.step))
             .filter(|step| step.status == "pending")
         else {
-            return false;
+            return Ok(false);
         };
-        step.status = "running".into();
-        true
+        if step.request.as_ref().map(|request| request.idempotency_key) != Some(id) {
+            return Ok(false);
+        }
+        audit(&state, AuditKind::Claimed, Some(id.step))?;
+        if let Some(task) = state.task.as_mut() {
+            task.steps[id.step].status = "running".into();
+        }
+        Ok(true)
     }
 
     fn run_actions(&self, actions: &[ActionRequest]) {
@@ -936,11 +971,19 @@ impl Service {
         let mut verified = 0;
         for request in actions {
             let id = request.metadata.idempotency_key;
-            if !self.claim_action(id) {
-                if self.lock().stop_requested {
-                    self.finish(Phase::Cancelled, None, Some("Stopped".into()), None);
+            match self.claim_action(id) {
+                Ok(true) => {}
+                Ok(false) => {
+                    if self.lock().stop_requested {
+                        self.finish(Phase::Cancelled, None, Some("Stopped".into()), None);
+                    }
+                    return;
                 }
-                return;
+                Err(error) => {
+                    self.set_step(id.step, "failed");
+                    self.finish(Phase::Failed, Some(error), None, None);
+                    return;
+                }
             }
             let i = id.step;
             let action = &request.action;
@@ -1219,9 +1262,21 @@ impl Service {
     }
 
     fn set_step(&self, idx: usize, status: &str) {
-        if let Some(step) = self.lock().task.as_mut().and_then(|t| t.steps.get_mut(idx)) {
-            step.status = status.into();
+        let mut s = self.lock();
+        let Some(step) = s.task.as_mut().and_then(|t| t.steps.get_mut(idx)) else {
+            return;
+        };
+        if step.status == status {
+            return;
         }
+        step.status = status.into();
+        let kind = match status {
+            "done" => AuditKind::StepDone,
+            "launched" => AuditKind::Launched,
+            "failed" => AuditKind::StepFailed,
+            _ => return,
+        };
+        audit_best_effort(&mut s, kind, Some(idx));
     }
 
     fn finish(
@@ -1246,6 +1301,7 @@ impl Service {
         s.edit = None;
         s.workflow = None;
         set_phase(&mut s, phase);
+        audit_best_effort(&mut s, AuditKind::Finished, None);
         if let Some(e) = error {
             let seen = s
                 .events
@@ -1272,12 +1328,16 @@ impl Service {
                 if let Some(t) = s.task.as_mut() {
                     t.edit = None;
                 }
+                audit_best_effort(&mut s, AuditKind::Discarded, None);
                 emit(&mut s, "info", "Plan discarded");
                 emit(&mut s, "approval", &format!("discarded task {id}"));
             }
             Phase::Running => {
-                s.stop_requested = true;
-                emit(&mut s, "info", "Stop requested");
+                if !s.stop_requested {
+                    s.stop_requested = true;
+                    audit_best_effort(&mut s, AuditKind::StopRequested, None);
+                    emit(&mut s, "info", "Stop requested");
+                }
                 if let Some(c) = s.canceller.clone() {
                     drop(s);
                     c.cancel();
@@ -1397,6 +1457,30 @@ fn phase_name(p: Phase) -> &'static str {
         Phase::Completed => "completed",
         Phase::Failed => "failed",
         Phase::Cancelled => "cancelled",
+    }
+}
+
+fn audit(s: &State, kind: AuditKind, step: Option<usize>) -> Result<(), String> {
+    let ledger_error = |error: &dyn std::fmt::Display| {
+        format!("X audit ledger could not record the event: {error}")
+    };
+    let Some(ledger) = s.ledger.as_ref().map_err(|error| ledger_error(error))? else {
+        return Ok(());
+    };
+    let Some(task) = &s.task else {
+        return Ok(());
+    };
+    let action = step
+        .and_then(|idx| task.steps.get(idx))
+        .and_then(|step| step.request.as_ref());
+    ledger
+        .record(task.id, task.mode, s.phase, kind, step, action)
+        .map_err(|error| ledger_error(&error))
+}
+
+fn audit_best_effort(s: &mut State, kind: AuditKind, step: Option<usize>) {
+    if let Err(error) = audit(s, kind, step) {
+        emit(s, "error", &error);
     }
 }
 

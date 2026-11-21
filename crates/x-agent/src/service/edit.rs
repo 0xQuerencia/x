@@ -396,6 +396,7 @@ impl Service {
         };
         s.edit = Some(job);
         s.task = Some(t.clone());
+        super::audit_best_effort(&mut s, super::AuditKind::Planned, None);
         emit(&mut s, "plan", &format!("Edit ready to review: {text}"));
         Ok(t)
     }
