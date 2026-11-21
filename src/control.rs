@@ -252,8 +252,8 @@ pub enum AgentAction {
         on: bool,
     },
     /// Explicit execution policy: default asks for each task; autonomous
-    /// auto-runs low-risk Actions and permitted computer sessions. Status reads
-    /// the same persisted state as the legacy Trust toggle.
+    /// auto-runs low-risk Actions. Status reads the same persisted state as the
+    /// legacy Trust toggle.
     Autonomy {
         mode: String,
     },
@@ -280,6 +280,8 @@ pub enum AgentAction {
     },
     /// Which window-control backend this desktop has and what it can do.
     Desktop,
+    /// Read-only diagnostics from the running service's environment.
+    Doctor,
     /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
     /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
     Workflow {
@@ -338,6 +340,11 @@ pub enum ControlReply {
     /// `hex agent`: X's phase, task, and events (the `x-agent` crate's snapshot).
     Agent {
         snapshot: serde_json::Value,
+    },
+    AgentDoctor {
+        report: serde_json::Value,
+        lines: String,
+        ready: bool,
     },
     Error {
         code: String,

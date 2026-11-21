@@ -33,9 +33,30 @@ pub(crate) fn print(reply: ControlReply, output: Output) -> u8 {
         ControlReply::ScrawlCaptureRoute { explanation } => print!("{explanation}"),
         ControlReply::Transcript { text } => println!("{text}"),
         ControlReply::Agent { snapshot } => print!("{}", human_agent(&snapshot)),
+        ControlReply::AgentDoctor { lines, .. } => println!("{lines}"),
         ControlReply::Error { message, .. } => eprintln!("hex: {message}"),
     }
     code
+}
+
+pub(super) fn print_doctor(reply: ControlReply, json: bool) -> u8 {
+    let ControlReply::AgentDoctor {
+        report,
+        lines,
+        ready,
+    } = reply
+    else {
+        return print(reply, Output { json });
+    };
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(output) => println!("{output}"),
+            Err(error) => return fail(&error.to_string()),
+        }
+    } else {
+        println!("{lines}");
+    }
+    if ready { 0 } else { EXIT_REFUSED }
 }
 
 /// `hex agent status` and a fresh plan: the phase, the task with its steps (and the id to
@@ -238,7 +259,7 @@ pub(super) fn exit_code(reply: &ControlReply) -> u8 {
     match reply {
         ControlReply::Error { code, .. } if code == "not-running" => EXIT_NOT_RUNNING,
         ControlReply::Error { code, .. } if code == "no-speech" => EXIT_NO_SPEECH,
-        ControlReply::Error { .. } => EXIT_REFUSED,
+        ControlReply::Error { .. } | ControlReply::AgentDoctor { ready: false, .. } => EXIT_REFUSED,
         _ => 0,
     }
 }

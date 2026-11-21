@@ -29,7 +29,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 pub use report::{
-    CapabilityReport, Doctor, ProbeEvidence, Report, SupportState, detect, doctor, report,
+    CapabilityReport, Doctor, KeyFilePermissions, ProbeEvidence, ProbeSource, Report, SupportState,
+    detect, doctor, report,
 };
 #[cfg(windows)]
 pub(crate) fn native_handle(id: &str) -> Option<usize> {
