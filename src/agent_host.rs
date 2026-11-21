@@ -17,6 +17,7 @@ use x_agent::service::{Mode, RealLauncher, Service};
 
 use crate::control::{AgentAction, ControlReply};
 
+mod sessions;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod wake;
 mod workflows;
@@ -894,6 +895,7 @@ pub fn handle(action: AgentAction) -> ControlReply {
         AgentAction::Trust { on } => set_trust(on),
         AgentAction::Autonomy { mode } => set_autonomy(&mode),
         AgentAction::Planner { model } => set_planner(&model),
+        AgentAction::Sessions { resume } => sessions::handle(svc, resume),
         AgentAction::Doctor => unreachable!("doctor is handled before initializing X"),
         AgentAction::Desktop => {
             let r = x_agent::wm::report();

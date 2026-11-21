@@ -138,6 +138,8 @@ pub struct Snapshot {
     pub opencode_found: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub harness: Option<harness::Descriptor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_session: Option<harness::Session>,
     #[serde(default)]
     pub trusted_actions: bool,
     pub autonomy_mode: AutonomyMode,
@@ -251,6 +253,7 @@ struct State {
     model_stop: Option<Cancellation>,
     voice_mode: Mode,
     workspace: Option<PathBuf>,
+    selected_session: Option<harness::Session>,
     autonomy_mode: AutonomyMode,
     review: Review,
     ledger: Result<Option<Ledger>, String>,
@@ -354,6 +357,7 @@ impl Service {
             undo: vec![],
             voice_mode: Mode::Actions,
             workspace: None,
+            selected_session: None,
         };
         Self {
             state: Arc::new(Mutex::new(state)),
@@ -413,6 +417,7 @@ impl Service {
             computer_remote: s.computer_remote,
             opencode_found: self.harness.is_some(),
             harness: self.harness.as_ref().map(|adapter| adapter.descriptor()),
+            selected_session: s.selected_session.clone(),
         }
     }
 
@@ -424,8 +429,28 @@ impl Service {
         let resolved = opencode::validate_workspace(path.as_ref())?;
         let shown = resolved.display().to_string();
         emit(&mut s, "info", &format!("Workspace set to {shown}"));
+        if s.workspace.as_ref() != Some(&resolved) {
+            s.selected_session = None;
+        }
         s.workspace = Some(resolved);
         Ok(shown)
+    }
+
+    pub fn workspace_path(&self) -> Option<PathBuf> {
+        self.lock().workspace.clone()
+    }
+
+    /// Store the externally verified target only if the project's selection still matches.
+    pub fn select_session(&self, session: harness::Session) -> Result<(), String> {
+        let mut s = self.lock();
+        if s.phase.is_busy() {
+            return Err(busy(s.phase));
+        }
+        if s.workspace.as_ref() != Some(&session.workspace) {
+            return Err("The selected project changed during OpenCode discovery".into());
+        }
+        s.selected_session = Some(session);
+        Ok(())
     }
 
     // ---- planning ----------------------------------------------------------------------
@@ -1277,7 +1302,9 @@ impl Service {
             );
         };
         if create_workspace {
-            self.lock().workspace = Some(ws.clone());
+            let mut s = self.lock();
+            s.workspace = Some(ws.clone());
+            s.selected_session = None;
         }
         self.set_step(0, "running");
         let me = self.clone();

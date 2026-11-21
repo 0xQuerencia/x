@@ -8,6 +8,8 @@ use serde::Serialize;
 use crate::cancellation::Cancellation;
 
 pub mod probe;
+mod session;
+pub use session::{Session, SessionId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

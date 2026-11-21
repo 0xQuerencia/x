@@ -45,6 +45,7 @@ pub(crate) struct Response {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Missing {
     NotRunning,
+    AuthRequired,
     /// A registered service answered `/api/info` with 404: an obsolete
     /// OpenCode build. The current OpenCode 2 serves it.
     Outdated,
@@ -54,6 +55,7 @@ impl Missing {
     pub(crate) fn message(self) -> &'static str {
         match self {
             Missing::NotRunning => NOT_RUNNING,
+            Missing::AuthRequired => "OpenCode refused the registered service credentials",
             Missing::Outdated => OUTDATED,
         }
     }
@@ -62,7 +64,11 @@ impl Missing {
 /// The running service, or why there is none. Reads only registration files
 /// and asks each registered service for `/api/info`.
 pub(crate) fn find() -> Result<Service, Missing> {
-    find_in(&state_dir().ok_or(Missing::NotRunning)?)
+    find_bounded(INFO_DEADLINE * MAX_REGISTRATIONS as u32)
+}
+
+pub(crate) fn find_bounded(budget: Duration) -> Result<Service, Missing> {
+    find_in_with_budget(&state_dir().ok_or(Missing::NotRunning)?, budget)
 }
 
 /// Whether a service answers now; a short loopback check for availability.
@@ -82,7 +88,13 @@ fn state_dir() -> Option<PathBuf> {
 
 /// `service.json` (the stable, beta and dev channels) first, then other
 /// channels' `service-<channel>.json`; the first that answers wins.
+#[cfg(test)]
 fn find_in(state: &Path) -> Result<Service, Missing> {
+    find_in_with_budget(state, INFO_DEADLINE * MAX_REGISTRATIONS as u32)
+}
+
+fn find_in_with_budget(state: &Path, budget: Duration) -> Result<Service, Missing> {
+    let started = Instant::now();
     let mut others: Vec<PathBuf> = fs::read_dir(state)
         .map_err(|_| Missing::NotRunning)?
         .flatten()
@@ -101,10 +113,17 @@ fn find_in(state: &Path) -> Result<Service, Missing> {
         .take(MAX_REGISTRATIONS)
         .filter_map(|path| read_registration(&path))
     {
-        match confirm(&registration) {
+        let remaining = budget.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        match confirm(&registration, remaining.min(INFO_DEADLINE)) {
             Ok(service) => return Ok(service),
-            Err(Missing::Outdated) => missing = Missing::Outdated,
-            Err(Missing::NotRunning) => {}
+            Err(Missing::AuthRequired) => missing = Missing::AuthRequired,
+            Err(Missing::Outdated) if missing == Missing::NotRunning => {
+                missing = Missing::Outdated;
+            }
+            Err(_) => {}
         }
     }
     Err(missing)
@@ -158,7 +177,7 @@ fn open_private(path: &Path) -> Option<fs::File> {
 
 /// The service a registration names, when it is on loopback and the process
 /// answering `/api/info` is the registered one.
-fn confirm(registration: &Registration) -> Result<Service, Missing> {
+fn confirm(registration: &Registration, deadline: Duration) -> Result<Service, Missing> {
     let service = Service {
         address: loopback_address(&registration.url).ok_or(Missing::NotRunning)?,
         password: registration
@@ -177,10 +196,13 @@ fn confirm(registration: &Registration) -> Result<Service, Missing> {
             "/api/info",
             None,
             None,
-            INFO_DEADLINE,
+            deadline,
             &AtomicBool::new(false),
         )
         .map_err(|_| Missing::NotRunning)?;
+    if matches!(response.status, 401 | 403) {
+        return Err(Missing::AuthRequired);
+    }
     if response.status == 404 {
         tracing::warn!(
             version = registration.version.as_deref().unwrap_or("unknown"),
@@ -688,6 +710,16 @@ pub(crate) mod tests {
         drop(closed);
         register(&state, "service.json", &url, 42);
         assert_eq!(find_in(&state), Err(Missing::NotRunning));
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn stale_registration_credentials_are_reported_separately() {
+        let state = state_root("stale-auth");
+        let (url, server) = serve(vec![("GET /api/info".into(), 401, String::new())]);
+        register(&state, "service.json", &url, 42);
+        assert_eq!(find_in(&state), Err(Missing::AuthRequired));
+        server.join().unwrap();
         fs::remove_dir_all(state).unwrap();
     }
 
