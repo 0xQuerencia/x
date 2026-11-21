@@ -230,3 +230,33 @@ fn non_git_workspace_has_unknown_changes() {
         None
     );
 }
+
+#[test]
+fn a_task_stop_reaps_only_its_own_open_code_run() {
+    let owned_fixture = fixture();
+    let external_fixture = fixture();
+    let root = Cancellation::default();
+    let owned = Run::start_scoped(
+        RunConfig::new(
+            owned_fixture.fake("sleep 60"),
+            "p",
+            owned_fixture.repo.clone(),
+        ),
+        Arc::new(|_, _| {}),
+        &root,
+    )
+    .unwrap();
+    let external = external_fixture.start("sleep 1", STALL_AFTER);
+    let started = Instant::now();
+    root.request();
+    assert_eq!(owned.join().status, RunStatus::Cancelled);
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert_eq!(external.join().status, RunStatus::Completed);
+    let config = RunConfig::new(
+        owned_fixture.fake("touch started-after-stop"),
+        "p",
+        owned_fixture.repo.clone(),
+    );
+    assert!(Run::start_scoped(config, Arc::new(|_, _| {}), &root).is_err());
+    assert!(!owned_fixture.repo.join("started-after-stop").exists());
+}

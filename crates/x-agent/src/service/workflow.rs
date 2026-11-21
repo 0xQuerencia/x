@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use super::edit::{step, task};
 use super::{Review, Service, busy, emit};
+use crate::cancellation::Cancellation;
 use crate::opencode::{self, Run, RunConfig, RunStatus};
 use crate::phase::Phase;
 use crate::tools::Action;
@@ -37,6 +38,7 @@ impl Host for Bridge {
         self.inner.workspace()
     }
     fn launch(&self, action: &Action) -> Result<String, String> {
+        self.svc.lock().stop.check()?;
         self.inner.launch(action)
     }
     fn installed(&self, action: &Action) -> Result<(), String> {
@@ -63,7 +65,7 @@ impl Host for Bridge {
     /// cancelled) is refused.
     fn permit(&self, action: &workflows::StepAction) -> bool {
         let s = self.svc.lock();
-        let allowed = !s.stop_requested
+        let allowed = !s.stop.requested()
             && s.phase == Phase::Running
             && s.workflow
                 .as_ref()
@@ -84,11 +86,12 @@ impl Host for Bridge {
     }
 
     fn opencode(&self, goal: &str, dir: &Path) -> Result<String, String> {
-        self.svc.run_opencode_step(goal, dir)
+        let stop = self.svc.lock().stop.child();
+        self.svc.run_opencode_step(goal, dir, &stop)
     }
 
     fn cancelled(&self) -> bool {
-        self.svc.lock().stop_requested
+        self.svc.lock().stop.requested()
     }
 
     fn progress(&self, index: usize, status: StepStatus, detail: &str) {
@@ -343,7 +346,12 @@ impl Service {
     }
 
     /// OpenCode for a workflow step: the same supervised runner and permission gates as Work.
-    fn run_opencode_step(&self, goal: &str, dir: &Path) -> Result<String, String> {
+    fn run_opencode_step(
+        &self,
+        goal: &str,
+        dir: &Path,
+        stop: &Cancellation,
+    ) -> Result<String, String> {
         let exe = self
             .opencode_exe
             .lock()
@@ -353,16 +361,12 @@ impl Service {
         let ws = opencode::validate_workspace(dir)?;
         let me = self.clone();
         let on_event: opencode::OnEvent = Arc::new(move |k, t| me.emit(k, t));
-        let run = Run::start(RunConfig::new(exe, goal.to_string(), ws), on_event)?;
+        let res = match Run::start_scoped(RunConfig::new(exe, goal.to_string(), ws), on_event, stop)
         {
-            let mut s = self.lock();
-            s.canceller = Some(run.canceller());
-            if s.stop_requested {
-                run.cancel();
-            }
-        }
-        let res = run.join();
-        self.lock().canceller = None;
+            Ok(run) => run.join(),
+            Err(_) if stop.requested() => return Err("Stopped".into()),
+            Err(error) => return Err(error),
+        };
         match res.status {
             RunStatus::Cancelled => Err("Stopped".into()),
             RunStatus::Completed => Ok(format!(

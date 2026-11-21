@@ -3,6 +3,8 @@
 
 use std::ffi::c_void;
 
+use crate::cancellation::Cancellation;
+
 const INPUT_KEYBOARD: u32 = 1;
 const KEYEVENTF_KEYUP: u32 = 0x0002;
 const KEYEVENTF_UNICODE: u32 = 0x0004;
@@ -53,6 +55,42 @@ fn virtual_key(key: u16, up: bool) -> Input {
     }
 }
 
+fn send_input(events: &[Input]) -> usize {
+    // SAFETY: these inputs are initialized keyboard events for a bounded batch.
+    (unsafe {
+        SendInput(
+            events.len() as u32,
+            events.as_ptr(),
+            std::mem::size_of::<Input>() as i32,
+        )
+    }) as usize
+}
+
+fn send_complete(events: &[Input], send: impl Fn(&[Input]) -> usize) -> bool {
+    let sent = send(events).min(events.len());
+    if sent == events.len() {
+        return true;
+    }
+    let mut held: Vec<KeybdInput> = Vec::new();
+    for input in &events[..sent] {
+        // SAFETY: all inputs here were built by virtual_key or stroke.
+        let key = unsafe { input.data.keyboard };
+        if key.flags & KEYEVENTF_KEYUP != 0 {
+            held.retain(|down| down.vk != key.vk || down.scan != key.scan);
+        } else {
+            held.push(key);
+        }
+    }
+    for mut key in held.into_iter().rev() {
+        key.flags |= KEYEVENTF_KEYUP;
+        send(&[Input {
+            kind: INPUT_KEYBOARD,
+            data: InputData { keyboard: key },
+        }]);
+    }
+    false
+}
+
 pub(crate) fn browser_hotkey(
     op: crate::browser_tab::Op,
     expected_hwnd: usize,
@@ -90,26 +128,7 @@ pub(crate) fn browser_hotkey(
             virtual_key(CTRL, true),
         ],
     };
-    // SAFETY: one bounded, fixed-key shortcut batch; SendInput inserts the
-    // events serially. The OS refuses inaccessible elevated applications.
-    let sent = unsafe {
-        SendInput(
-            events.len() as u32,
-            events.as_ptr(),
-            std::mem::size_of::<Input>() as i32,
-        )
-    };
-    if sent != events.len() as u32 {
-        // Best effort to release modifiers if Windows partially accepted
-        // a shortcut. Never send a text/Enter/action key as a fallback.
-        let release = [virtual_key(SHIFT, true), virtual_key(CTRL, true)];
-        unsafe {
-            SendInput(
-                release.len() as u32,
-                release.as_ptr(),
-                std::mem::size_of::<Input>() as i32,
-            )
-        };
+    if !send_complete(&events, send_input) {
         return Err("Windows did not accept the complete browser shortcut".into());
     }
     Ok(())
@@ -130,7 +149,7 @@ fn stroke(unit: u16, key_up: bool) -> Input {
     }
 }
 
-pub(crate) fn type_text(text: &str) -> Result<String, String> {
+pub(crate) fn type_text(text: &str, stop: &Cancellation) -> Result<String, String> {
     if text.trim().is_empty() || text.chars().count() > 300 {
         return Err("Typed text must contain 1-300 characters".into());
     }
@@ -143,20 +162,12 @@ pub(crate) fn type_text(text: &str) -> Result<String, String> {
         return Err("No Windows window has focus".into());
     }
     for unit in text.encode_utf16() {
+        stop.check()?;
         if unsafe { GetForegroundWindow() } != original {
             return Err("Focus changed; typing was stopped".into());
         }
         let inputs = [stroke(unit, false), stroke(unit, true)];
-        // SAFETY: a fixed two-event Unicode keyboard buffer is sent directly
-        // to the foreground app. UIPI may refuse injected input.
-        let sent = unsafe {
-            SendInput(
-                inputs.len() as u32,
-                inputs.as_ptr(),
-                std::mem::size_of::<Input>() as i32,
-            )
-        };
-        if sent != inputs.len() as u32 {
+        if !send_complete(&inputs, send_input) {
             return Err("Windows refused Unicode typing (possibly an elevated app)".into());
         }
     }
@@ -169,6 +180,38 @@ pub(crate) fn type_text(text: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_send_releases_only_keys_the_batch_held() {
+        let events = [
+            virtual_key(0x11, false),
+            virtual_key(0x54, false),
+            virtual_key(0x54, true),
+            virtual_key(0x11, true),
+        ];
+        for (accepted, expected) in [
+            (0, vec![]),
+            (1, vec![0x11]),
+            (2, vec![0x54, 0x11]),
+            (3, vec![0x11]),
+        ] {
+            let calls = std::cell::Cell::new(0);
+            let released = std::cell::RefCell::new(Vec::new());
+            assert!(!send_complete(&events, |inputs| {
+                let i = calls.get();
+                calls.set(i + 1);
+                if i == 0 {
+                    return accepted;
+                }
+                // SAFETY: inputs were constructed as keyboard events.
+                let key = unsafe { inputs[0].data.keyboard };
+                assert_ne!(key.flags & KEYEVENTF_KEYUP, 0);
+                released.borrow_mut().push(key.vk);
+                1
+            }));
+            assert_eq!(*released.borrow(), expected);
+        }
+    }
 
     #[test]
     fn sendinput_layout_matches_win11_input_abi() {

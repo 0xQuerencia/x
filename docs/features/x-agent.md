@@ -445,9 +445,12 @@ Native Linux process-control tests should run only on an isolated test session.
 * **Work never bypasses OpenCode's permissions.** X does not pass `--auto`. The run uses a
   private OpenCode server (`--standalone`) when the installed OpenCode has it. A run only
   counts as completed with exit code 0 **and** no error event; an error event ends the run.
-* **Stop really stops**: SIGTERM to the run's process group, SIGKILL after 5 s. X then
-  lists files whose git state changed (when the folder is a git repo). Nothing is rolled
-  back, and X says so.
+* **Stop** discards a pending plan, prevents queued steps from starting and
+  requests cancellation of workers owned by the task. A late model proposal
+  is discarded. Say `Friday, stop the task` through the enabled command path or
+  use the Agent pane or CLI. On Unix the OpenCode worker signals its own process
+  group and escalates after a five-second grace period. X reports changed files
+  when Git evidence is available. These changes stay on disk.
 * **Local by default.** Speech uses Hex's local model. Screen text is sent to a local
   planner unless you explicitly allow remote screen access. X sends nothing else itself;
   OpenCode talks to whichever provider you configured.

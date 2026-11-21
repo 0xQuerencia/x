@@ -262,6 +262,11 @@ impl Run<'_> {
                 self.go(RunState::NeedsPermission);
             }
             if !self.host.permit(&step.action) {
+                if self.host.cancelled() {
+                    self.mark_rest(i, StepStatus::Skipped, "stopped before this step");
+                    self.go(RunState::Cancelled);
+                    return;
+                }
                 self.set(i, StepStatus::Failed, "Permission denied");
                 self.go(RunState::Failed);
                 self.mark_rest(i + 1, StepStatus::Skipped, "not run: permission was denied");

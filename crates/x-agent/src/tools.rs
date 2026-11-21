@@ -5,6 +5,8 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
+use crate::cancellation::Cancellation;
+
 pub const MAX_TRANSCRIPT: usize = 1000;
 pub const MAX_STEPS: usize = 5;
 const MAX_QUERY: usize = 300;
@@ -525,14 +527,16 @@ impl Action {
 
     /// Validate, then launch detached. Success means *launched*, not *page loaded*.
     pub fn execute(&self) -> Result<String, String> {
-        self.execute_for_target(None)
+        self.execute_for_target(None, &Cancellation::default())
     }
 
     pub(crate) fn execute_for_target(
         &self,
         prepared: Option<&crate::wm::CloseTarget>,
+        stop: &Cancellation,
     ) -> Result<String, String> {
         let valid = self.clone().validate()?;
+        stop.check()?;
         if let Self::Window { op, target, ws } = &valid {
             let req = crate::wm::Request {
                 op: op.clone(),
@@ -565,7 +569,7 @@ impl Action {
         }
         #[cfg(windows)]
         if let Self::Type { text } = &valid {
-            return crate::windows_input::type_text(text);
+            return crate::windows_input::type_text(text, stop);
         }
         let argv = if matches!(valid, Self::Opencode) {
             let dir = session_dir("opencode");
@@ -577,17 +581,18 @@ impl Action {
         };
         let (exe, args) = argv.split_first().ok_or("empty command")?;
         if let Self::Type { text } = &valid {
-            let status = Command::new(exe)
-                .args(args)
-                .stdin(Stdio::null())
-                .status()
-                .map_err(|e| format!("could not run {exe}: {e}"))?;
-            return if status.success() {
+            let (ok, _) = crate::desktop::capture_scoped(
+                Command::new(exe).args(args),
+                std::time::Duration::from_secs(5),
+                Some(stop),
+            )?;
+            return if ok {
                 Ok(format!("Typed {} characters", text.chars().count()))
             } else {
                 Err("wtype could not type into the focused window".into())
             };
         }
+        stop.check()?;
         let mut cmd = Command::new(exe);
         #[cfg(windows)]
         if let Self::Terminal { directory } = &valid {
@@ -1175,6 +1180,10 @@ fn focused() -> Option<(String, u32)> {
 /// Typing never goes anywhere else: if that window cannot be told apart from the rest
 /// (the app hands off to another process, or the desktop cannot say), nothing is typed.
 pub fn wait_for_launched_focus() -> Result<(), String> {
+    wait_for_launched_focus_scoped(&Cancellation::default())
+}
+
+pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), String> {
     let pid = LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst);
     if pid == 0 || which("hyprctl").is_none() {
         return Err(
@@ -1182,14 +1191,18 @@ pub fn wait_for_launched_focus() -> Result<(), String> {
         );
     }
     for _ in 0..30 {
+        stop.check()?;
         if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
             return Err(
                 "The app exited or handed off right after launch, so nothing was typed".into(),
             );
         }
         if focused().is_some_and(|(_, focused_pid)| focused_pid == pid) {
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            return Ok(());
+            for _ in 0..4 {
+                stop.check()?;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            return stop.check();
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }

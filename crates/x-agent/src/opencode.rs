@@ -13,12 +13,13 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+
+use crate::cancellation::Cancellation;
 
 const POLL: Duration = Duration::from_millis(200);
 const KILL_GRACE: Duration = Duration::from_secs(5);
@@ -297,29 +298,44 @@ impl RunConfig {
 
 pub struct Run {
     canceller: Canceller,
-    handle: JoinHandle<RunResult>,
+    handle: Option<JoinHandle<RunResult>>,
 }
 
 /// A cloneable handle that can Stop a run from any thread.
 #[derive(Clone)]
 pub struct Canceller {
-    pgid: Arc<AtomicI32>,
-    cancel: Arc<AtomicBool>,
+    stop: Cancellation,
 }
 
 impl Canceller {
-    /// SIGTERM the whole process group; the supervisor escalates to SIGKILL.
+    /// Request Stop. The supervisor that owns the child handles termination.
     pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::SeqCst);
-        signal_group(self.pgid.load(Ordering::SeqCst), Signal::Term);
+        self.stop.request();
     }
 }
 
 impl Run {
     pub fn start(cfg: RunConfig, on_event: OnEvent) -> Result<Self, String> {
+        Self::start_scoped(cfg, on_event, &Cancellation::default())
+    }
+
+    pub fn start_scoped(
+        cfg: RunConfig,
+        on_event: OnEvent,
+        parent: &Cancellation,
+    ) -> Result<Self, String> {
+        let stop = parent.child();
+        stop.check()?;
         let before = change_snapshot(&cfg.workspace);
+        stop.check()?;
         let args = cfg.args();
         let mut child = crate::retry_busy(|| {
+            if stop.requested() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "Stopped",
+                ));
+            }
             let mut cmd = Command::new(&cfg.exe);
             cmd.args(&args)
                 .current_dir(&cfg.workspace)
@@ -336,13 +352,12 @@ impl Run {
             cmd.spawn()
         })
         .map_err(|e| format!("could not start {}: {e}", cfg.exe.display()))?;
-        let pgid = Arc::new(AtomicI32::new(child.id() as i32));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (p, c) = (pgid.clone(), cancel.clone());
-        let handle = thread::spawn(move || supervise(&mut child, &cfg, before, &c, &p, on_event));
+        let child_stop = stop.clone();
+        let handle =
+            thread::spawn(move || supervise(&mut child, &cfg, before, &child_stop, on_event));
         Ok(Self {
-            canceller: Canceller { pgid, cancel },
-            handle,
+            canceller: Canceller { stop },
+            handle: Some(handle),
         })
     }
 
@@ -355,14 +370,25 @@ impl Run {
         self.canceller.cancel();
     }
 
-    pub fn join(self) -> RunResult {
-        self.handle.join().unwrap_or(RunResult {
-            status: RunStatus::Failed,
-            exit_code: None,
-            errors: vec!["supervisor thread panicked".into()],
-            stderr: vec![],
-            changed_files: None,
-        })
+    pub fn join(mut self) -> RunResult {
+        self.handle
+            .take()
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or(RunResult {
+                status: RunStatus::Failed,
+                exit_code: None,
+                errors: vec!["supervisor thread panicked".into()],
+                stderr: vec![],
+                changed_files: None,
+            })
+    }
+}
+
+impl Drop for Run {
+    fn drop(&mut self) {
+        if self.handle.is_some() {
+            self.cancel();
+        }
     }
 }
 
@@ -443,8 +469,7 @@ fn supervise(
     child: &mut Child,
     cfg: &RunConfig,
     before: Option<BTreeMap<String, String>>,
-    cancel: &AtomicBool,
-    pgid: &AtomicI32,
+    stop: &Cancellation,
     on_event: OnEvent,
 ) -> RunResult {
     let (tx, rx) = mpsc::channel();
@@ -457,7 +482,7 @@ fn supervise(
     drop(tx);
     let (mut open, mut last, mut stalled) = (2, Instant::now(), false);
     let (mut errors, mut stderr_tail): (Vec<String>, Vec<String>) = (vec![], vec![]);
-    while open > 0 && !cancel.load(Ordering::SeqCst) {
+    while open > 0 && !stop.requested() {
         match rx.recv_timeout(POLL) {
             Err(RecvTimeoutError::Timeout) => {
                 if !stalled && last.elapsed() > cfg.stall_after {
@@ -500,12 +525,11 @@ fn supervise(
             }
         }
     }
-    let cancelled = cancel.load(Ordering::SeqCst);
-    let exit_code = if cancelled || !errors.is_empty() {
+    let exit_code = if stop.requested() || !errors.is_empty() {
         terminate(child);
         child.wait().ok().and_then(|s| s.code())
     } else {
-        match wait_with_grace(child) {
+        match wait_with_grace(child, stop) {
             Some(s) => s.code(),
             None => {
                 terminate(child);
@@ -513,9 +537,8 @@ fn supervise(
             }
         }
     };
-    pgid.store(0, Ordering::SeqCst);
     let changed_files = diff_snapshots(before.as_ref(), change_snapshot(&cfg.workspace).as_ref());
-    let status = if cancelled {
+    let status = if stop.requested() {
         RunStatus::Cancelled
     } else if !errors.is_empty() || exit_code != Some(0) {
         RunStatus::Failed
@@ -532,9 +555,9 @@ fn supervise(
     }
 }
 
-fn wait_with_grace(child: &mut Child) -> Option<std::process::ExitStatus> {
+fn wait_with_grace(child: &mut Child, stop: &Cancellation) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + KILL_GRACE;
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && !stop.requested() {
         if let Ok(Some(s)) = child.try_wait() {
             return Some(s);
         }
