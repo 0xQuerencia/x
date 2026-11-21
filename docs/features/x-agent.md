@@ -235,6 +235,15 @@ Tests use isolated real Git worktrees and fixture provider executables to
 check approval, replay refusal, changed configuration, and dirty-checkout
 preservation. Code correctness requires separate verification.
 
+### Interrupted coding jobs (development)
+
+Run `hex agent workflow uncertain` to inspect workflow jobs that the
+durable journal still marks as claimed after a crash, disconnect or restart.
+The read-only result includes the run ID, node ID and reconciliation status;
+it does not expose coding prompts, request fingerprints or provider evidence.
+X never retries or marks these jobs successful without independently
+checking delivery and obtaining fresh approval.
+
 ### Safe merge-back previews (development)
 
 The Git integration module checks an owned task worktree and computes a
