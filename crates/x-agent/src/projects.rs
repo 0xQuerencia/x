@@ -103,9 +103,9 @@ impl Registry {
                 .iter_mut()
                 .find(|project| project.id == id)
                 .ok_or("No project has that ID")?;
-            let key = key(&alias);
-            if key == key(&project.name)
-                || project.aliases.iter().any(|existing| key(existing) == key)
+            let alias_key = key(&alias);
+            if alias_key == key(&project.name)
+                || project.aliases.iter().any(|existing| key(existing) == alias_key)
             {
                 return Ok((project.clone(), false));
             }
