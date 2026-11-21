@@ -174,6 +174,19 @@ impl Grants {
         Ok(())
     }
 
+    /// Clear all pending receipts when a workflow is stopped or its owner
+    /// leaves the approval surface. Running child processes need their own
+    /// cancellation token; clearing a receipt only blocks future dispatches.
+    pub fn revoke_all(&self) -> Result<usize, String> {
+        let mut entries = self
+            .grants
+            .lock()
+            .map_err(|_| "Grant storage is unavailable")?;
+        let count = entries.len();
+        entries.clear();
+        Ok(count)
+    }
+
     /// Revocation takes effect before any new consumption, even in Autonomous mode.
     pub fn revoke(&self, receipt: &Receipt) -> Result<bool, String> {
         self.grants
@@ -284,6 +297,35 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn global_revoke_blocks_all_outstanding_task_receipts() {
+        let grants = Grants::default();
+        let first = task();
+        let second = task();
+        let a = grants
+            .issue(
+                Permission::RunTests,
+                first.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        let b = grants
+            .issue(
+                Permission::StartHarness,
+                second.clone(),
+                Duration::from_secs(20),
+                1,
+                true,
+            )
+            .unwrap();
+        assert_eq!(grants.revoke_all().unwrap(), 2);
+        assert!(grants.consume(&a, Permission::RunTests, &first).is_err());
+        assert!(grants.consume(&b, Permission::StartHarness, &second).is_err());
+        assert_eq!(grants.revoke_all().unwrap(), 0);
     }
 
     #[test]
