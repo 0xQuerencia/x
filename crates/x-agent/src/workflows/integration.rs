@@ -129,7 +129,6 @@ mod tests {
     use super::*;
     use crate::worktrees::Manager;
     use std::fs;
-    use std::path::PathBuf;
     use uuid::Uuid;
 
     fn command(root: &Path, args: &[&str]) {
