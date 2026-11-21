@@ -107,6 +107,19 @@ A selected project is remembered between X restarts; it never bypasses Work appr
 Aliases are local metadata. Forget removes the registry and saved session metadata,
 not the project files.
 
+In Actions or Smart voice mode, say “Friday, list projects,” “find project
+Chamber,” “switch to project Chamber,” or “open my Chamber project.”
+Listing and finding read the local registry. Switching and requesting the
+file manager wait for approval with the exact project and directory in the
+preview. Opening uses the system file manager and reports the launch as
+unverified.
+
+“List saved sessions” displays remembered IDs for the selected project with
+unverified availability. “Resume OpenCode session ses_…” previews an exact
+session selection. “Resume session one” also accepts an ordinal from the
+current, unexpired OpenCode listing. Approval confirms the session with
+the provider before selecting it. A separate Work task sends a goal.
+
 The registry tests cover restart, linked Git worktrees, private paths,
 symlink escapes, ambiguity, and preservation of files when forgetting a project.
 

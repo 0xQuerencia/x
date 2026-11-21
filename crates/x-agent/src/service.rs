@@ -3,7 +3,7 @@
 //! idle -> listening -> transcribing -> planning -> awaiting_approval -> running
 //!      -> completed | failed | cancelled
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -23,6 +23,7 @@ use crate::tools::{self, Action, Risk};
 mod edit;
 mod ledger;
 mod policy;
+mod project_commands;
 mod request;
 mod session_targets;
 mod workflow;
@@ -165,6 +166,10 @@ pub struct Snapshot {
 pub trait Launcher: Send + Sync {
     fn launch(&self, action: &Action) -> Result<String, String>;
 
+    fn open_project_folder(&self, _directory: &Path) -> Result<(), String> {
+        Err("Opening project folders is unavailable".into())
+    }
+
     fn prepare_close(
         &self,
         _target: &crate::wm::Target,
@@ -233,6 +238,10 @@ impl Launcher for RealLauncher {
         action.execute()
     }
 
+    fn open_project_folder(&self, directory: &Path) -> Result<(), String> {
+        crate::quick::files::launch_path(directory)
+    }
+
     fn prepare_close(
         &self,
         target: &crate::wm::Target,
@@ -282,6 +291,7 @@ struct State {
     edit: Option<edit::Job>,
     /// The saved workflow waiting to run, or running.
     workflow: Option<crate::workflows::Workflow>,
+    project_command: Option<project_commands::Pending>,
     create_workspace: bool,
     /// How to put back the last workflow run's changes.
     undo: Vec<crate::workflows::engine::Reversal>,
@@ -377,6 +387,7 @@ impl Service {
             guard: None,
             edit: None,
             workflow: None,
+            project_command: None,
             create_workspace: false,
             undo: vec![],
             voice_mode: Mode::Actions,
@@ -544,12 +555,7 @@ impl Service {
         let resolved = opencode::validate_workspace(path.as_ref())?;
         let shown = resolved.display().to_string();
         emit(&mut s, "info", &format!("Workspace set to {shown}"));
-        if s.workspace.as_ref() != Some(&resolved) {
-            s.selected_session = None;
-            s.session_list = None;
-            s.claude_session = None;
-        }
-        s.workspace = Some(resolved);
+        update_workspace(&mut s, resolved);
         Ok(shown)
     }
 
@@ -872,7 +878,8 @@ impl Service {
 
     /// True when this request would go to the model (the rules do not know it).
     pub fn needs_model(&self, text: &str) -> bool {
-        if session_targets::spoken_target(text).is_some()
+        if project_commands::parse(text).is_some()
+            || session_targets::spoken_target(text).is_some()
             || session_targets::spoken_work(text).is_some()
         {
             return false;
@@ -936,6 +943,11 @@ impl Service {
                 .task
                 .clone()
                 .ok_or_else(|| "Stop requested".into());
+        }
+        if mode == Mode::Actions
+            && let Some(command) = project_commands::parse(text)
+        {
+            return self.plan_project_command(command);
         }
         let planning_started = Instant::now();
         if mode == Mode::Actions
@@ -1212,6 +1224,7 @@ impl Service {
         s.guard = options.guard;
         s.edit = None;
         s.workflow = None;
+        s.project_command = None;
         let task = Task {
             id,
             mode,
@@ -1259,7 +1272,7 @@ impl Service {
     }
 
     fn approve_from(&self, task_id: u64, approval: Approval) -> Result<(), String> {
-        let (task, actions, is_edit, is_workflow, stop) = {
+        let (task, actions, is_edit, is_workflow, project_command, stop) = {
             let mut s = self.lock();
             let matches_task = s.task.as_ref().is_some_and(|t| t.id == task_id);
             if !matches_task || s.phase != Phase::AwaitingApproval {
@@ -1295,15 +1308,21 @@ impl Service {
                 s.actions.clone(),
                 s.edit.is_some(),
                 s.workflow.is_some(),
+                s.project_command.take(),
                 s.stop.clone(),
             )
         };
         let me = self.clone();
-        thread::spawn(move || match task.mode {
-            Mode::Actions if is_edit => me.run_edit(&task),
-            Mode::Actions if is_workflow => me.run_workflow(),
-            Mode::Actions => me.run_actions(&actions, &stop),
-            Mode::Work => me.run_work(&task, &stop),
+        thread::spawn(move || {
+            if let Some(command) = project_command {
+                return me.run_project_command(command, &stop);
+            }
+            match task.mode {
+                Mode::Actions if is_edit => me.run_edit(&task),
+                Mode::Actions if is_workflow => me.run_workflow(),
+                Mode::Actions => me.run_actions(&actions, &stop),
+                Mode::Work => me.run_work(&task, &stop),
+            }
         });
         Ok(())
     }
@@ -1809,6 +1828,7 @@ impl Service {
         }
         s.edit = None;
         s.workflow = None;
+        s.project_command = None;
         set_phase(&mut s, phase);
         audit_best_effort(&mut s, AuditKind::Finished, None);
         if let Some(e) = error {
@@ -1837,6 +1857,7 @@ impl Service {
                 set_phase(&mut s, Phase::Cancelled);
                 s.edit = None;
                 s.workflow = None;
+                s.project_command = None;
                 s.actions.clear();
                 s.guard = None;
                 s.grants.clear();
@@ -1948,6 +1969,15 @@ impl Service {
             thread::sleep(std::time::Duration::from_millis(50));
         }
     }
+}
+
+fn update_workspace(state: &mut State, resolved: PathBuf) {
+    if state.workspace.as_ref() != Some(&resolved) {
+        state.selected_session = None;
+        state.session_list = None;
+        state.claude_session = None;
+    }
+    state.workspace = Some(resolved);
 }
 
 fn busy(phase: Phase) -> String {
