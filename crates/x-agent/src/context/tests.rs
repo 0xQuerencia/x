@@ -234,7 +234,10 @@ fn old_snapshots_are_not_trusted() {
         "Approval prompts must not bypass the context expiry"
     );
     assert!(
-        matches!(engine.selection_unchanged(&ctx), Err(ContextError::Stale(_))),
+        matches!(
+            engine.selection_unchanged(&ctx),
+            Err(ContextError::Stale(_))
+        ),
         "An old selection cannot authorize a later edit"
     );
 }
