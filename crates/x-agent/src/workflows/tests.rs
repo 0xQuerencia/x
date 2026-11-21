@@ -1173,11 +1173,13 @@ mod storage {
         symlink(&victim, &predictable).unwrap();
 
         s.save(&coding(h.path())).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&victim).unwrap(),
-            "do not modify"
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "do not modify");
+        assert!(
+            std::fs::symlink_metadata(&predictable)
+                .unwrap()
+                .file_type()
+                .is_symlink()
         );
-        assert!(std::fs::symlink_metadata(&predictable).unwrap().file_type().is_symlink());
         assert_eq!(s.get("coding").unwrap().id, "coding");
     }
 
