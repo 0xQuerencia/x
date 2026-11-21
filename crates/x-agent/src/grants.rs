@@ -181,6 +181,18 @@ impl Grants {
         Ok(())
     }
 
+    /// Count unexpired, unspent receipts without revealing grant IDs or
+    /// task intent. Expired entries are evicted during the read.
+    pub fn pending_count(&self) -> Result<usize, String> {
+        let mut guard = self
+            .grants
+            .lock()
+            .map_err(|_| "Grant storage is unavailable")?;
+        let now = Instant::now();
+        guard.retain(|_, grant| grant.remaining > 0 && grant.expires_at > now);
+        Ok(guard.len())
+    }
+
     /// Clear all pending receipts when a workflow is stopped or its owner
     /// leaves the approval surface. Running child processes need their own
     /// cancellation token; clearing a receipt only blocks future dispatches.
@@ -511,6 +523,25 @@ mod tests {
         assert!(grants.consume(&a, Permission::StartHarness, &first).is_err());
         grants.consume(&b, Permission::RunTests, &other).unwrap();
         grants.consume(&c, Permission::InspectProject, &inspection).unwrap();
+    }
+
+    #[test]
+    fn pending_count_omits_expired_and_spent_receipts() {
+        let grants = Grants::default();
+        let scope = task();
+        let expired = grants.issue(
+            Permission::RunTests, scope.clone(),
+            Duration::from_millis(1), 1, true,
+        ).unwrap();
+        let live = grants.issue(
+            Permission::StartHarness, scope.clone(),
+            Duration::from_secs(30), 1, true,
+        ).unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+        assert_eq!(grants.pending_count().unwrap(), 1);
+        assert!(grants.consume(&expired, Permission::RunTests, &scope).is_err());
+        grants.consume(&live, Permission::StartHarness, &scope).unwrap();
+        assert_eq!(grants.pending_count().unwrap(), 0);
     }
 
 }
