@@ -210,9 +210,17 @@ impl RunConfig {
     /// workspace, unknown shell commands and other directories are refused, secrets stay unread.
     pub fn policy(&self) -> String {
         if self.access == harness::WorkAccess::SelectionOnly {
+            let policies = [
+                "tool.use",
+                "skill.use",
+                "mcp.use",
+                "plugin.use",
+                "websearch.use",
+            ]
+            .map(|action| serde_json::json!({"action": action, "resource": "*", "effect": "deny"}));
             return serde_json::json!({
                 "permissions": [{"action": "*", "resource": "*", "effect": "deny"}],
-                "policies": [{"action": "tool.use", "resource": "*", "effect": "deny"}],
+                "policies": policies,
             })
             .to_string();
         }

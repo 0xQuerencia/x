@@ -1934,7 +1934,13 @@ echo '{"type":"text","sessionID":"ses_first","part":{"text":"received selection"
         serde_json::from_str::<serde_json::Value>(&raw).unwrap(),
         serde_json::json!({
             "permissions":[{"action":"*","resource":"*","effect":"deny"}],
-            "policies":[{"action":"tool.use","resource":"*","effect":"deny"}],
+            "policies":[
+                {"action":"tool.use","resource":"*","effect":"deny"},
+                {"action":"skill.use","resource":"*","effect":"deny"},
+                {"action":"mcp.use","resource":"*","effect":"deny"},
+                {"action":"plugin.use","resource":"*","effect":"deny"},
+                {"action":"websearch.use","resource":"*","effect":"deny"},
+            ],
         })
     );
 }
