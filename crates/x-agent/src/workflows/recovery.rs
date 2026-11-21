@@ -72,9 +72,11 @@ impl Journal {
     ) -> Result<Begin, String> {
         validate_key(run_id, node_id, request_fingerprint)?;
         self.update(|data| {
-            if let Some(claim) = data.entries.iter().find(|entry| {
-                entry.run_id == run_id && entry.node_id == node_id
-            }) {
+            if let Some(claim) = data
+                .entries
+                .iter()
+                .find(|entry| entry.run_id == run_id && entry.node_id == node_id)
+            {
                 if claim.request_fingerprint != request_fingerprint {
                     return Err("The approved task fingerprint changed".into());
                 }
@@ -160,7 +162,10 @@ impl Journal {
             if claim.request_fingerprint != fingerprint {
                 return Err("The approved task fingerprint changed".into());
             }
-            if !matches!(claim.state, State::Failed | State::Unverified | State::Cancelled) {
+            if !matches!(
+                claim.state,
+                State::Failed | State::Unverified | State::Cancelled
+            ) {
                 return Err("This job is not eligible for retry".into());
             }
             if claim.attempt >= MAX_ATTEMPTS {
@@ -203,8 +208,7 @@ impl Journal {
         if bytes.len() > MAX_BYTES {
             return Err("Job journal exceeds the size limit".into());
         }
-        let data: Data =
-            serde_json::from_slice(&bytes).map_err(|_| "Cannot decode job journal")?;
+        let data: Data = serde_json::from_slice(&bytes).map_err(|_| "Cannot decode job journal")?;
         if data.version != VERSION {
             return Err("Unsupported job journal version".into());
         }
@@ -214,7 +218,10 @@ impl Journal {
                 validate_key(claim.run_id, &claim.node_id, &claim.request_fingerprint).is_err()
                     || claim.attempt == 0
                     || claim.attempt > MAX_ATTEMPTS
-                    || claim.evidence_id.as_deref().is_some_and(|id| !valid_slug(id))
+                    || claim
+                        .evidence_id
+                        .as_deref()
+                        .is_some_and(|id| !valid_slug(id))
                     || (claim.state == State::Verified && claim.evidence_id.is_none())
                     || !ids.insert((claim.run_id, claim.node_id.as_str()))
             })
@@ -328,7 +335,11 @@ mod tests {
     fn finished_jobs_never_get_replayed_without_explicit_reconciliation() {
         let (_directory, journal, run, digest) = fixture();
         journal.begin(run, "backend", &digest).unwrap();
-        assert!(journal.settle(run, "backend", State::Verified, None).is_err());
+        assert!(
+            journal
+                .settle(run, "backend", State::Verified, None)
+                .is_err()
+        );
         let finished = journal
             .settle(run, "backend", State::Verified, Some("harness_event_7"))
             .unwrap();
@@ -337,31 +348,43 @@ mod tests {
             journal.begin(run, "backend", &digest).unwrap(),
             Begin::AlreadyFinished(_)
         ));
-        assert!(journal
-            .approve_retry_after_reconciliation(run, "backend", &digest, true, true)
-            .is_err());
+        assert!(
+            journal
+                .approve_retry_after_reconciliation(run, "backend", &digest, true, true)
+                .is_err()
+        );
     }
 
     #[test]
     fn retries_need_fresh_owner_approval_proof_and_budget() {
         let (_directory, journal, run, digest) = fixture();
         journal.begin(run, "frontend", &digest).unwrap();
-        journal.settle(run, "frontend", State::Failed, None).unwrap();
-        assert!(journal
-            .approve_retry_after_reconciliation(run, "frontend", &digest, false, true)
-            .is_err());
-        assert!(journal
-            .approve_retry_after_reconciliation(run, "frontend", &digest, true, false)
-            .is_err());
+        journal
+            .settle(run, "frontend", State::Failed, None)
+            .unwrap();
+        assert!(
+            journal
+                .approve_retry_after_reconciliation(run, "frontend", &digest, false, true)
+                .is_err()
+        );
+        assert!(
+            journal
+                .approve_retry_after_reconciliation(run, "frontend", &digest, true, false)
+                .is_err()
+        );
         for _ in 0..2 {
             journal
                 .approve_retry_after_reconciliation(run, "frontend", &digest, true, true)
                 .unwrap();
-            journal.settle(run, "frontend", State::Failed, None).unwrap();
+            journal
+                .settle(run, "frontend", State::Failed, None)
+                .unwrap();
         }
-        assert!(journal
-            .approve_retry_after_reconciliation(run, "frontend", &digest, true, true)
-            .is_err());
+        assert!(
+            journal
+                .approve_retry_after_reconciliation(run, "frontend", &digest, true, true)
+                .is_err()
+        );
         assert!(journal.uncertain().unwrap().is_empty());
     }
 
