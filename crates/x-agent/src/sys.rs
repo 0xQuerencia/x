@@ -267,9 +267,26 @@ fn set_brightness(runner: &dyn Runner, level: u8) -> Result<(), String> {
 
 #[derive(Clone, Copy, Debug)]
 enum Undo {
-    Volume(u8),
-    Mute(bool),
-    Brightness(u8),
+    Volume { before: u8, after: u8 },
+    Mute { before: bool, after: bool },
+    Brightness { before: u8, after: u8 },
+}
+
+impl Undo {
+    /// Refuse to overwrite a setting someone changed outside X since this
+    /// command. Exact mute state and 1% tolerances match action readback.
+    fn verify_current(self, runner: &dyn Runner) -> Result<(), String> {
+        let current = match self {
+            Self::Volume { after, .. } => volume(runner)?.0.abs_diff(after) <= 1,
+            Self::Mute { after, .. } => volume(runner)?.1 == after,
+            Self::Brightness { after, .. } => brightness(runner)?.abs_diff(after) <= 2,
+        };
+        if current {
+            Ok(())
+        } else {
+            Err("Cannot undo: the system setting changed since X last controlled it".into())
+        }
+    }
 }
 
 static HISTORY: Mutex<Vec<(Instant, Undo)>> = Mutex::new(Vec::new());
@@ -299,13 +316,19 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
         Op::SetVolume(level) if level <= 100 => {
             let (before, _) = volume(runner)?;
             set_volume(runner, level)?;
-            remember(Undo::Volume(before));
+            remember(Undo::Volume {
+                before,
+                after: volume(runner)?.0,
+            });
             Ok(format!("Volume set and verified at {level}%"))
         }
         Op::SetMute(muted) => {
             let (_, before) = volume(runner)?;
             set_mute(runner, muted)?;
-            remember(Undo::Mute(before));
+            remember(Undo::Mute {
+                before,
+                after: muted,
+            });
             Ok(if muted {
                 "Audio muted (verified)"
             } else {
@@ -316,7 +339,10 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
         Op::SetBrightness(level) if level <= 100 => {
             let before = brightness(runner)?;
             set_brightness(runner, level)?;
-            remember(Undo::Brightness(before));
+            remember(Undo::Brightness {
+                before,
+                after: brightness(runner)?,
+            });
             Ok(format!("Brightness set and verified at {level}%"))
         }
         Op::SetVolume(_) | Op::SetBrightness(_) => Err("Percent must be 0-100".into()),
@@ -353,18 +379,19 @@ pub fn undo(runner: &dyn Runner) -> Result<String, String> {
         HISTORY.lock().unwrap_or_else(|p| p.into_inner()).clear();
         return Err("System change is too old to undo".into());
     }
+    previous.verify_current(runner)?;
     match previous {
-        Undo::Volume(value) => {
-            set_volume(runner, value)?;
-            Ok(format!("Restored volume to {value}%"))
+        Undo::Volume { before, .. } => {
+            set_volume(runner, before)?;
+            Ok(format!("Restored volume to {before}%"))
         }
-        Undo::Mute(muted) => {
-            set_mute(runner, muted)?;
+        Undo::Mute { before, .. } => {
+            set_mute(runner, before)?;
             Ok("Restored previous mute state".into())
         }
-        Undo::Brightness(value) => {
-            set_brightness(runner, value)?;
-            Ok(format!("Restored brightness to {value}%"))
+        Undo::Brightness { before, .. } => {
+            set_brightness(runner, before)?;
+            Ok(format!("Restored brightness to {before}%"))
         }
     }
 }
@@ -425,6 +452,59 @@ mod tests {
                 _ => Err("unsupported".into()),
             }
         }
+    }
+
+    #[test]
+    fn undo_refuses_external_changes_instead_of_overwriting_them() {
+        let probe = Probe;
+        assert!(
+            Undo::Volume {
+                before: 10,
+                after: 30
+            }
+            .verify_current(&probe)
+            .is_ok()
+        );
+        assert!(
+            Undo::Volume {
+                before: 10,
+                after: 80
+            }
+            .verify_current(&probe)
+            .is_err()
+        );
+        assert!(
+            Undo::Mute {
+                before: false,
+                after: true
+            }
+            .verify_current(&probe)
+            .is_ok()
+        );
+        assert!(
+            Undo::Mute {
+                before: false,
+                after: false
+            }
+            .verify_current(&probe)
+            .is_err()
+        );
+        assert!(
+            Undo::Brightness {
+                before: 10,
+                after: 30
+            }
+            .verify_current(&probe)
+            .is_ok()
+        );
+        assert!(
+            Undo::Brightness {
+                before: 10,
+                after: 80
+            }
+            .verify_current(&probe)
+            .is_err()
+        );
     }
 
     #[test]
