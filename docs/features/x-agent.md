@@ -436,6 +436,11 @@ Native Linux process-control tests should run only on an isolated test session.
 * **Actions** are a closed registry: launch an approved app, open a public
   `https://` URL, or search one of five sites. A planned step is data, never a command line:
   no shell, no `sh -c`, search text is percent-encoded into one URL argument.
+* **Action previews** carry the service-assigned task and step key, input source,
+  risk and required capabilities. A standalone window close previews the resolved
+  window. X rechecks its identity before dispatch and asks for a numbered choice
+  when several candidates match. Mock window tests exercise focus changes,
+  reused native IDs and a candidate disappearing from an ambiguous list.
 * **Launched is not verified.** X reports "launched"; it does not claim a page loaded.
 * **Work never bypasses OpenCode's permissions.** X does not pass `--auto`. The run uses a
   private OpenCode server (`--standalone`) when the installed OpenCode has it. A run only

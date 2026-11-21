@@ -212,6 +212,7 @@ pub enum Ws {
 /// Which window: the focused one, or an approved app. `pick` is a 1-based choice among
 /// several windows of that app.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Target {
     #[serde(default)]
     pub app: String,
@@ -227,6 +228,28 @@ pub struct Request {
     pub target: Target,
     #[serde(default)]
     pub ws: Option<Ws>,
+}
+
+/// Native identity recorded by the controller before a close is approved.
+#[derive(Clone, Debug)]
+pub struct TargetIdentity {
+    backend: &'static str,
+    window: WinInfo,
+}
+
+#[derive(Clone, Debug)]
+pub enum CloseTarget {
+    Exact(TargetIdentity),
+    Choose(Vec<Choice>),
+}
+
+impl CloseTarget {
+    pub(crate) fn label(&self) -> Option<String> {
+        match self {
+            Self::Exact(target) => Some(label(&target.window)),
+            Self::Choose(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -355,7 +378,29 @@ impl Controller {
         self.close(&win).map(drop)
     }
 
+    fn prepare_close(&self, target: &Target) -> Result<CloseTarget, WmError> {
+        self.require(&Cmd::Close(String::new()))?;
+        let all = self.backend.windows()?;
+        let focused = self.focused_in(&all)?;
+        match self.resolve(target, &all, focused.as_ref(), false) {
+            Ok(window) => Ok(CloseTarget::Exact(TargetIdentity {
+                backend: self.backend.name(),
+                window,
+            })),
+            Err(WmError::Ambiguous(choices)) => Ok(CloseTarget::Choose(choices)),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn run(&mut self, req: &Request) -> Result<Outcome, WmError> {
+        self.run_with_target(req, None)
+    }
+
+    fn run_with_target(
+        &mut self,
+        req: &Request,
+        prepared: Option<&CloseTarget>,
+    ) -> Result<Outcome, WmError> {
         self.pending = None; // a newer task invalidates every old choice
         // Keep all fallible matching inside the closure: a `?` in a match
         // arm must not return before we record an ambiguity for follow-up.
@@ -396,7 +441,27 @@ impl Controller {
                     self.minimize(&win)
                 }
                 Op::Close => {
-                    let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
+                    let win = match prepared {
+                        Some(CloseTarget::Exact(prepared)) => {
+                            let found = if req.target.app.is_empty() {
+                                focused
+                                    .as_ref()
+                                    .filter(|w| w.same_identity(&prepared.window))
+                            } else {
+                                all.iter().find(|w| w.same_identity(&prepared.window))
+                            };
+                            found
+                                .filter(|_| prepared.backend == self.backend.name())
+                                .cloned()
+                                .ok_or_else(|| {
+                                    WmError::NotFound("The approved window changed".into())
+                                })?
+                        }
+                        Some(CloseTarget::Choose(choices)) => {
+                            return Err(WmError::Ambiguous(choices.clone()));
+                        }
+                        None => self.resolve(&req.target, &all, focused.as_ref(), false)?,
+                    };
                     let mut out = self.close(&win)?;
                     out.message.push_str(&keys::hint("close", &(self.binds)()));
                     Ok(out)
@@ -886,6 +951,17 @@ fn with_controller<T>(f: impl FnOnce(&mut Controller) -> Result<T, WmError>) -> 
 
 pub fn run(req: &Request) -> Result<Outcome, WmError> {
     with_controller(|c| c.run(req))
+}
+
+pub(crate) fn prepare_close(target: &Target) -> Result<CloseTarget, WmError> {
+    with_controller(|c| c.prepare_close(target))
+}
+
+pub(crate) fn run_with_target(
+    request: &Request,
+    target: Option<&CloseTarget>,
+) -> Result<Outcome, WmError> {
+    with_controller(|c| c.run_with_target(request, target))
 }
 
 /// Whether there is an Undo entry created in the past eight seconds.

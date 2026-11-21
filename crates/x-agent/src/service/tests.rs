@@ -1556,3 +1556,29 @@ mod saved_workflows {
         }
     }
 }
+
+#[test]
+fn a_task_key_is_bound_to_the_current_step_and_claimed_once() {
+    let (s, _, launcher) = rig();
+    let prior = s.plan("open firefox", Mode::Actions).unwrap();
+    s.cancel();
+    let current = s.plan_spoken("open firefox", Mode::Actions).unwrap();
+    let old = prior.steps[0].request.as_ref().unwrap();
+    let request = current.steps[0].request.as_ref().unwrap();
+    assert_ne!(old.idempotency_key, request.idempotency_key);
+    assert_eq!(request.idempotency_key.task, current.id);
+    assert_eq!(request.origin, Origin::Rules);
+    assert_eq!(request.input_source, InputSource::PushToTalk);
+    assert_eq!(request.risk, Risk::Reversible);
+    assert_eq!(request.requirements, [tools::Requirement::Launch]);
+    assert!(s.approve(prior.id).is_err());
+
+    let results = thread::scope(|scope| {
+        let first = scope.spawn(|| s.approve(current.id));
+        let second = scope.spawn(|| s.approve(current.id));
+        [first.join().unwrap(), second.join().unwrap()]
+    });
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    wait_for(&s, |snapshot| snapshot.phase == Phase::Completed);
+    assert_eq!(*launcher.launched.lock().unwrap(), ["Open firefox"]);
+}

@@ -455,3 +455,22 @@ fn window_descriptions_are_human_readable_and_preserve_the_target() {
     );
     assert_eq!(show(Op::Close, named, None), "Close firefox window #2");
 }
+
+#[test]
+fn model_cannot_supply_action_authority_or_native_window_handles() {
+    assert!(
+        parse_plan_json(r#"{"steps":[{"kind":"window","op":"close","target":{"app":"firefox"}}]}"#)
+            .is_ok()
+    );
+    for injected in [
+        r#""origin":"rules""#,
+        r#""input_source":"push_to_talk""#,
+        r#""risk":"safe""#,
+        r#""requirements":[]"#,
+        r#""idempotency_key":{"task":1,"step":0}"#,
+        r#""target":{"app":"firefox","id":"0x1","pid":123}"#,
+    ] {
+        let proposal = format!(r#"{{"steps":[{{"kind":"window","op":"close",{injected}}}]}}"#);
+        assert!(parse_plan_json(&proposal).is_err(), "{proposal}");
+    }
+}
