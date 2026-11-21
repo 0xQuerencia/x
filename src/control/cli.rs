@@ -1923,8 +1923,7 @@ mod tests {
             command: ControlCli,
         }
 
-        let parsed = Args::try_parse_from(["hex", "agent", "projects", "use", "Chamber"])
-            .unwrap();
+        let parsed = Args::try_parse_from(["hex", "agent", "projects", "use", "Chamber"]).unwrap();
         assert!(matches!(
             parsed.command,
             ControlCli::Agent {
