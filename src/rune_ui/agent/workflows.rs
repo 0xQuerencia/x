@@ -423,8 +423,7 @@ impl Manager {
             .collect();
         let graphs = store.list_graphs();
         let shown = serde_json::to_string(&(
-            rows
-                .iter()
+            rows.iter()
                 .map(|r| {
                     (
                         &r.entry.workflow,
@@ -555,10 +554,8 @@ fn list(p: Paint, mgr: &Manager) -> El {
                     note(
                         ui,
                         result.is_ok(),
-                        result.map_or_else(
-                            |error| error,
-                            |graph| format!("Imported {}", graph.name),
-                        ),
+                        result
+                            .map_or_else(|error| error, |graph| format!("Imported {}", graph.name)),
                     );
                 },
             )),
@@ -577,7 +574,8 @@ fn list(p: Paint, mgr: &Manager) -> El {
             .child(section_label(p, "wf-coding-title", tr("Coding workflows")))
             .child(small(
                 "wf-coding-note".into(),
-                "Imported coding graphs are read-only here. Review each job before approval.".into(),
+                "Imported coding graphs are read-only here. Review each job before approval."
+                    .into(),
                 p.muted(),
             ));
         for graph in &mgr.graphs {
