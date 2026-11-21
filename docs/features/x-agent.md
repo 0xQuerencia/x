@@ -459,7 +459,13 @@ Native Linux process-control tests should run only on an isolated test session.
   editors or file managers. Links and a small set of navigation buttons may be clicked;
   other buttons and consequential controls are refused. Remote models additionally
   require explicit `agent computer remote on`; on-screen context is redacted before
-  transmission. Approval decisions are appended to a private local audit file.
+  transmission.
+* **Local audit** records task approval, discard, Stop, and action outcomes in
+  `x-action-ledger.ndjson` under X's data directory. The ledger stores task and
+  step keys, source, risk, requirements and status. Task text, model output,
+  credentials, filenames and window titles stay out of it. Known records from
+  the previous approval log are imported once, and that file stays available.
+  An audit write failure blocks approval and is shown in the task UI.
 
 ## Not done yet
 

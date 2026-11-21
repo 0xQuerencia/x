@@ -1631,3 +1631,51 @@ fn a_task_key_is_bound_to_the_current_step_and_claimed_once() {
     wait_for(&s, |snapshot| snapshot.phase == Phase::Completed);
     assert_eq!(*launcher.launched.lock().unwrap(), ["Open firefox"]);
 }
+
+#[test]
+fn audit_records_approval_and_dispatch_without_the_command_text() {
+    let audit = tempfile::tempdir().unwrap();
+    let (s, _, launcher) = rig();
+    s.configure_ledger(audit.path()).unwrap();
+    let task = s
+        .plan("search youtube for private task content", Mode::Actions)
+        .unwrap();
+    s.approve(task.id).unwrap();
+    wait_for(&s, |snapshot| snapshot.phase == Phase::Completed);
+    assert_eq!(launcher.launched.lock().unwrap().len(), 1);
+    let file = std::fs::read_to_string(audit.path().join("x-action-ledger.ndjson")).unwrap();
+    assert!(!file.contains("private task content"));
+    let records: Vec<serde_json::Value> = file
+        .lines()
+        .skip(1)
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let kinds: Vec<_> = records
+        .iter()
+        .map(|record| record["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["planned", "approved", "claimed", "launched", "finished"]
+    );
+    assert_eq!(records[2]["action"]["idempotency_key"]["task"], task.id);
+    assert_eq!(records[2]["action"]["risk"], "reversible");
+    assert_eq!(records[4]["phase"], "completed");
+}
+
+#[test]
+fn a_broken_configured_audit_cannot_dispatch_an_action() {
+    let audit = tempfile::tempdir().unwrap();
+    let (s, _, launcher) = rig();
+    s.configure_ledger(audit.path()).unwrap();
+    let task = s.plan("open firefox", Mode::Actions).unwrap();
+    std::fs::write(
+        audit.path().join("x-action-ledger.ndjson"),
+        b"{\"schema\":2}\n",
+    )
+    .unwrap();
+    let error = s.approve(task.id).unwrap_err();
+    assert!(error.contains("Unknown X audit ledger schema"), "{error}");
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
+}
