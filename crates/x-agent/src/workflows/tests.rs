@@ -872,9 +872,13 @@ mod running {
         ];
         let out = run(&wf, &host, &cfg(h.path()));
         assert_eq!(out.report.state, RunState::Failed);
+        assert_eq!(
+            statuses(&out),
+            vec![StepStatus::Done, StepStatus::Failed, StepStatus::Skipped]
+        );
         assert_eq!(out.report.steps[1].detail, "Permission denied");
-        assert_eq!(out.report.steps[2].status, StepStatus::Skipped);
         assert!(!host.log().iter().any(|l| l.starts_with("opencode")));
+        assert_eq!(host.launches.load(Ordering::SeqCst), 1);
     }
 
     #[test]

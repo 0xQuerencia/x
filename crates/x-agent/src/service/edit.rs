@@ -147,7 +147,7 @@ impl Service {
         s.serial += 1;
         let id = s.serial;
         s.task = Some(task(id, text, vec![], None));
-        emit(&mut s, "plan", &format!("Edit: {text}"));
+        emit(&mut s, "plan", text);
         Ok(())
     }
 
@@ -366,7 +366,7 @@ impl Service {
             consented: true,
         };
         let task = self.begin_task(text, vec![step("Show the explanation", "")], preview, job)?;
-        self.approve(task.id)?; // nothing to change: showing it is the whole job
+        self.approve_if_automatic(task.id)?;
         Ok(task)
     }
 
@@ -389,8 +389,14 @@ impl Service {
         t.phase = Phase::AwaitingApproval;
         s.phase = Phase::AwaitingApproval;
         s.actions = vec![];
+        s.review = if matches!(job.stage, Stage::Info) {
+            super::Review::ShowResult
+        } else {
+            super::Review::Required
+        };
         s.edit = Some(job);
         s.task = Some(t.clone());
+        super::audit_best_effort(&mut s, super::AuditKind::Planned, None);
         emit(&mut s, "plan", &format!("Edit ready to review: {text}"));
         Ok(t)
     }
@@ -467,7 +473,7 @@ impl Service {
         let (Some(new), engine) = (job.proposed.clone(), self.context_engine()) else {
             return self.finish(Phase::Failed, Some("Nothing to apply".into()), None, None);
         };
-        if self.lock().stop_requested {
+        if self.lock().stop.requested() {
             return self.finish(
                 Phase::Cancelled,
                 None,
@@ -500,6 +506,7 @@ pub(super) fn step(title: &str, risk: &str) -> Step {
         title: title.into(),
         status: "pending".into(),
         risk: risk.into(),
+        request: None,
         detail: String::new(),
     }
 }
@@ -515,6 +522,10 @@ pub(super) fn task(id: u64, text: &str, steps: Vec<Step>, edit: Option<Preview>)
         summary: None,
         changed_files: None,
         workspace: None,
+        session: None,
+        accepted_session: None,
+        work_access: crate::harness::WorkAccess::Workspace,
+        work_harness: None,
         blocked: vec![],
         edit,
     }

@@ -23,7 +23,7 @@ X's *execution policy* is separate from the dictation shortcut's voice modes
 | Execution mode | Behavior |
 | --- | --- |
 | **Default** | Every new desktop task pauses for approval before execution. |
-| **Autonomous** | Low-risk local Actions start without per-task approval. A Decider computer-use task can also run immediately **only** when that app already has a specific screen grant and remote-screen permission has been explicitly enabled if needed. |
+| **Autonomous** | Low-risk desktop actions start automatically. Typing, closing a window, operating an app, sending selected text to a website, and Work each require approval. |
 
 Choose in the **Agent pane → Execution** controls or by CLI:
 
@@ -46,9 +46,9 @@ jobs and risky or untrusted operations require human review.
 
 The prior `hex agent trust on|off` command is maintained as an alias for
 Autonomous/Default, using the same owner-controlled persisted setting; it
-doesn't create a second conflicting mode. The default for a fresh install
-is **Default**. A previously enabled Trusted Actions setting is interpreted
-as Autonomous until switched off.
+keeps the same saved setting. A fresh install starts in **Default**. An
+existing Trusted Actions setting keeps automatic execution for low-risk actions.
+X shows the tighter approval rules once after upgrading.
 
 A task runs through the same phases, but Autonomous may skip
 `awaiting_approval` on permitted tasks:
@@ -82,6 +82,271 @@ pane is selected.
 **The Agent shortcut.** Bind `hex agent toggle` (and `hex agent stop`) to a key in your
 desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
 once: X refuses to start while any task or recording of its own is in flight.
+
+### Register a project
+
+```sh
+hex agent projects register "My project" ~/code/project
+hex agent projects list
+hex agent projects alias-add <project-id> "My alias"
+hex agent projects use "My alias"
+hex agent projects alias-remove <project-id> "My alias"
+hex agent projects forget <project-id>
+```
+
+Each explicitly chosen folder gets a stable local ID. X resolves links and
+requires the result to stay inside your home, outside private configuration
+trees. For a Git checkout, X records the local Git common directory so linked
+worktrees share the same repository identity. Registering a folder again
+returns its existing entry. Forget removes only the registry entry.
+
+Names and aliases resolve by exact normalized match, never fuzzy matching.
+When multiple projects share the same name or alias, select by the stable ID.
+Selecting a project validates its directory again and sets the Work workspace.
+A selected project is remembered between X restarts; it never bypasses Work approval.
+Aliases are local metadata. Forget removes the registry and saved session metadata,
+not the project files.
+
+In Actions or Smart voice mode, say “Friday, list projects,” “find project
+Chamber,” “switch to project Chamber,” or “open my Chamber project.”
+Listing and finding read the local registry. Switching and requesting the
+file manager wait for approval with the exact project and directory in the
+preview. Opening uses the system file manager and reports the launch as
+unverified.
+
+“List saved sessions” displays remembered IDs for the selected project with
+unverified availability. “Resume OpenCode session ses_…” previews an exact
+session selection. “Resume session one” also accepts an ordinal from the
+current, unexpired OpenCode listing. Approval confirms the session with
+the provider before selecting it. A separate Work task sends a goal.
+
+The registry tests cover restart, linked Git worktrees, private paths,
+symlink escapes, ambiguity, and preservation of files when forgetting a project.
+
+### Explicit context attachments
+
+X's spoken selection-to-session handoff now wraps the selected excerpt in a typed,
+bounded **untrusted context bundle**. It carries the source, capture time, scope
+and redaction state. Password fields and unverified primary selections are
+refused by the existing accessibility guard; attached text cannot grant
+permissions or become an X desktop action.
+
+The same bundle contract supports bounded user-chosen log and Git diff excerpts,
+project-scoped file-line references and query-stripped browser page metadata.
+Screenshot references require explicit screen permission; **image bytes are not
+automatically captured or sent**. Only the selected-text handoff is wired into
+the command surface in this slice. Future connectors must request separate
+permission and use these typed APIs rather than ad-hoc string interpolation.
+
+### Read-only workflow graph preview
+
+Run `hex agent workflow preview <id>` to validate a saved workflow or v2
+graph and print its ordered nodes, dependencies and actions as JSON. The
+response explicitly says `executed: false` and `authorization:
+not_requested`; no desktop action, coding harness, approval or merge is
+triggered by this command. Execution still uses the existing separate
+`workflow run` path with its approval requirements.
+
+### Workflow DAG schema (development)
+
+The new `workflows::dag` module validates versioned graph JSON, detects
+cycles, unknown dependencies and duplicate edges, and computes a deterministic
+topological order. It migrates existing sequential workflow files in memory:
+`after` means ordering only, while `requires` still requires success.
+That distinction preserves legacy `on_failure: continue` behavior.
+
+`Store::get_graph` is **read-only**. The currently released workflow runner
+remains sequential; graph scheduling, worktree ownership and parallel execution
+are separate milestones and are not yet enabled by this schema.
+
+### DAG scheduler contract (development)
+
+A bounded coordinator is available behind the new graph contract. It requires an
+executor to approve **every node** before launch, checks authorization again
+on dispatch, limits concurrent jobs (at most four), and propagates Stop to
+child cancellation tokens. Without worktree isolation, mutating harness jobs
+for the same project run one at a time; desktop jobs also share one resource
+lock. Unverified outputs never unlock success-dependent tasks.
+
+The scheduler is **not attached to live harnesses or the UI**. P4.3 worktree
+isolation, a stronger verification adapter and policy bridge must land before
+concurrent editing is exposed to users.
+
+### Approved Git worktree isolation (development)
+
+The new worktree manager can allocate a detached Git checkout at a verified
+commit into an owner-selected visible directory under the home folder. It
+verifies the repository identity, never changes the original checkout and
+refuses duplicate task paths. Git hooks are disabled for these operations;
+Git checkout configuration and filters still require explicit owner consent.
+
+Cleanup **requires a new owner approval**, rechecks ownership and Git identity,
+refuses tracked/untracked/ignored changes and never uses `--force`.
+There is no automatic merge or cleanup. This API is not yet wired to the DAG
+scheduler or user-facing UI; those integrations must preserve the approval gates.
+
+### Crash-safe DAG task claims (development)
+
+The workflow recovery journal stores only run/node identities, a request
+fingerprint, attempt count and evidence references. It does **not** store
+prompts or tokens. It atomically claims a node before delivery; if X loses
+contact after the claim, restart reports `RequiresReconciliation` rather than
+silently sending the same work again. A terminal result is immutable.
+A new attempt needs fresh owner approval plus independent confirmation that
+the previous attempt was never delivered, with a maximum retry budget.
+
+This is the durable journal contract only. The live scheduler and harness
+adapters do not yet call it; integrating those with actual provider
+acknowledgment/reconciliation remains a separate milestone.
+
+### Proof-based verification (development)
+
+`x_agent::verification` computes `Verified`, `Failed` or `Unverified`
+from direct evidence and required checks. A passing model summary or a
+screenshot interpretation cannot satisfy a required check. A harness run can
+prove **delivery** only when the correct structured session acknowledgment
+and exit code 0 are both observed; it does not prove code correctness.
+A separate Git status check reports whether an exact project-relative file
+changed, not whether the resulting code works.
+
+These result types and unit tests are in place for future DAG integration.
+The live X workflow UI is not yet using the complete verification pipeline.
+
+### Verified worktree scheduling (development)
+
+The DAG scheduler now supports worktree-scoped resource locks. Jobs in the
+same registered project may overlap **only when a trusted executor returns
+two separately verified worktree identities**. Without this proof they keep
+the existing one-writer-per-project restriction. Mixed project-wide and
+worktree-scoped jobs still conflict, and the exact lock is preserved through
+the job's lifetime even if the executor's discovery state changes.
+
+A live policy-backed harness executor that issues these identities remains
+outstanding; model-provided worktree names cannot switch isolation on.
+
+### Approved two-harness execution (development)
+
+The new `workflows::harness_exec` adapter can route a typed DAG node to
+either an approved OpenCode or Claude Code adapter in a separately owned Git
+worktree. It rechecks project/worktree identity, uses the crash-safe job
+journal to refuse duplicate sends, and derives completion from structured
+harness delivery and the explicitly chosen verification profile.
+
+The tests use fake providers with real Git worktrees to prove same-project
+parallel isolation, failure reporting, and replay refusal without network
+calls. **It is not connected to the voice command or native approval UI.**
+The host must create exact, scoped owner approvals before constructing an
+assignment; a model-generated graph cannot approve itself. Worktrees are
+preserved after runs, and code/test success is not claimed by delivery-only
+verification.
+
+### Safe merge-back previews (development)
+
+The Git integration module checks an owned task worktree and computes a
+possible merge result using `git merge-tree --write-tree`. It reports
+potential changed files and conflicts without changing either checkout, Git
+refs or the user's original working tree. Uncommitted task changes block the
+preview rather than being silently omitted. A conflict never applies a merge.
+
+Only a separate, freshly approved R4 operation may later integrate, push or
+merge the result; **no such automatic operation is enabled here**. Git may
+write unreachable preview tree objects to its object database, but does not
+update HEAD, the index or worktree files.
+
+### Approved tests in owned worktrees (development)
+
+X's test verifier accepts only typed presets for Cargo, npm, pnpm, pytest and
+Go. It revalidates the worktree's ownership before running any test, requires
+fresh owner approval, executes without a shell, enforces a 120-second deadline
+and propagates Stop to the owned subprocess. Exit success is **Verified for that
+test suite only**; failure is **Failed**; missing, interrupted or timed-out
+evidence is **Unverified**. No process output or secrets are retained in the
+evidence record.
+
+Project test scripts can run arbitrary code despite fixed arguments, so this
+is a privileged R2 operation. The verifier API is implemented but **not yet
+exposed through a native approval screen or spoken command**; that integration
+remains gated by the P5 approval work.
+
+### Desktop capability checks
+
+Run `hex agent doctor --json` to see `desktop.capabilities`, an operation-by-operation
+report for the CLI session. Use `hex agent doctor --running --json` to probe
+the running service's environment through the local API. Both forms identify
+the build, OS, architecture and probe source. Plain-text output shows the same
+capability states. `hex agent desktop` retains the desktop-only service report.
+
+The harness section probes the installed OpenCode and Claude Code binaries for
+a version, the required CLI flags and reported login state. A configured login
+means the vendor reported local configuration. Provider access is checked when
+the user runs a task. A nonresponsive or unrecognized status stays unknown.
+X does not open either harness's credential files.
+
+Doctor reports ready when the window list probe succeeds and the required
+helpers are present. An unsafe key file also blocks readiness. On Windows the
+report labels key file permissions as unchecked. The older `supported` list
+continues to describe the backend's advertised operations.
+
+- **Supported** means a read-only window list probe succeeded. Hyprland and
+  Windows provide this probe.
+- **Partial** means the selected backend advertises the operation and the
+  diagnostic could not verify it. This includes mutations such as focus, move
+  and close, and listing when the backend has no bounded probe or its read failed.
+- **Unsupported** means no backend is available in this session or the selected
+  backend does not advertise the operation.
+- **Needs permission** means KDE Plasma 6's experimental backend has its helper
+  and session bus but still needs the explicit `X_ENABLE_EXPERIMENTAL_KDE=1`
+  opt-in.
+
+The probe performs no window changes and returns no window names or IDs.
+
+The [desktop contract tests](../../crates/x-agent/src/wm/tests/contract.rs)
+exercise the controller with each adapter's advertised operations and check
+the report against successful, failed and unavailable reads. The optional
+read-only live test checks the selected backend and rejects a stale window
+identity. The Sway and X11 isolated tests also check their actual reports.
+
+### OpenCode session discovery
+
+Choose an existing project with `hex agent workspace <path>`, then use
+`hex agent sessions list` or `hex agent sessions resume <session-id>`.
+Resume selects the existing session in X after a fresh check with the
+registered loopback service. The selection is available in `hex agent status
+--json` until X restarts or the project changes. Session discovery uses the
+service's authorization and shows a refusal if the registration is stale.
+It exposes open root sessions whose reported directory resolves to the chosen
+project. Use `hex agent sessions send <goal>` to preview Work for that
+session, then approve the displayed task. X rechecks the target before send
+and uses the supervised private OpenCode runner with its normal command
+permissions. A structured event from the same session supplies the delivery
+acknowledgement. Stop cancels the owned runner.
+
+After displaying the list, say `Friday, give this to session one` to preview
+sharing selected text. Numbers refer to that list for 60 seconds. A displayed
+session title also works when it identifies one entry. An exact ID from a
+selected or displayed session takes precedence. Refresh the list after
+changing projects. X checks the target and the source window before sending.
+This path requires approval and uses the deny-all tool policy available
+in OpenCode 2.2.7 and later OpenCode 2 builds.
+
+### Delegate a task by voice
+
+Set the project with `hex agent workspace <path>`. Through an enabled X
+command input, say `Friday, ask OpenCode to inspect the backend tests`. X
+previews the goal and project, then waits for approval. An explicitly selected
+OpenCode session appears in the preview and is rechecked before delivery.
+`Ask Claude Code to …` chooses Claude Code directly. Doctor shows the local
+harness versions and login information. The model configured in the chosen
+harness handles the approved run.
+
+### Claude Code Work
+
+With Claude Code 2 installed, choose a project, run `hex agent claude <goal>`,
+and approve the task. X uses Claude Code's own login and streams its structured
+events. This mode sends the goal with tool access and MCP disabled. To continue
+the last successful session X started in that project, run
+`hex agent claude --resume <goal>`. Changing project or restarting X clears
+the resume target. Stop cancels the owned Claude Code process.
 
 ### Command decisions (Perplexity Decider)
 
@@ -163,7 +428,9 @@ original prose, summarize a page, reason through coding tasks, or complete
 payments/posts. A question requiring a generative answer or writing new
 content still needs a separate model. Provider errors and low-confidence
 choices fail closed rather than guessing or falling back to paid inference.
-Deterministic commands still run without contacting the provider.
+Deterministic commands still run without contacting the provider. Built-in window
+phrases take precedence over speech corrections based on installed app names
+and keywords.
 Work-mode OpenCode still needs its own configured coding model.
 
 Source: `crates/x-agent/src/decision.rs`, `crates/x-agent/src/decision_computer.rs`, `crates/x-agent/src/decider.rs`,
@@ -410,13 +677,24 @@ Native Linux process-control tests should run only on an isolated test session.
 * **Actions** are a closed registry: launch an approved app, open a public
   `https://` URL, or search one of five sites. A planned step is data, never a command line:
   no shell, no `sh -c`, search text is percent-encoded into one URL argument.
+* **Action previews** carry the service-assigned task and step key, input source,
+  risk and required capabilities. A standalone window close previews the resolved
+  window. X rechecks its identity before dispatch and asks for a numbered choice
+  when several candidates match. Mock window tests exercise focus changes,
+  reused native IDs and a candidate disappearing from an ambiguous list.
 * **Launched is not verified.** X reports "launched"; it does not claim a page loaded.
 * **Work never bypasses OpenCode's permissions.** X does not pass `--auto`. The run uses a
   private OpenCode server (`--standalone`) when the installed OpenCode has it. A run only
   counts as completed with exit code 0 **and** no error event; an error event ends the run.
-* **Stop really stops**: SIGTERM to the run's process group, SIGKILL after 5 s. X then
-  lists files whose git state changed (when the folder is a git repo). Nothing is rolled
-  back, and X says so.
+  Work and saved workflows share the adapter and its structured event parser.
+  Only a typed bash refusal can offer a command for separate review. The harness
+  descriptor in Agent status gives the event schema and the adapter's operations.
+* **Stop** discards a pending plan, prevents queued steps from starting and
+  requests cancellation of workers owned by the task. A late model proposal
+  is discarded. Say `Friday, stop the task` through the enabled command path or
+  use the Agent pane or CLI. On Unix the OpenCode worker signals its own process
+  group and escalates after a five-second grace period. X reports changed files
+  when Git evidence is available. These changes stay on disk.
 * **Local by default.** Speech uses Hex's local model. Screen text is sent to a local
   planner unless you explicitly allow remote screen access. X sends nothing else itself;
   OpenCode talks to whichever provider you configured.
@@ -426,7 +704,13 @@ Native Linux process-control tests should run only on an isolated test session.
   editors or file managers. Links and a small set of navigation buttons may be clicked;
   other buttons and consequential controls are refused. Remote models additionally
   require explicit `agent computer remote on`; on-screen context is redacted before
-  transmission. Approval decisions are appended to a private local audit file.
+  transmission.
+* **Local audit** records task approval, discard, Stop, and action outcomes in
+  `x-action-ledger.ndjson` under X's data directory. The ledger stores task and
+  step keys, source, risk, requirements and status. Task text, model output,
+  credentials, filenames and window titles stay out of it. Known records from
+  the previous approval log are imported once, and that file stays available.
+  An audit write failure blocks approval and is shown in the task UI.
 
 ## Not done yet
 
@@ -514,3 +798,11 @@ on when comfortable sharing visible pixels with OpenRouter/Perplexity.
 Images are supporting context for **existing allowlisted accessible UI
 targets**; X cannot use ungrounded coordinates to click inaccessible
 buttons, and screen text never grants new permissions. Model quotas apply.
+
+### Captured-context expiry
+
+Before targeting a previously observed window or applying a selection-based edit,
+X rechecks both window identity and snapshot age. Context older than 15 seconds
+is rejected even when the same window still exists and even after an approval
+prompt temporarily changes focus. The user must issue the command again to
+obtain fresh evidence.

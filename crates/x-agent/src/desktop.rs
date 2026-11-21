@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::cancellation::Cancellation;
 use crate::tools;
 
 const MAX_ELEMENTS: usize = 120;
@@ -233,6 +234,11 @@ pub trait Desktop: Send + Sync {
     fn find_window(&self, app: &str) -> Result<Win, String>;
     fn observe(&self, win: &Win) -> Result<Observation, String>;
     fn act(&self, win: &Win, act: &UiAct) -> Result<(), String>;
+
+    fn act_scoped(&self, win: &Win, act: &UiAct, stop: &Cancellation) -> Result<(), String> {
+        stop.check()?;
+        self.act(win, act)
+    }
 }
 
 pub struct AgentDesktop {
@@ -300,22 +306,38 @@ fn valid_args(args: &[&str]) -> Result<(), String> {
 
 /// Runs `cmd` with a deadline and capped output. Returns success and stdout.
 pub(crate) fn capture(cmd: &mut Command, limit: Duration) -> Result<(bool, Vec<u8>), String> {
-    let mut child = cmd
-        .stdin(Stdio::null())
+    capture_scoped(cmd, limit, None)
+}
+
+pub(crate) fn capture_scoped(
+    cmd: &mut Command,
+    limit: Duration,
+    stop: Option<&Cancellation>,
+) -> Result<(bool, Vec<u8>), String> {
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    let mut child = crate::retry_busy(|| cmd.spawn())
         .map_err(|e| format!("could not run {:?}: {e}", cmd.get_program()))?;
     let mut stdout = child.stdout.take().ok_or("no output pipe")?;
-    let reader = std::thread::spawn(move || {
+    let (send, output) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = (&mut stdout).take(OUTPUT_CAP).read_to_end(&mut buf);
-        buf
+        let _ = send.send(buf);
     });
     let start = Instant::now();
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
+            Ok(None) if stop.is_some_and(Cancellation::requested) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Stopped the owned desktop helper".into());
+            }
             Ok(None) if start.elapsed() > limit => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -325,12 +347,17 @@ pub(crate) fn capture(cmd: &mut Command, limit: Duration) -> Result<(bool, Vec<u
             Err(e) => return Err(e.to_string()),
         }
     };
-    let buf = reader.join().map_err(|_| "reader failed")?;
-    Ok((status.success(), buf))
+    let bytes = output
+        .recv_timeout(limit.saturating_sub(start.elapsed()))
+        .map_err(|_| format!("{:?} did not close its output in time", cmd.get_program()))?;
+    Ok((status.success(), bytes))
 }
 
 pub(crate) fn hypr(args: &[&str]) -> Result<Value, String> {
-    let (_, buf) = capture(Command::new("hyprctl").args(args), Duration::from_secs(5))?;
+    let (ok, buf) = capture(Command::new("hyprctl").args(args), Duration::from_secs(5))?;
+    if !ok {
+        return Err("hyprctl refused the desktop query".into());
+    }
     serde_json::from_slice(&buf).map_err(|_| "hyprctl gave no usable answer".into())
 }
 
@@ -455,6 +482,11 @@ impl Desktop for AgentDesktop {
     }
 
     fn act(&self, win: &Win, act: &UiAct) -> Result<(), String> {
+        self.act_scoped(win, act, &Cancellation::default())
+    }
+
+    fn act_scoped(&self, win: &Win, act: &UiAct, stop: &Cancellation) -> Result<(), String> {
+        stop.check()?;
         match act {
             UiAct::Click(reference) => self.run(&["click", reference]).map(drop),
             UiAct::Focus(reference) => {
@@ -463,22 +495,26 @@ impl Desktop for AgentDesktop {
             }
             UiAct::Type(text) => {
                 focus_window(win)?;
-                wtype(win, &["--", text])
+                wtype(win, &["--", text], stop)
             }
             UiAct::Key(key) => {
                 focus_window(win)?;
-                wtype(win, key.wtype_args())
+                wtype(win, key.wtype_args(), stop)
             }
         }
     }
 }
 
 /// Sends keys only while `win` is still the active window, checked right before sending.
-fn wtype(win: &Win, args: &[&str]) -> Result<(), String> {
+fn wtype(win: &Win, args: &[&str], stop: &Cancellation) -> Result<(), String> {
     if active_address().as_deref() != Some(win.address.as_str()) {
         return Err("The window lost focus; nothing was typed".into());
     }
-    let (ok, _) = capture(Command::new("wtype").args(args), Duration::from_secs(5))?;
+    let (ok, _) = capture_scoped(
+        Command::new("wtype").args(args),
+        Duration::from_secs(5),
+        Some(stop),
+    )?;
     ok.then_some(())
         .ok_or_else(|| "wtype could not send the input".into())
 }

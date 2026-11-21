@@ -225,6 +225,21 @@ fn old_snapshots_are_not_trusted() {
         .checked_sub(FRESH_FOR + Duration::from_secs(1))
         .unwrap();
     assert!(matches!(ctx.selected_text(), Err(ContextError::Stale(_))));
+    assert!(
+        matches!(engine.recheck(&ctx, true), Err(ContextError::Stale(_))),
+        "An expired focused-window reference must never authorize an action"
+    );
+    assert!(
+        matches!(engine.recheck(&ctx, false), Err(ContextError::Stale(_))),
+        "Approval prompts must not bypass the context expiry"
+    );
+    assert!(
+        matches!(
+            engine.selection_unchanged(&ctx),
+            Err(ContextError::Stale(_))
+        ),
+        "An old selection cannot authorize a later edit"
+    );
 }
 
 #[test]

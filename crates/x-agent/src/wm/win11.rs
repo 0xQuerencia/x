@@ -207,6 +207,10 @@ impl Backend for Win11 {
         ]
     }
 
+    fn probe_window_list(&self) -> Option<Result<(), WmError>> {
+        Some(self.windows().map(drop))
+    }
+
     fn windows(&self) -> Result<Vec<WinInfo>, WmError> {
         let mut out = Vec::new();
         // SAFETY: valid callback and borrowed Vec, used synchronously.

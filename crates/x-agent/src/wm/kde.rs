@@ -7,6 +7,7 @@
 //! ambiguity handling and bounded Undo.
 
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -16,6 +17,7 @@ pub struct Kde;
 
 const MAX_OUTPUT: usize = 256 * 1024;
 const MAX_WINDOWS: usize = 200;
+const SCRIPT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Only the identity returned by KWin may reach a subsequent action.
 fn valid_id(id: &str) -> Result<&str, WmError> {
@@ -37,26 +39,30 @@ fn valid_id(id: &str) -> Result<&str, WmError> {
     Ok(id)
 }
 
-fn script(source: &str) -> Result<Value, WmError> {
-    // KWin scripts execute inside the compositor, so never use arguments
-    // sourced from utterances, window titles or desktop entries.
-    let child = Command::new("kdotool")
-        .args(["kwinscript", "--inline", source])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| WmError::Backend("kdotool is required on KDE Plasma 6".into()))?;
-    let output = child
-        .wait_with_output()
-        .map_err(|_| WmError::Backend("KWin script could not finish".into()))?;
-    if !output.status.success() || output.stdout.len() > MAX_OUTPUT {
+fn run_script(command: &mut Command, timeout: Duration) -> Result<Value, WmError> {
+    // A stuck D-Bus bridge must not block the agent or hold its controller lock.
+    // The shared capture helper kills and reaps the child at the deadline.
+    let (ok, output) = crate::desktop::capture(command, timeout)
+        .map_err(|error| WmError::Backend(format!("KWin script unavailable: {error}")))?;
+    if !ok || output.len() > MAX_OUTPUT {
         return Err(WmError::Backend(
             "KWin script failed or output exceeded limit".into(),
         ));
     }
-    serde_json::from_slice(&output.stdout)
+    serde_json::from_slice(&output)
         .map_err(|_| WmError::Backend("KWin script did not return valid JSON".into()))
+}
+
+fn script(source: &str) -> Result<Value, WmError> {
+    // Scripts contain only static templates and validated UUID literals.
+    run_script(
+        Command::new("kdotool")
+            .args(["kwinscript", "--inline", source])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+        SCRIPT_TIMEOUT,
+    )
 }
 
 const READ: &str = r#"
@@ -220,6 +226,37 @@ mod tests {
     use super::*;
 
     const ID: &str = "{12345678-1234-1234-1234-123456789abc}";
+
+    #[cfg(unix)]
+    #[test]
+    fn stuck_kwin_bridge_is_killed_at_the_deadline() {
+        let started = std::time::Instant::now();
+        let err = run_script(
+            Command::new("sh")
+                .args(["-c", "exec sleep 2"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null()),
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("timed out"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kwin_script_rejects_invalid_json_and_nonzero_status() {
+        let invalid = run_script(
+            Command::new("sh").args(["-c", "printf not-json"]),
+            Duration::from_secs(2),
+        );
+        assert!(invalid.is_err());
+        let failed = run_script(
+            Command::new("sh").args(["-c", "exit 1"]),
+            Duration::from_secs(2),
+        );
+        assert!(failed.is_err());
+    }
 
     #[test]
     fn only_kwin_internal_uuids_can_enter_scripts() {

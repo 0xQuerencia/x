@@ -4,47 +4,23 @@
 //! exit code 0 AND no `error` event; an `error` event is terminal (observed: OpenCode can
 //! hang after emitting one).
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader};
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use serde::Serialize;
+use crate::cancellation::Cancellation;
+pub use crate::harness::evidence::{change_snapshot, diff_snapshots};
+pub use crate::harness::process::Canceller;
+use crate::harness::{self, EventSink, SessionId};
+pub use crate::harness::{RunResult, RunStatus};
 
-const POLL: Duration = Duration::from_millis(200);
-const KILL_GRACE: Duration = Duration::from_secs(5);
-const MAX_EVENT_CHARS: usize = 450;
+mod events;
+
 pub const STALL_AFTER: Duration = Duration::from_secs(120);
 
 /// Receives `(kind, one-line text)` for each event as it happens.
 pub type OnEvent = Arc<dyn Fn(&str, &str) + Send + Sync>;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct RunResult {
-    pub status: RunStatus,
-    pub exit_code: Option<i32>,
-    pub errors: Vec<String>,
-    pub stderr: Vec<String>,
-    /// Files whose git state changed during the run; `None` outside a git repo.
-    pub changed_files: Option<Vec<String>>,
-}
 
 /// Reject missing paths, files, `/`, and the whole home directory.
 pub fn validate_workspace(path: &Path) -> Result<PathBuf, String> {
@@ -73,135 +49,58 @@ pub fn validate_workspace(path: &Path) -> Result<PathBuf, String> {
     Ok(resolved)
 }
 
-/// Classify one parsed event into `(kind, summary)`.
+/// Summarize a parsed event for callers of the text-only runner interface.
 pub fn summarize_event(obj: &serde_json::Value) -> (String, String) {
-    let clip = |s: &str| s.chars().take(MAX_EVENT_CHARS).collect::<String>();
-    let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("event");
-    let part = obj.get("part").filter(|p| p.is_object());
-    if kind == "error" {
-        let msg = match obj.get("error") {
-            Some(e) => e
-                .get("message")
-                .and_then(|m| m.as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| e.to_string()),
-            None => "unknown error".into(),
+    let event = events::parse(&obj.to_string());
+    (event.kind.as_str().into(), event.text)
+}
+
+#[derive(Default)]
+struct RunFlags {
+    standalone: bool,
+    directory: bool,
+    json: bool,
+    session: bool,
+}
+
+impl RunFlags {
+    fn read(exe: &Path) -> Option<Self> {
+        let (true, help) = harness::probe::query(exe, &["run", "--help"])? else {
+            return None;
         };
-        return ("error".into(), clip(&msg));
+        let flag = |name| harness::probe::has_flag(&help, name);
+        Some(Self {
+            standalone: flag("--standalone"),
+            directory: flag("--dir"),
+            json: harness::probe::has_opencode_json_output(&help),
+            session: flag("--session"),
+        })
     }
-    if let Some(tool) = part.and_then(|p| p.get("tool")).and_then(|t| t.as_str()) {
-        let state = part.and_then(|p| p.get("state"));
-        let refused = state
-            .and_then(|s| s.get("error"))
-            .and_then(|e| e.as_str())
-            .is_some_and(|e| e.contains("rejected permission"));
-        if refused {
-            let command = state
-                .and_then(|s| s.get("input"))
-                .and_then(|i| {
-                    i.get("command")
-                        .or_else(|| i.get("filePath"))
-                        .or_else(|| i.get("url"))
-                })
-                .and_then(|c| c.as_str())
-                .unwrap_or("");
-            return (
-                "permission".into(),
-                clip(&format!("Blocked {tool}: {command}")),
-            );
-        }
-        let field = |k: &str| {
-            state
-                .and_then(|s| s.get(k))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-        };
-        return (
-            "tool".into(),
-            clip(format!("{tool} {} {}", field("status"), field("title")).trim()),
-        );
-    }
-    if kind == "text" {
-        let text = part
-            .and_then(|p| p.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-        return ("text".into(), clip(text));
-    }
-    if kind.contains("permission") {
-        return (
-            "permission".into(),
-            clip(&format!("{kind}: {}", part.unwrap_or(obj))),
-        );
-    }
-    (kind.into(), kind.into())
 }
 
-fn git(workspace: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(workspace)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-/// path -> porcelain status. `None` when the workspace is not a git repo.
-pub fn change_snapshot(workspace: &Path) -> Option<BTreeMap<String, String>> {
-    let raw = git(
-        workspace,
-        &["status", "--porcelain", "-z", "--untracked-files=all"],
-    )?;
-    let mut entries = raw.split('\0');
-    let mut snap = BTreeMap::new();
-    while let Some(e) = entries.next() {
-        if e.len() > 3 {
-            snap.insert(e[3..].to_string(), e[..2].to_string());
-            if e.starts_with(['R', 'C']) {
-                entries.next(); // rename/copy carries the original path as a second field
-            }
-        }
-    }
-    Some(snap)
-}
-
-pub fn diff_snapshots(
-    before: Option<&BTreeMap<String, String>>,
-    after: Option<&BTreeMap<String, String>>,
-) -> Option<Vec<String>> {
-    let (b, a) = (before?, after?);
-    let paths: BTreeSet<&String> = b.keys().chain(a.keys()).collect();
-    Some(
-        paths
-            .into_iter()
-            .filter(|p| b.get(*p) != a.get(*p))
-            .cloned()
-            .collect(),
-    )
-}
-
-fn supports_standalone(exe: &Path) -> bool {
-    crate::retry_busy(|| {
-        Command::new(exe)
-            .args(["run", "--help"])
-            .stdin(Stdio::null())
-            .output()
-    })
-    .map(|o| {
-        String::from_utf8_lossy(&o.stdout).contains("--standalone")
-            || String::from_utf8_lossy(&o.stderr).contains("--standalone")
-    })
-    .unwrap_or(false)
+fn supports_context_policy(exe: &Path) -> bool {
+    let Some((true, output)) = harness::probe::query(exe, &["--version"]) else {
+        return false;
+    };
+    let Some(version) = harness::probe::parse_version(harness::Kind::OpenCode, &output) else {
+        return false;
+    };
+    let release = version
+        .split_once(['-', '+'])
+        .map_or(version.as_str(), |(release, _)| release);
+    let components: Vec<_> = release
+        .split('.')
+        .filter_map(|part| part.parse::<u32>().ok())
+        .collect();
+    matches!(components.as_slice(), [2, minor, patch] if (*minor, *patch) >= (2, 7))
 }
 
 pub struct RunConfig {
     pub exe: PathBuf,
     pub prompt: String,
     pub workspace: PathBuf,
+    pub session: Option<SessionId>,
+    pub access: harness::WorkAccess,
     pub stall_after: Duration,
     /// Exact shell commands the person allowed for this one run.
     pub allow_commands: Vec<String>,
@@ -245,6 +144,8 @@ impl RunConfig {
             exe,
             prompt: prompt.into(),
             workspace,
+            session: None,
+            access: harness::WorkAccess::Workspace,
             stall_after: STALL_AFTER,
             allow_commands: vec![],
         }
@@ -253,6 +154,22 @@ impl RunConfig {
     /// OpenCode config merged over the person's own for this run only: edits stay in the
     /// workspace, unknown shell commands and other directories are refused, secrets stay unread.
     pub fn policy(&self) -> String {
+        if self.access == harness::WorkAccess::SelectionOnly {
+            let policies = [
+                "tool.use",
+                "skill.use",
+                "mcp.use",
+                "plugin.use",
+                "websearch.use",
+            ]
+            .map(|action| serde_json::json!({"action": action, "resource": "*", "effect": "deny"}));
+            return serde_json::json!({
+                "permissions": [{"action": "*", "resource": "*", "effect": "deny"}],
+                "policies": policies,
+            })
+            .to_string();
+        }
+
         let mut bash = serde_json::Map::new();
         bash.insert("*".into(), "ask".into());
         for command in SAFE_COMMANDS {
@@ -277,270 +194,138 @@ impl RunConfig {
         .to_string()
     }
 
-    /// The exact argv. There is deliberately no way to add `--auto`.
+    /// The exact argv. OpenCode also receives the approved project as its working directory.
     pub fn args(&self) -> Vec<String> {
-        let mut a = vec!["run".to_string()];
-        if supports_standalone(&self.exe) {
-            a.push("--standalone".into()); // private server: isolates this run
+        self.args_for(RunFlags::read(&self.exe).unwrap_or_default())
+    }
+
+    fn args_for(&self, flags: RunFlags) -> Vec<String> {
+        let mut args = vec!["run".to_string()];
+        if flags.standalone {
+            args.push("--standalone".into());
         }
-        a.extend([
-            "--dir".into(),
-            self.workspace.to_string_lossy().into_owned(),
+        if flags.directory {
+            args.extend([
+                "--dir".into(),
+                self.workspace.to_string_lossy().into_owned(),
+            ]);
+        }
+        if let Some(id) = &self.session {
+            args.extend(["--session".into(), id.as_str().into()]);
+        }
+        args.extend([
             "--format".into(),
             "json".into(),
             "--".into(),
             self.prompt.clone(),
         ]);
-        a
+        args
     }
 }
 
-pub struct Run {
-    canceller: Canceller,
-    handle: JoinHandle<RunResult>,
+pub struct Adapter {
+    exe: PathBuf,
 }
 
-/// A cloneable handle that can Stop a run from any thread.
-#[derive(Clone)]
-pub struct Canceller {
-    pgid: Arc<AtomicI32>,
-    cancel: Arc<AtomicBool>,
-}
-
-impl Canceller {
-    /// SIGTERM the whole process group; the supervisor escalates to SIGKILL.
-    pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::SeqCst);
-        signal_group(self.pgid.load(Ordering::SeqCst), Signal::Term);
+impl Adapter {
+    pub fn new(exe: PathBuf) -> Self {
+        Self { exe }
     }
 }
+
+impl harness::Adapter for Adapter {
+    fn descriptor(&self) -> harness::Descriptor {
+        harness::Descriptor {
+            kind: harness::Kind::OpenCode,
+            event_schema: 2,
+            version: None,
+            capabilities: harness::OPENCODE_OWNED_CAPABILITIES,
+        }
+    }
+
+    fn start(
+        &self,
+        request: harness::Request,
+        events: EventSink,
+        stop: &Cancellation,
+    ) -> Result<Box<dyn harness::OwnedRun>, String> {
+        let mut config = RunConfig::new(self.exe.clone(), request.prompt, request.workspace);
+        config.allow_commands = request.allow_commands;
+        config.session = request.session;
+        config.access = request.access;
+        Ok(Box::new(Run::start_events_scoped(config, events, stop)?))
+    }
+}
+
+impl harness::OwnedRun for Run {
+    fn join(self: Box<Self>) -> RunResult {
+        (*self).join()
+    }
+}
+
+pub struct Run(crate::harness::process::Run);
 
 impl Run {
     pub fn start(cfg: RunConfig, on_event: OnEvent) -> Result<Self, String> {
-        let before = change_snapshot(&cfg.workspace);
-        let args = cfg.args();
-        let mut child = crate::retry_busy(|| {
-            let mut cmd = Command::new(&cfg.exe);
-            cmd.args(&args)
-                .current_dir(&cfg.workspace)
-                .env("PWD", &cfg.workspace)
-                .env("OPENCODE_CONFIG_CONTENT", cfg.policy())
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-            // Its own process group, so Stop reaches everything OpenCode started.
-            #[cfg(unix)]
-            cmd.process_group(0);
-            #[cfg(windows)]
-            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
-            cmd.spawn()
-        })
-        .map_err(|e| format!("could not start {}: {e}", cfg.exe.display()))?;
-        let pgid = Arc::new(AtomicI32::new(child.id() as i32));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (p, c) = (pgid.clone(), cancel.clone());
-        let handle = thread::spawn(move || supervise(&mut child, &cfg, before, &c, &p, on_event));
-        Ok(Self {
-            canceller: Canceller { pgid, cancel },
-            handle,
-        })
+        Self::start_scoped(cfg, on_event, &Cancellation::default())
+    }
+
+    pub fn start_scoped(
+        cfg: RunConfig,
+        on_event: OnEvent,
+        parent: &Cancellation,
+    ) -> Result<Self, String> {
+        Self::start_events_scoped(
+            cfg,
+            Arc::new(move |event| on_event(event.kind.as_str(), &event.text)),
+            parent,
+        )
+    }
+
+    fn start_events_scoped(
+        cfg: RunConfig,
+        on_event: EventSink,
+        parent: &Cancellation,
+    ) -> Result<Self, String> {
+        parent.check()?;
+        let flags = RunFlags::read(&cfg.exe)
+            .filter(|flags| flags.json)
+            .ok_or("OpenCode did not advertise structured run output")?;
+        if cfg.session.is_some() && (!flags.session || !flags.standalone) {
+            return Err(
+                "The installed OpenCode does not support a private run against an exact session"
+                    .into(),
+            );
+        }
+        if cfg.access == harness::WorkAccess::SelectionOnly && !supports_context_policy(&cfg.exe) {
+            return Err(
+                "Sharing a selection requires OpenCode 2.2.7 or a newer OpenCode 2 build".into(),
+            );
+        }
+        let mut cmd = Command::new(&cfg.exe);
+        cmd.args(cfg.args_for(flags))
+            .env("PWD", &cfg.workspace)
+            .env("OPENCODE_CONFIG_CONTENT", cfg.policy());
+        let spec = crate::harness::process::Spec {
+            name: "OpenCode",
+            workspace: cfg.workspace,
+            stall_after: cfg.stall_after,
+            session: cfg.session,
+            require_terminal: false,
+            parse: events::parse,
+        };
+        crate::harness::process::Run::start(spec, cmd, on_event, parent).map(Self)
     }
 
     pub fn canceller(&self) -> Canceller {
-        self.canceller.clone()
+        self.0.canceller()
     }
-
-    /// Stop the run: SIGTERM the whole process group, SIGKILL after a grace period.
     pub fn cancel(&self) {
-        self.canceller.cancel();
+        self.0.cancel()
     }
-
     pub fn join(self) -> RunResult {
-        self.handle.join().unwrap_or(RunResult {
-            status: RunStatus::Failed,
-            exit_code: None,
-            errors: vec!["supervisor thread panicked".into()],
-            stderr: vec![],
-            changed_files: None,
-        })
+        self.0.join()
     }
-}
-
-#[cfg(windows)]
-const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-
-/// A polite stop first, then a forced one.
-#[derive(Clone, Copy)]
-enum Signal {
-    Term,
-    Kill,
-}
-
-#[cfg(unix)]
-fn signal_group(pgid: i32, sig: Signal) {
-    if pgid > 0 {
-        let sig = match sig {
-            Signal::Term => libc::SIGTERM,
-            Signal::Kill => libc::SIGKILL,
-        };
-        // SAFETY: plain syscall on a process group we created with process_group(0).
-        unsafe { libc::killpg(pgid, sig) };
-    }
-}
-
-/// Windows has no process-group signals; `taskkill /T` ends the whole process tree.
-#[cfg(windows)]
-fn signal_group(pgid: i32, sig: Signal) {
-    if pgid > 0 {
-        let mut cmd = Command::new("taskkill");
-        cmd.args(["/PID", &pgid.to_string(), "/T"]);
-        if matches!(sig, Signal::Kill) {
-            cmd.arg("/F");
-        }
-        let _ = cmd
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
-
-fn terminate(child: &mut Child) {
-    let pgid = child.id() as i32;
-    signal_group(pgid, Signal::Term);
-    let deadline = Instant::now() + KILL_GRACE;
-    while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            signal_group(pgid, Signal::Kill); // reap any stragglers in the group
-            return;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    signal_group(pgid, Signal::Kill);
-    let _ = child.wait();
-}
-
-enum Line {
-    Out(String),
-    Err(String),
-    Closed,
-}
-
-fn pump(stream: impl std::io::Read + Send + 'static, out: bool, tx: mpsc::Sender<Line>) {
-    thread::spawn(move || {
-        for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            let _ = tx.send(if out {
-                Line::Out(line)
-            } else {
-                Line::Err(line)
-            });
-        }
-        let _ = tx.send(Line::Closed);
-    });
-}
-
-fn supervise(
-    child: &mut Child,
-    cfg: &RunConfig,
-    before: Option<BTreeMap<String, String>>,
-    cancel: &AtomicBool,
-    pgid: &AtomicI32,
-    on_event: OnEvent,
-) -> RunResult {
-    let (tx, rx) = mpsc::channel();
-    if let Some(s) = child.stdout.take() {
-        pump(s, true, tx.clone());
-    }
-    if let Some(s) = child.stderr.take() {
-        pump(s, false, tx.clone());
-    }
-    drop(tx);
-    let (mut open, mut last, mut stalled) = (2, Instant::now(), false);
-    let (mut errors, mut stderr_tail): (Vec<String>, Vec<String>) = (vec![], vec![]);
-    while open > 0 && !cancel.load(Ordering::SeqCst) {
-        match rx.recv_timeout(POLL) {
-            Err(RecvTimeoutError::Timeout) => {
-                if !stalled && last.elapsed() > cfg.stall_after {
-                    stalled = true;
-                    on_event(
-                        "stall",
-                        &format!(
-                            "No output for {}s: the agent may be waiting on a permission or the provider. Stop to abort.",
-                            cfg.stall_after.as_secs()
-                        ),
-                    );
-                }
-            }
-            Err(RecvTimeoutError::Disconnected) => break,
-            Ok(Line::Closed) => open -= 1,
-            Ok(Line::Err(l)) => {
-                (last, stalled) = (Instant::now(), false);
-                stderr_tail.push(l.trim().to_string());
-                if stderr_tail.len() > 5 {
-                    stderr_tail.remove(0);
-                }
-            }
-            Ok(Line::Out(l)) => {
-                (last, stalled) = (Instant::now(), false);
-                let l = l.trim();
-                if l.is_empty() {
-                    continue;
-                }
-                match serde_json::from_str::<serde_json::Value>(l) {
-                    Ok(v) if v.is_object() => {
-                        let (kind, text) = summarize_event(&v);
-                        on_event(&kind, &text);
-                        if kind == "error" {
-                            errors.push(text);
-                            break;
-                        }
-                    }
-                    _ => on_event("raw", &l.chars().take(MAX_EVENT_CHARS).collect::<String>()),
-                }
-            }
-        }
-    }
-    let cancelled = cancel.load(Ordering::SeqCst);
-    let exit_code = if cancelled || !errors.is_empty() {
-        terminate(child);
-        child.wait().ok().and_then(|s| s.code())
-    } else {
-        match wait_with_grace(child) {
-            Some(s) => s.code(),
-            None => {
-                terminate(child);
-                child.wait().ok().and_then(|s| s.code())
-            }
-        }
-    };
-    pgid.store(0, Ordering::SeqCst);
-    let changed_files = diff_snapshots(before.as_ref(), change_snapshot(&cfg.workspace).as_ref());
-    let status = if cancelled {
-        RunStatus::Cancelled
-    } else if !errors.is_empty() || exit_code != Some(0) {
-        RunStatus::Failed
-    } else {
-        RunStatus::Completed
-    };
-    stderr_tail.retain(|l| !l.is_empty());
-    RunResult {
-        status,
-        exit_code,
-        errors,
-        stderr: stderr_tail,
-        changed_files,
-    }
-}
-
-fn wait_with_grace(child: &mut Child) -> Option<std::process::ExitStatus> {
-    let deadline = Instant::now() + KILL_GRACE;
-    while Instant::now() < deadline {
-        if let Ok(Some(s)) = child.try_wait() {
-            return Some(s);
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    None
 }
 
 #[cfg(all(test, unix))]

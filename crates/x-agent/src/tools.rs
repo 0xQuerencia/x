@@ -5,6 +5,8 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
+use crate::cancellation::Cancellation;
+
 pub const MAX_TRANSCRIPT: usize = 1000;
 pub const MAX_STEPS: usize = 5;
 const MAX_QUERY: usize = 300;
@@ -171,12 +173,36 @@ static LAST_LAUNCHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU3
 
 /// Explicitly classify every action: an added action must be reviewed before it
 /// can run without approval. In particular, close is never low-risk by default.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Risk {
     Safe,
     Reversible,
     Destructive,
     Consequential,
+}
+
+impl Risk {
+    pub(crate) fn is_low_risk(self) -> bool {
+        matches!(self, Self::Safe | Self::Reversible)
+    }
+}
+
+/// Capabilities an action needs. This is a requirement list, not a platform probe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Requirement {
+    Window(crate::wm::Cap),
+    Launch,
+    KeyboardInput,
+    KeyboardShortcuts,
+    ClipboardWrite,
+    ScreenCapture,
+    Accessibility,
+    SystemAudio,
+    SystemBrightness,
+    SystemMedia,
+    CodingSession,
 }
 
 impl Action {
@@ -208,16 +234,53 @@ impl Action {
             | Self::App { .. }
             | Self::Url { .. }
             | Self::Search { .. }
-            | Self::Opencode
             | Self::Copy { .. }
             | Self::Terminal { .. }
             | Self::Folder { .. }
             | Self::BrowserTab { .. }
             | Self::System { .. } => Risk::Reversible,
             Self::Screenshot { .. }
+            | Self::Opencode
             | Self::Type { .. }
             | Self::Session { .. }
             | Self::Computer { .. } => Risk::Consequential,
+        }
+    }
+
+    pub fn requirements(&self) -> &'static [Requirement] {
+        use crate::wm::{Cap, Op};
+        use Requirement::*;
+        match self {
+            Self::Window { op, .. } => match op {
+                Op::Focus | Op::Back => &[Window(Cap::List), Window(Cap::Focus)],
+                Op::Move => &[Window(Cap::List), Window(Cap::MoveToWorkspace)],
+                Op::Workspace => &[Window(Cap::List), Window(Cap::SwitchWorkspace)],
+                Op::Maximize => &[Window(Cap::List), Window(Cap::Maximize)],
+                Op::Minimize => &[Window(Cap::List), Window(Cap::Minimize)],
+                Op::Close => &[Window(Cap::List), Window(Cap::Close)],
+                Op::List | Op::Undo => &[Window(Cap::List)],
+                Op::Keys => &[Window(Cap::List), KeyboardShortcuts],
+            },
+            Self::App { .. }
+            | Self::Url { .. }
+            | Self::Search { .. }
+            | Self::Folder { .. }
+            | Self::Terminal { .. } => &[Launch],
+            Self::Opencode => &[Launch, CodingSession],
+            Self::Session { .. } => &[CodingSession],
+            Self::Computer { .. } => &[Launch, Accessibility],
+            Self::Screenshot { .. } => &[ScreenCapture],
+            Self::Copy { .. } => &[ClipboardWrite],
+            Self::Type { .. } => &[KeyboardInput],
+            Self::BrowserTab { .. } => &[Window(Cap::List), KeyboardInput],
+            Self::System { op } => match op {
+                crate::sys::Op::SetVolume(_) | crate::sys::Op::SetMute(_) => &[SystemAudio],
+                crate::sys::Op::SetBrightness(_) => &[SystemBrightness],
+                crate::sys::Op::Play
+                | crate::sys::Op::Pause
+                | crate::sys::Op::Next
+                | crate::sys::Op::Previous => &[SystemMedia],
+            },
         }
     }
 
@@ -375,21 +438,38 @@ impl Action {
                 {
                     Ok(vec![windows_explorer(resolve)?, url])
                 }
-                #[cfg(not(windows))]
+                #[cfg(target_os = "macos")]
+                {
+                    let opener = resolve("open")
+                        .or_else(|| {
+                            std::path::Path::new("/usr/bin/open")
+                                .is_file()
+                                .then(|| "/usr/bin/open".into())
+                        })
+                        .ok_or("macOS open utility is unavailable")?;
+                    Ok(vec![opener, url])
+                }
+                #[cfg(all(not(windows), not(target_os = "macos")))]
                 {
                     let opener =
                         resolve("xdg-open").ok_or("xdg-open not found (install xdg-utils)")?;
                     Ok(vec![opener, url])
                 }
             } else {
+                #[cfg(target_os = "macos")]
+                if let Some(app) = crate::wm::apps::installed(browser) {
+                    let mut command = crate::wm::apps::launch_argv(&app, resolve)?;
+                    command.push(url);
+                    return Ok(command);
+                }
                 Ok(vec![exe_for(browser, resolve)?, url])
             }
         };
         match self {
             Self::App { target } => {
-                // On Windows, installed Start Menu shortcuts take precedence
+                // Prefer installed native shortcuts/bundles on Windows and macOS
                 // over Linux-oriented built-in PATH aliases.
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "macos"))]
                 if let Some(app) = crate::wm::apps::installed(target) {
                     return crate::wm::apps::launch_argv(&app, resolve);
                 }
@@ -464,14 +544,23 @@ impl Action {
 
     /// Validate, then launch detached. Success means *launched*, not *page loaded*.
     pub fn execute(&self) -> Result<String, String> {
+        self.execute_for_target(None, &Cancellation::default())
+    }
+
+    pub(crate) fn execute_for_target(
+        &self,
+        prepared: Option<&crate::wm::CloseTarget>,
+        stop: &Cancellation,
+    ) -> Result<String, String> {
         let valid = self.clone().validate()?;
+        stop.check()?;
         if let Self::Window { op, target, ws } = &valid {
             let req = crate::wm::Request {
                 op: op.clone(),
                 target: target.clone(),
                 ws: ws.clone(),
             };
-            return crate::wm::run(&req)
+            return crate::wm::run_with_target(&req, prepared)
                 .map(|o| {
                     if o.undoable {
                         format!("{} (say undo to revert)", o.message)
@@ -497,7 +586,7 @@ impl Action {
         }
         #[cfg(windows)]
         if let Self::Type { text } = &valid {
-            return crate::windows_input::type_text(text);
+            return crate::windows_input::type_text(text, stop);
         }
         let argv = if matches!(valid, Self::Opencode) {
             let dir = session_dir("opencode");
@@ -509,17 +598,18 @@ impl Action {
         };
         let (exe, args) = argv.split_first().ok_or("empty command")?;
         if let Self::Type { text } = &valid {
-            let status = Command::new(exe)
-                .args(args)
-                .stdin(Stdio::null())
-                .status()
-                .map_err(|e| format!("could not run {exe}: {e}"))?;
-            return if status.success() {
+            let (ok, _) = crate::desktop::capture_scoped(
+                Command::new(exe).args(args),
+                std::time::Duration::from_secs(5),
+                Some(stop),
+            )?;
+            return if ok {
                 Ok(format!("Typed {} characters", text.chars().count()))
             } else {
                 Err("wtype could not type into the focused window".into())
             };
         }
+        stop.check()?;
         let mut cmd = Command::new(exe);
         #[cfg(windows)]
         if let Self::Terminal { directory } = &valid {
@@ -1107,6 +1197,10 @@ fn focused() -> Option<(String, u32)> {
 /// Typing never goes anywhere else: if that window cannot be told apart from the rest
 /// (the app hands off to another process, or the desktop cannot say), nothing is typed.
 pub fn wait_for_launched_focus() -> Result<(), String> {
+    wait_for_launched_focus_scoped(&Cancellation::default())
+}
+
+pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), String> {
     let pid = LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst);
     if pid == 0 || which("hyprctl").is_none() {
         return Err(
@@ -1114,34 +1208,27 @@ pub fn wait_for_launched_focus() -> Result<(), String> {
         );
     }
     for _ in 0..30 {
+        stop.check()?;
         if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
             return Err(
                 "The app exited or handed off right after launch, so nothing was typed".into(),
             );
         }
         if focused().is_some_and(|(_, focused_pid)| focused_pid == pid) {
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            return Ok(());
+            for _ in 0..4 {
+                stop.check()?;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            return stop.check();
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     Err("The launched app's window never took focus, so nothing was typed".into())
 }
 
-/// Only exhaustively classified safe/reversible actions can run automatically.
-/// Typing into a freshly opened window is a narrow exception; closes require
-/// additional local-rule, push-to-talk, and exact-focus checks in the service.
+/// Only exhaustively classified safe or reversible actions can run automatically.
 pub fn is_low_risk(actions: &[Action]) -> bool {
-    actions
-        .iter()
-        .enumerate()
-        .all(|(i, action)| match action.risk() {
-            Risk::Safe | Risk::Reversible => true,
-            Risk::Destructive => false,
-            Risk::Consequential => {
-                matches!(action, Action::Type { .. }) && i > 0 && actions[i - 1].launches_window()
-            }
-        })
+    actions.iter().all(|action| action.risk().is_low_risk())
 }
 
 /// Deterministic rule planner. `None` means "not understood": nothing runs.

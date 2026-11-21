@@ -27,6 +27,9 @@ impl Default for Limits {
 pub trait Host: Send + Sync {
     fn emit(&self, kind: &str, text: &str);
     fn stopped(&self) -> bool;
+    fn cancellation(&self) -> Option<&crate::cancellation::Cancellation> {
+        None
+    }
     fn open_app(&self, app: &str) -> Result<(), String>;
 }
 
@@ -548,6 +551,10 @@ fn act(
         obs.element(id)
             .ok_or_else(|| Refusal::Retry(format!("No control {id:?} on screen now")))
     };
+    let send = |action: &UiAct| match host.cancellation() {
+        Some(stop) => desktop.act_scoped(win, action, stop),
+        None => desktop.act(win, action),
+    };
     let mut typed_nav = false;
     let described = match &step {
         Step::Click(id) => {
@@ -565,9 +572,7 @@ fn act(
                 )));
             }
             host.emit("act", &format!("click {:?}", e.name));
-            desktop
-                .act(win, &UiAct::Click(e.reference.clone()))
-                .map_err(retry)?;
+            send(&UiAct::Click(e.reference.clone())).map_err(retry)?;
             format!("clicked {:?}", e.name)
         }
         Step::Type(id, text) => {
@@ -580,12 +585,8 @@ fn act(
             }
             check_text(text).map_err(Refusal::Retry)?;
             host.emit("act", &format!("type into {:?}", e.name));
-            desktop
-                .act(win, &UiAct::Focus(e.reference.clone()))
-                .map_err(retry)?;
-            desktop
-                .act(win, &UiAct::Type(text.clone()))
-                .map_err(retry)?;
+            send(&UiAct::Focus(e.reference.clone())).map_err(retry)?;
+            send(&UiAct::Type(text.clone())).map_err(retry)?;
             // Search boxes can safely submit their search with Enter;
             // unrelated text fields cannot send/submit by key.
             typed_nav = e.is_omnibox() || e.role == "searchbox";
@@ -601,7 +602,7 @@ fn act(
                 p.typed_into_navigation = false;
             }
             host.emit("act", &format!("press {key:?}"));
-            desktop.act(win, &UiAct::Key(*key)).map_err(retry)?;
+            send(&UiAct::Key(*key)).map_err(retry)?;
             format!("pressed {key:?}")
         }
         Step::Navigate(url) => {
@@ -616,7 +617,7 @@ fn act(
                 if host.stopped() {
                     return Err(Refusal::Stop("Stopped".into()));
                 }
-                desktop.act(win, &ui).map_err(retry)?;
+                send(&ui).map_err(retry)?;
                 std::thread::sleep(KEY_GAP);
             }
             std::thread::sleep(PAGE_LOAD);

@@ -152,6 +152,13 @@ impl Store {
         serde_json::from_str(&text).map_err(|e| format!("Workflow {id:?} is not valid: {e}"))
     }
 
+    /// Read either saved legacy workflows or a versioned graph without scheduling it.
+    /// This is read-only until the DAG scheduler and approval gates are implemented.
+    pub fn get_graph(&self, id: &str) -> Result<super::dag::Graph, String> {
+        let text = Self::read(&self.file(id)?).map_err(|e| format!("No workflow {id:?} ({e})"))?;
+        super::dag::decode(&text, &self.home)
+    }
+
     /// Validates, checks the triggers against the other workflows, then writes.
     pub fn save(&self, wf: &Workflow) -> Result<(), Vec<Problem>> {
         wf.validate(&self.home)?;

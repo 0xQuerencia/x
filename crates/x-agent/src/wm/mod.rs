@@ -28,7 +28,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-pub use report::{Doctor, Report, detect, doctor, report};
+pub use report::{
+    CapabilityReport, Doctor, KeyFilePermissions, ProbeEvidence, ProbeSource, Report, SupportState,
+    detect, doctor, report,
+};
 #[cfg(windows)]
 pub(crate) fn native_handle(id: &str) -> Option<usize> {
     win11::parse_id(id).map(|(handle, _)| handle)
@@ -58,6 +61,10 @@ pub struct WinInfo {
 }
 
 impl WinInfo {
+    fn same_identity(&self, other: &Self) -> bool {
+        self.id == other.id && self.pid == other.pid && self.class == other.class
+    }
+
     /// Identity that must still match before an old reference is trusted again.
     fn key(&self) -> (String, u32, String) {
         (self.id.clone(), self.pid, self.class.clone())
@@ -110,6 +117,10 @@ impl Cmd {
 pub trait Backend: Send {
     fn name(&self) -> &'static str;
     fn caps(&self) -> Vec<Cap>;
+    /// Check window enumeration only if the backend can do so with a bounded read.
+    fn probe_window_list(&self) -> Option<Result<(), WmError>> {
+        None
+    }
     /// A fresh read every call; nothing is cached across calls.
     fn windows(&self) -> Result<Vec<WinInfo>, WmError>;
     fn focused(&self) -> Result<Option<String>, WmError>;
@@ -202,6 +213,7 @@ pub enum Ws {
 /// Which window: the focused one, or an approved app. `pick` is a 1-based choice among
 /// several windows of that app.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Target {
     #[serde(default)]
     pub app: String,
@@ -217,6 +229,28 @@ pub struct Request {
     pub target: Target,
     #[serde(default)]
     pub ws: Option<Ws>,
+}
+
+/// Native identity recorded by the controller before a close is approved.
+#[derive(Clone, Debug)]
+pub struct TargetIdentity {
+    backend: &'static str,
+    window: WinInfo,
+}
+
+#[derive(Clone, Debug)]
+pub enum CloseTarget {
+    Exact(TargetIdentity),
+    Choose(Vec<Choice>),
+}
+
+impl CloseTarget {
+    pub(crate) fn label(&self) -> Option<String> {
+        match self {
+            Self::Exact(target) => Some(label(&target.window)),
+            Self::Choose(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -345,7 +379,29 @@ impl Controller {
         self.close(&win).map(drop)
     }
 
+    fn prepare_close(&self, target: &Target) -> Result<CloseTarget, WmError> {
+        self.require(&Cmd::Close(String::new()))?;
+        let all = self.backend.windows()?;
+        let focused = self.focused_in(&all)?;
+        match self.resolve(target, &all, focused.as_ref(), false) {
+            Ok(window) => Ok(CloseTarget::Exact(TargetIdentity {
+                backend: self.backend.name(),
+                window,
+            })),
+            Err(WmError::Ambiguous(choices)) => Ok(CloseTarget::Choose(choices)),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn run(&mut self, req: &Request) -> Result<Outcome, WmError> {
+        self.run_with_target(req, None)
+    }
+
+    fn run_with_target(
+        &mut self,
+        req: &Request,
+        prepared: Option<&CloseTarget>,
+    ) -> Result<Outcome, WmError> {
         self.pending = None; // a newer task invalidates every old choice
         // Keep all fallible matching inside the closure: a `?` in a match
         // arm must not return before we record an ambiguity for follow-up.
@@ -386,7 +442,27 @@ impl Controller {
                     self.minimize(&win)
                 }
                 Op::Close => {
-                    let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
+                    let win = match prepared {
+                        Some(CloseTarget::Exact(prepared)) => {
+                            let found = if req.target.app.is_empty() {
+                                focused
+                                    .as_ref()
+                                    .filter(|w| w.same_identity(&prepared.window))
+                            } else {
+                                all.iter().find(|w| w.same_identity(&prepared.window))
+                            };
+                            found
+                                .filter(|_| prepared.backend == self.backend.name())
+                                .cloned()
+                                .ok_or_else(|| {
+                                    WmError::NotFound("The approved window changed".into())
+                                })?
+                        }
+                        Some(CloseTarget::Choose(choices)) => {
+                            return Err(WmError::Ambiguous(choices.clone()));
+                        }
+                        None => self.resolve(&req.target, &all, focused.as_ref(), false)?,
+                    };
                     let mut out = self.close(&win)?;
                     out.message.push_str(&keys::hint("close", &(self.binds)()));
                     Ok(out)
@@ -586,12 +662,19 @@ impl Controller {
         Err(WmError::Unverified(format!("{what} did not take effect")))
     }
 
-    fn window(&self, id: &str) -> Option<WinInfo> {
-        self.backend
-            .windows()
-            .ok()?
+    fn window(&self, expected: &WinInfo) -> Result<Option<WinInfo>, WmError> {
+        Ok(self
+            .backend
+            .windows()?
             .into_iter()
-            .find(|w| w.id == id)
+            .find(|w| w.same_identity(expected)))
+    }
+
+    fn has_focus(&self, expected: &WinInfo) -> bool {
+        self.backend
+            .focused()
+            .is_ok_and(|id| id.as_deref() == Some(expected.id.as_str()))
+            && self.window(expected).is_ok_and(|window| window.is_some())
     }
 
     fn switch(&mut self, ws: i64) -> Result<Outcome, WmError> {
@@ -612,6 +695,7 @@ impl Controller {
             return Ok(done(format!("{} already has focus", label(win)), false));
         }
         if win.minimized {
+            self.require(&Cmd::Focus(win.id.clone()))?;
             let mut restore = win.clone();
             if let Ok(ws) = self.backend.workspace() {
                 restore.place = Place::N(ws);
@@ -619,7 +703,10 @@ impl Controller {
             self.backend.restore_minimized(&restore)?;
             let mut restored = false;
             for _ in 0..VERIFY_TRIES {
-                if self.window(&win.id).is_some_and(|w| !w.minimized) {
+                if self
+                    .window(win)
+                    .is_ok_and(|w| w.is_some_and(|w| !w.minimized))
+                {
                     restored = true;
                     break;
                 }
@@ -631,10 +718,7 @@ impl Controller {
                 ));
             }
         }
-        let id = win.id.clone();
-        self.apply(&Cmd::Focus(id.clone()), "Focus", |c| {
-            c.backend.focused().ok().flatten().as_deref() == Some(id.as_str())
-        })?;
+        self.apply(&Cmd::Focus(win.id.clone()), "Focus", |c| c.has_focus(win))?;
         if let Some(before) = before {
             self.push(Undo::Focus(before));
         }
@@ -656,8 +740,8 @@ impl Controller {
             },
             "The move",
             |c| {
-                c.window(&id)
-                    .is_some_and(|w| w.workspace == ws && !w.minimized)
+                c.window(win)
+                    .is_ok_and(|w| w.is_some_and(|w| w.workspace == ws && !w.minimized))
             },
         )?;
         self.push(Undo::Move(win.clone()));
@@ -678,7 +762,7 @@ impl Controller {
                 on: true,
             },
             "Maximize",
-            |c| c.window(&id).is_some_and(|w| w.maximized),
+            |c| c.window(win).is_ok_and(|w| w.is_some_and(|w| w.maximized)),
         )?;
         self.push(Undo::Maximize(win.clone()));
         Ok(done(format!("Maximized {}", label(win)), true))
@@ -687,7 +771,7 @@ impl Controller {
     fn minimize(&mut self, win: &WinInfo) -> Result<Outcome, WmError> {
         let id = win.id.clone();
         self.apply(&Cmd::Minimize { win: id.clone() }, "Minimize", |c| {
-            c.window(&id).is_some_and(|w| w.minimized)
+            c.window(win).is_ok_and(|w| w.is_some_and(|w| w.minimized))
         })?;
         self.push(Undo::Minimize(win.clone()));
         Ok(done(format!("Minimized {}", label(win)), true))
@@ -700,7 +784,7 @@ impl Controller {
         self.require(&Cmd::Close(id.clone()))?;
         self.backend.run(&Cmd::Close(id.clone()))?;
         for _ in 0..VERIFY_TRIES {
-            if self.window(&id).is_none() {
+            if self.window(win)?.is_none() {
                 return Ok(done(format!("Closed {}", label(win)), false));
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -736,10 +820,7 @@ impl Controller {
         let outcome = match (undo, now) {
             (Undo::Workspace(ws), _) => self.switch_quiet(ws)?,
             (Undo::Focus(old), Some(_)) => {
-                let id = old.id.clone();
-                self.apply(&Cmd::Focus(id.clone()), "Focus", |c| {
-                    c.backend.focused().ok().flatten().as_deref() == Some(id.as_str())
-                })?;
+                self.apply(&Cmd::Focus(old.id.clone()), "Focus", |c| c.has_focus(&old))?;
                 format!("Focus back on {}", label(&old))
             }
             (Undo::Move(old), Some(_)) => {
@@ -750,7 +831,10 @@ impl Controller {
                         to: to.clone(),
                     },
                     "The move back",
-                    |c| c.window(&id).is_some_and(|w| w.place == to),
+                    |c| {
+                        c.window(&old)
+                            .is_ok_and(|w| w.is_some_and(|w| w.place == to))
+                    },
                 )?;
                 format!("Moved {} back", label(&old))
             }
@@ -762,7 +846,10 @@ impl Controller {
                         on: false,
                     },
                     "Restore",
-                    |c| c.window(&id).is_some_and(|w| !w.maximized),
+                    |c| {
+                        c.window(&old)
+                            .is_ok_and(|w| w.is_some_and(|w| !w.maximized))
+                    },
                 )?;
                 format!("Restored {}", label(&old))
             }
@@ -771,8 +858,8 @@ impl Controller {
                 let mut restored = false;
                 for _ in 0..VERIFY_TRIES {
                     if self
-                        .window(&old.id)
-                        .is_some_and(|w| !w.minimized && w.place == old.place)
+                        .window(&old)
+                        .is_ok_and(|w| w.is_some_and(|w| !w.minimized && w.place == old.place))
                     {
                         restored = true;
                         break;
@@ -865,6 +952,17 @@ fn with_controller<T>(f: impl FnOnce(&mut Controller) -> Result<T, WmError>) -> 
 
 pub fn run(req: &Request) -> Result<Outcome, WmError> {
     with_controller(|c| c.run(req))
+}
+
+pub(crate) fn prepare_close(target: &Target) -> Result<CloseTarget, WmError> {
+    with_controller(|c| c.prepare_close(target))
+}
+
+pub(crate) fn run_with_target(
+    request: &Request,
+    target: Option<&CloseTarget>,
+) -> Result<Outcome, WmError> {
+    with_controller(|c| c.run_with_target(request, target))
 }
 
 /// Whether there is an Undo entry created in the past eight seconds.

@@ -482,12 +482,33 @@ pub enum AgentCommand {
     Doctor {
         #[arg(long)]
         json: bool,
+        /// Probe the already-running X service instead of this shell.
+        #[arg(long)]
+        running: bool,
     },
-    /// Saved desktop workflows, run by trigger phrase or by id. `list` shows them with their
-    /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
-    /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
+    /// Preview a Claude Code task in the selected workspace. Use --resume for the last X-owned session.
+    Claude {
+        #[arg(long)]
+        resume: bool,
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// List or select an existing OpenCode session for the chosen workspace.
+    Sessions {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+    /// Register, list, or forget explicitly chosen project directories.
+    Projects {
+        #[command(subcommand)]
+        command: ProjectCli,
+    },
+    /// Saved desktop workflows. `preview <id>` validates and shows a dependency
+    /// graph without starting anything. `run <id>` still needs approval.
     Workflow {
-        #[arg(value_parser = ["list", "show", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "preview", "run", "last", "delete", "duplicate", "import", "undo", "dir"])]
         command: String,
         /// A workflow id, or a file path for import.
         #[arg(default_value = "")]
@@ -606,6 +627,70 @@ pub enum VocabularyCommand {
 pub enum Toggle {
     On,
     Off,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SessionCommand {
+    /// List open root sessions in the selected project.
+    List {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Select an exact session ID after checking that it still exists in this project.
+    Resume {
+        id: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Plan Work for the selected session. Approval is required to send it.
+    Send {
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProjectCli {
+    /// List registered projects and their IDs.
+    List {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Register a folder inside your home, using an absolute path or ~/.
+    Register {
+        name: String,
+        path: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Select a registered project by exact name, alias or ID.
+    Use {
+        query: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Give a registered project another exact name.
+    AliasAdd {
+        id: String,
+        alias: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Remove an exact alias by project ID.
+    AliasRemove {
+        id: String,
+        alias: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Remove a project from X's registry using its ID.
+    Forget {
+        id: String,
+        #[command(flatten)]
+        output: Output,
+    },
 }
 
 /// Exits with `code` once stdout is flushed.
@@ -731,20 +816,16 @@ pub fn run(command: ControlCli) -> u8 {
                     }
                 };
             }
-            if let AgentCommand::Doctor { json } = &command {
-                let key_path = crate::app_paths::support_dir()
-                    .ok()
-                    .map(|dir| dir.join("openrouter-key"));
-                let report = x_agent::wm::doctor(key_path.as_deref());
-                if *json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).unwrap_or_default()
-                    );
+            if let AgentCommand::Doctor { json, running } = &command {
+                let reply = if *running {
+                    call(ControlRequest::new(ControlCommand::Agent {
+                        action: AgentAction::Doctor,
+                    }))
+                    .map_or_else(|reply| reply, |response| response.reply)
                 } else {
-                    println!("{}", report.lines());
-                }
-                return if report.ready { 0 } else { EXIT_REFUSED };
+                    crate::agent_host::doctor_report(x_agent::wm::ProbeSource::Cli)
+                };
+                return human::print_doctor(reply, *json);
             }
             if let AgentCommand::Screenshot { mode, output } = &command {
                 let mode = match x_agent::screenshots::Mode::parse(mode) {
@@ -779,6 +860,53 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Choose { index, output } => (AgentAction::Choose { index }, output),
                 AgentCommand::Undo { output } => (AgentAction::Undo, output),
                 AgentCommand::Stop { output } => (AgentAction::Stop, output),
+                AgentCommand::Claude {
+                    resume,
+                    text,
+                    output,
+                } => (
+                    AgentAction::Claude {
+                        text: text.join(" "),
+                        resume,
+                    },
+                    output,
+                ),
+                AgentCommand::Sessions { command } => match command {
+                    SessionCommand::List { output } => {
+                        (AgentAction::Sessions { resume: None }, output)
+                    }
+                    SessionCommand::Resume { id, output } => {
+                        (AgentAction::Sessions { resume: Some(id) }, output)
+                    }
+                    SessionCommand::Send { text, output } => (
+                        AgentAction::SendToSession {
+                            text: text.join(" "),
+                        },
+                        output,
+                    ),
+                },
+                AgentCommand::Projects { command } => {
+                    use super::ProjectCommand;
+                    let (command, output) = match command {
+                        ProjectCli::List { output } => (ProjectCommand::List, output),
+                        ProjectCli::Register { name, path, output } => {
+                            (ProjectCommand::Register { name, path }, output)
+                        }
+                        ProjectCli::Use { query, output } => {
+                            (ProjectCommand::Use { query }, output)
+                        }
+                        ProjectCli::AliasAdd { id, alias, output } => {
+                            (ProjectCommand::AliasAdd { id, alias }, output)
+                        }
+                        ProjectCli::AliasRemove { id, alias, output } => {
+                            (ProjectCommand::AliasRemove { id, alias }, output)
+                        }
+                        ProjectCli::Forget { id, output } => {
+                            (ProjectCommand::Forget { id }, output)
+                        }
+                    };
+                    (AgentAction::Projects { command }, output)
+                }
                 AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
                 AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),
                 AgentCommand::Key { .. } => unreachable!("key handled locally"),
@@ -1783,6 +1911,67 @@ mod tests {
     use super::*;
     use crate::control::{StatusReport, settings::SettingValue};
     use crate::dictation::vocabulary::VocabularyEntry;
+
+    #[test]
+    fn workflow_graph_preview_is_an_explicit_read_only_cli_command() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed =
+            Args::try_parse_from(["hex", "agent", "workflow", "preview", "my-workflow"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Workflow { command, value, .. }
+            } if command == "preview" && value == "my-workflow"
+        ));
+        assert!(Args::try_parse_from(["hex", "agent", "workflow", "execute-anything"]).is_err());
+    }
+
+    #[test]
+    fn registered_project_cli_commands_are_exact_and_nonexecuting() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed = Args::try_parse_from(["hex", "agent", "projects", "use", "Chamber"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Projects {
+                    command: ProjectCli::Use { query, .. }
+                }
+            } if query == "Chamber"
+        ));
+        let parsed = Args::try_parse_from([
+            "hex",
+            "agent",
+            "projects",
+            "alias-add",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "CA workspace",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Projects {
+                    command: ProjectCli::AliasAdd { alias, .. }
+                }
+            } if alias == "CA workspace"
+        ));
+        assert!(Args::try_parse_from(["hex", "agent", "projects", "use"]).is_err());
+        assert!(Args::try_parse_from(["hex", "agent", "projects", "alias-remove", "id"]).is_err());
+    }
 
     #[test]
     fn openrouter_key_validation_never_echoes_secret_values() {

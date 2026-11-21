@@ -2,9 +2,14 @@
 //! run by name or trigger phrase. See [`model`] for the format, [`engine`] for execution,
 //! [`store`] for the files on disk.
 
+pub mod dag;
 pub mod engine;
+pub mod harness_exec;
+pub mod integration;
 pub mod model;
 pub mod paths;
+pub mod recovery;
+pub mod scheduler;
 mod steps;
 pub mod store;
 pub mod system;

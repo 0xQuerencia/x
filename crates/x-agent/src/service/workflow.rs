@@ -10,8 +10,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::edit::{step, task};
-use super::{Service, busy, emit};
-use crate::opencode::{self, Run, RunConfig, RunStatus};
+use super::{Review, Service, busy, emit};
+use crate::cancellation::Cancellation;
+use crate::harness::{self, RunStatus};
+use crate::opencode;
 use crate::phase::Phase;
 use crate::tools::Action;
 use crate::wm::{Cap, WinInfo};
@@ -37,6 +39,7 @@ impl Host for Bridge {
         self.inner.workspace()
     }
     fn launch(&self, action: &Action) -> Result<String, String> {
+        self.svc.lock().stop.check()?;
         self.inner.launch(action)
     }
     fn installed(&self, action: &Action) -> Result<(), String> {
@@ -63,7 +66,7 @@ impl Host for Bridge {
     /// cancelled) is refused.
     fn permit(&self, action: &workflows::StepAction) -> bool {
         let s = self.svc.lock();
-        let allowed = !s.stop_requested
+        let allowed = !s.stop.requested()
             && s.phase == Phase::Running
             && s.workflow
                 .as_ref()
@@ -77,18 +80,19 @@ impl Host for Bridge {
     }
 
     fn opencode_ready(&self) -> Result<(), String> {
-        let found = self.svc.opencode_exe.lock().is_ok_and(|e| e.is_some());
+        let found = self.svc.harness.is_some();
         found
             .then_some(())
             .ok_or_else(|| "OpenCode CLI not found on PATH".into())
     }
 
     fn opencode(&self, goal: &str, dir: &Path) -> Result<String, String> {
-        self.svc.run_opencode_step(goal, dir)
+        let stop = self.svc.lock().stop.child();
+        self.svc.run_opencode_step(goal, dir, &stop)
     }
 
     fn cancelled(&self) -> bool {
-        self.svc.lock().stop_requested
+        self.svc.lock().stop.requested()
     }
 
     fn progress(&self, index: usize, status: StepStatus, detail: &str) {
@@ -215,10 +219,7 @@ impl Service {
             ));
         }
         let task = self.begin_workflow_task(text, &wf)?;
-        if self.lock().trust_actions && !wf.needs_approval() {
-            self.emit("info", "Trusted Actions: running without a prompt");
-            self.approve(task.id)?;
-        }
+        self.approve_if_automatic(task.id)?;
         Ok(task)
     }
 
@@ -248,8 +249,14 @@ impl Service {
         t.phase = Phase::AwaitingApproval;
         s.phase = Phase::AwaitingApproval;
         s.actions = vec![];
+        s.review = if wf.needs_approval() {
+            Review::Required
+        } else {
+            Review::LowRisk
+        };
         s.workflow = Some(wf.clone());
         s.task = Some(t.clone());
+        super::audit_best_effort(&mut s, super::AuditKind::Planned, None);
         emit(
             &mut s,
             "plan",
@@ -340,26 +347,32 @@ impl Service {
     }
 
     /// OpenCode for a workflow step: the same supervised runner and permission gates as Work.
-    fn run_opencode_step(&self, goal: &str, dir: &Path) -> Result<String, String> {
-        let exe = self
-            .opencode_exe
-            .lock()
-            .ok()
-            .and_then(|e| e.clone())
+    fn run_opencode_step(
+        &self,
+        goal: &str,
+        dir: &Path,
+        stop: &Cancellation,
+    ) -> Result<String, String> {
+        let adapter = self
+            .harness
+            .as_ref()
             .ok_or("OpenCode CLI not found on PATH")?;
-        let ws = opencode::validate_workspace(dir)?;
+        let workspace = opencode::validate_workspace(dir)?;
         let me = self.clone();
-        let on_event: opencode::OnEvent = Arc::new(move |k, t| me.emit(k, t));
-        let run = Run::start(RunConfig::new(exe, goal.to_string(), ws), on_event)?;
-        {
-            let mut s = self.lock();
-            s.canceller = Some(run.canceller());
-            if s.stop_requested {
-                run.cancel();
-            }
-        }
-        let res = run.join();
-        self.lock().canceller = None;
+        let on_event: harness::EventSink =
+            Arc::new(move |event| me.emit(event.kind.as_str(), &event.text));
+        let request = harness::Request {
+            workspace,
+            prompt: goal.to_string(),
+            session: None,
+            access: harness::WorkAccess::Workspace,
+            allow_commands: Vec::new(),
+        };
+        let res = match adapter.start(request, on_event, stop) {
+            Ok(run) => run.join(),
+            Err(_) if stop.requested() => return Err("Stopped".into()),
+            Err(error) => return Err(error),
+        };
         match res.status {
             RunStatus::Cancelled => Err("Stopped".into()),
             RunStatus::Completed => Ok(format!(

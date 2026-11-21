@@ -5,6 +5,7 @@
 //! before being placed in argv. Window titles are never command arguments.
 
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use super::{Backend, Cap, Cmd, Place, WinInfo, WmError};
 
@@ -14,22 +15,26 @@ const MAX_OUTPUT: usize = 256 * 1024;
 const MAX_WINDOWS: usize = 150;
 
 fn output(program: &str, args: &[&str]) -> Result<String, WmError> {
-    let value = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| WmError::Backend(format!("{program} is unavailable: {e}")))?;
-    if !value.status.success() {
+    let (ok, output) = crate::desktop::capture(
+        Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+        Duration::from_secs(5),
+    )
+    .map_err(|e| WmError::Backend(format!("{program} is unavailable: {e}")))?;
+    if !ok {
         return Err(WmError::Backend(format!(
             "{program} returned a failed X11 operation"
         )));
     }
-    if value.stdout.len() > MAX_OUTPUT {
+    if output.len() > MAX_OUTPUT {
         return Err(WmError::Backend(
             "X11 window listing exceeded its size limit".into(),
         ));
     }
-    String::from_utf8(value.stdout)
+    String::from_utf8(output)
         .map_err(|_| WmError::Backend("X11 window response is not UTF-8".into()))
 }
 
@@ -243,6 +248,7 @@ mod tests {
             .spawn()
             .expect("xterm available in isolated test session");
         let backend = X11;
+        crate::wm::tests::contract::assert_live_report(&backend);
         let own = || {
             backend
                 .windows()
