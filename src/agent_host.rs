@@ -23,18 +23,6 @@ mod workflows;
 
 const DISABLED: &str = "X is off. Turn it on with `hex labs on x-agent`";
 
-/// OpenCode's installer puts the real binary in `~/.opencode/bin`, which shell aliases
-/// and wrappers on PATH can shadow, so look there too.
-fn opencode_exe() -> Option<PathBuf> {
-    x_agent::tools::which("opencode")
-        .map(PathBuf::from)
-        .or_else(|| {
-            dirs::home_dir()
-                .map(|h| h.join(".opencode/bin/opencode"))
-                .filter(|p| p.is_file())
-        })
-}
-
 pub fn service() -> &'static Service {
     static SERVICE: OnceLock<Service> = OnceLock::new();
     SERVICE.get_or_init(|| {
@@ -50,7 +38,7 @@ pub fn service() -> &'static Service {
         let service = Service::new(
             Arc::new(HexCli { exe }),
             Arc::new(RealLauncher),
-            opencode_exe(),
+            x_agent::harness::probe::locate(x_agent::harness::Kind::OpenCode),
         );
         restore_execution_policy(&service);
         if let Ok(dir) = crate::app_paths::support_dir() {
@@ -759,12 +747,29 @@ pub(crate) fn doctor_report(source: x_agent::wm::ProbeSource) -> ControlReply {
         .map(|dir| dir.join("openrouter-key"));
     let doctor =
         x_agent::wm::doctor(key_path.as_deref()).with_identity(source, env!("HEX_BUILD_VERSION"));
+    let harnesses = x_agent::harness::probe::local();
     match serde_json::to_value(&doctor) {
-        Ok(report) => ControlReply::AgentDoctor {
-            report,
-            lines: doctor.lines(),
-            ready: doctor.ready,
-        },
+        Ok(mut report) => {
+            report["harnesses"] = serde_json::json!(harnesses);
+            let mut lines = doctor.lines();
+            for harness in &harnesses {
+                use std::fmt::Write;
+                let _ = write!(
+                    lines,
+                    "
+{} {} | compatibility: {} | login: {}",
+                    harness.kind.label(),
+                    harness.version.as_deref().unwrap_or("unknown version"),
+                    harness.compatibility.label(),
+                    harness.auth.label(),
+                );
+            }
+            ControlReply::AgentDoctor {
+                report,
+                lines,
+                ready: doctor.ready,
+            }
+        }
         Err(error) => ControlReply::error("internal", error.to_string()),
     }
 }

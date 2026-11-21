@@ -317,17 +317,17 @@ pub(crate) fn capture_scoped(
     if let Some(stop) = stop {
         stop.check()?;
     }
-    let mut child = cmd
-        .stdin(Stdio::null())
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    let mut child = crate::retry_busy(|| cmd.spawn())
         .map_err(|e| format!("could not run {:?}: {e}", cmd.get_program()))?;
     let mut stdout = child.stdout.take().ok_or("no output pipe")?;
-    let reader = std::thread::spawn(move || {
+    let (send, output) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = (&mut stdout).take(OUTPUT_CAP).read_to_end(&mut buf);
-        buf
+        let _ = send.send(buf);
     });
     let start = Instant::now();
     let status = loop {
@@ -347,8 +347,10 @@ pub(crate) fn capture_scoped(
             Err(e) => return Err(e.to_string()),
         }
     };
-    let buf = reader.join().map_err(|_| "reader failed")?;
-    Ok((status.success(), buf))
+    let bytes = output
+        .recv_timeout(limit.saturating_sub(start.elapsed()))
+        .map_err(|_| format!("{:?} did not close its output in time", cmd.get_program()))?;
+    Ok((status.success(), bytes))
 }
 
 pub(crate) fn hypr(args: &[&str]) -> Result<Value, String> {

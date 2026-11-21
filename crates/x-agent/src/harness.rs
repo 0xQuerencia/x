@@ -7,10 +7,22 @@ use serde::Serialize;
 
 use crate::cancellation::Cancellation;
 
+pub mod probe;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     OpenCode,
+    ClaudeCode,
+}
+
+impl Kind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OpenCode => "OpenCode",
+            Self::ClaudeCode => "Claude Code",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -20,6 +32,12 @@ pub enum Capability {
     StreamEvents,
     StopOwnedRun,
 }
+
+pub(crate) const OPENCODE_OWNED_CAPABILITIES: &[Capability] = &[
+    Capability::OwnedRun,
+    Capability::StreamEvents,
+    Capability::StopOwnedRun,
+];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Descriptor {

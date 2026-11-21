@@ -110,18 +110,25 @@ pub fn diff_snapshots(
     )
 }
 
-fn supports_standalone(exe: &Path) -> bool {
-    crate::retry_busy(|| {
-        Command::new(exe)
-            .args(["run", "--help"])
-            .stdin(Stdio::null())
-            .output()
-    })
-    .map(|o| {
-        String::from_utf8_lossy(&o.stdout).contains("--standalone")
-            || String::from_utf8_lossy(&o.stderr).contains("--standalone")
-    })
-    .unwrap_or(false)
+#[derive(Default)]
+struct RunFlags {
+    standalone: bool,
+    directory: bool,
+    json: bool,
+}
+
+impl RunFlags {
+    fn read(exe: &Path) -> Option<Self> {
+        let (true, help) = harness::probe::query(exe, &["run", "--help"])? else {
+            return None;
+        };
+        let flag = |name| harness::probe::has_flag(&help, name);
+        Some(Self {
+            standalone: flag("--standalone"),
+            directory: flag("--dir"),
+            json: harness::probe::has_opencode_json_output(&help),
+        })
+    }
 }
 
 pub struct RunConfig {
@@ -203,21 +210,29 @@ impl RunConfig {
         .to_string()
     }
 
-    /// The exact argv. There is deliberately no way to add `--auto`.
+    /// The exact argv. OpenCode also receives the approved project as its working directory.
     pub fn args(&self) -> Vec<String> {
-        let mut a = vec!["run".to_string()];
-        if supports_standalone(&self.exe) {
-            a.push("--standalone".into()); // private server: isolates this run
+        self.args_for(RunFlags::read(&self.exe).unwrap_or_default())
+    }
+
+    fn args_for(&self, flags: RunFlags) -> Vec<String> {
+        let mut args = vec!["run".to_string()];
+        if flags.standalone {
+            args.push("--standalone".into());
         }
-        a.extend([
-            "--dir".into(),
-            self.workspace.to_string_lossy().into_owned(),
+        if flags.directory {
+            args.extend([
+                "--dir".into(),
+                self.workspace.to_string_lossy().into_owned(),
+            ]);
+        }
+        args.extend([
             "--format".into(),
             "json".into(),
             "--".into(),
             self.prompt.clone(),
         ]);
-        a
+        args
     }
 }
 
@@ -233,12 +248,11 @@ impl Adapter {
 
 impl harness::Adapter for Adapter {
     fn descriptor(&self) -> harness::Descriptor {
-        use harness::Capability::*;
         harness::Descriptor {
             kind: harness::Kind::OpenCode,
             event_schema: 1,
             version: None,
-            capabilities: &[OwnedRun, StreamEvents, StopOwnedRun],
+            capabilities: harness::OPENCODE_OWNED_CAPABILITIES,
         }
     }
 
@@ -304,7 +318,10 @@ impl Run {
         stop.check()?;
         let before = change_snapshot(&cfg.workspace);
         stop.check()?;
-        let args = cfg.args();
+        let flags = RunFlags::read(&cfg.exe)
+            .filter(|flags| flags.json)
+            .ok_or("OpenCode did not advertise structured run output")?;
+        let args = cfg.args_for(flags);
         let mut child = crate::retry_busy(|| {
             if stop.requested() {
                 return Err(std::io::Error::new(

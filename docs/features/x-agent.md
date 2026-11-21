@@ -91,6 +91,12 @@ the running service's environment through the local API. Both forms identify
 the build, OS, architecture and probe source. Plain-text output shows the same
 capability states. `hex agent desktop` retains the desktop-only service report.
 
+The harness section probes the installed OpenCode and Claude Code binaries for
+a version, the required CLI flags and reported login state. A configured login
+means the vendor reported local configuration. Provider access is checked when
+the user runs a task. A nonresponsive or unrecognized status stays unknown.
+X does not open either harness's credential files.
+
 Doctor reports ready when the window list probe succeeds and the required
 helpers are present. An unsafe key file also blocks readiness. On Windows the
 report labels key file permissions as unchecked. The older `supported` list
