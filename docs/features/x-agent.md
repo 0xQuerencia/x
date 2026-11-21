@@ -137,6 +137,15 @@ That distinction preserves legacy `on_failure: continue` behavior.
 remains sequential; graph scheduling, worktree ownership and parallel execution
 are separate milestones and are not yet enabled by this schema.
 
+### Workflow permission review (development)
+
+Run `hex agent workflow permissions <id>` to inspect the operations in a
+validated workflow graph. The response identifies desktop and coding-harness
+nodes, distinguishes service approval from one-use task-scoped grants, and
+shows the registered project identity requested by each harness node.
+It does not echo private coding goals, issue permissions, start a harness or
+execute workflow steps.
+
 ### DAG scheduler contract (development)
 
 A bounded coordinator is available behind the new graph contract. It requires an
