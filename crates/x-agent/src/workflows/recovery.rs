@@ -239,8 +239,22 @@ impl Journal {
             .map_err(|error| format!("Cannot create job journal directory: {error}"))?;
         let lock = open_regular(&self.directory.join(LOCK), true)
             .map_err(|error| format!("Cannot open job journal lock: {error}"))?;
-        lock.try_lock()
-            .map_err(|_| "Another job-journal operation is in progress")?;
+        let mut locked = false;
+        for _ in 0..20 {
+            match lock.try_lock() {
+                Ok(()) => {
+                    locked = true;
+                    break;
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(_) => return Err("Cannot lock job journal".into()),
+            }
+        }
+        if !locked {
+            return Err("Another job-journal operation is in progress".into());
+        }
         let result: Result<T, String> = (|| {
             let mut data = self.read()?;
             let (value, changed) = change(&mut data)?;
