@@ -42,6 +42,14 @@ impl Launcher for FakeLauncher {
         self.launched.lock().unwrap().push(a.describe());
         Ok(format!("Launched {}", a.describe()))
     }
+
+    fn open_project_folder(&self, directory: &Path) -> Result<(), String> {
+        self.launched
+            .lock()
+            .unwrap()
+            .push(directory.display().to_string());
+        Ok(())
+    }
 }
 
 fn rig() -> (Service, Arc<FakeStt>, Arc<FakeLauncher>) {
@@ -154,7 +162,9 @@ fn autonomous_computer_still_requires_scoped_screen_and_remote_consent() {
     s.cancel();
 
     s.set_computer_apps(vec!["chrome".into()]);
-    s.plan("press the button in chrome", Mode::Actions).unwrap();
+    let task = s.plan("press the button in chrome", Mode::Actions).unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    s.approve(task.id).unwrap();
     let result = wait_for(&s, |v| v.phase == Phase::Completed);
     assert!(result.task.unwrap().summary.unwrap().contains("clicked"));
 }
@@ -258,6 +268,12 @@ fn destructive_actions_are_gated_by_origin_and_speech_source() {
     assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
     assert!(launcher.launched.lock().unwrap().is_empty());
     s.cancel();
+
+    let spoken = s.plan_spoken("close this window", Mode::Actions).unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
+    s.cancel();
+    assert!(s.approve(spoken.id).is_err());
 
     // Typed commands need approval for a close too.
     s.plan("close this window", Mode::Actions).unwrap();
@@ -412,7 +428,9 @@ fn screen_access_gating() {
     s.cancel();
 
     s.set_computer_apps(vec!["chrome".into()]);
-    s.plan("press the button in chrome", Mode::Actions).unwrap();
+    let task = s.plan("press the button in chrome", Mode::Actions).unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    s.approve(task.id).unwrap();
     let done = wait_for(&s, |x| x.phase == Phase::Completed);
     assert!(done.task.unwrap().summary.unwrap().contains("clicked"));
     assert!(done.events.iter().any(|e| e.kind == "verify"));
@@ -505,6 +523,7 @@ fn a_temporary_session_is_a_work_task_in_a_fresh_folder() {
     assert_eq!(t.text, "write a poem");
     let workspace = t.workspace.unwrap();
     assert!(workspace.starts_with(root.to_str().unwrap()), "{workspace}");
+    assert!(!std::path::Path::new(&workspace).exists());
     assert_eq!(
         s.snapshot(0).phase,
         Phase::AwaitingApproval,
@@ -528,15 +547,19 @@ fn desktop_steps_are_actions_the_rules_know() {
 }
 
 #[test]
-fn trusted_typing_alone_still_asks_but_after_a_launch_it_runs() {
+fn legacy_trust_requires_approval_for_typing_after_a_launch_too() {
     let (s, _, l) = rig();
     s.set_trust_actions(true);
     s.plan("type hello there", Mode::Actions).unwrap();
     assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
     assert!(l.launched.lock().unwrap().is_empty());
     s.cancel();
-    s.plan("open a terminal and type hello there", Mode::Actions)
+    let task = s
+        .plan("open a terminal and type hello there", Mode::Actions)
         .unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(l.launched.lock().unwrap().is_empty());
+    s.approve(task.id).unwrap();
     wait_for(&s, |x| x.phase == Phase::Completed);
     assert_eq!(l.launched.lock().unwrap().len(), 2);
 }
@@ -644,7 +667,7 @@ fn fake_opencode(dir: &std::path::Path, body: &str) -> PathBuf {
     std::fs::write(
         &p,
         format!(
-            "#!/bin/sh\nif [ \"$2\" = \"--help\" ]; then echo '--standalone'; exit 0; fi\n{body}\n"
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'opencode v2.2.7'; exit 0; fi\nif [ \"$2\" = \"--help\" ]; then printf '%s\\n' '--standalone' '--dir' '--session' '--format json'; exit 0; fi\n{body}\n"
         ),
     )
     .unwrap();
@@ -901,11 +924,23 @@ mod contextual {
     fn trusted_command_stops_when_focus_moved_during_the_command() {
         let (s, l, ..) = setup(1); // the capture is read 1, the recheck is read 2 and flips
         s.set_trust_actions(true);
-        s.plan("search this on github", Mode::Actions).unwrap();
+        s.plan("copy this", Mode::Actions).unwrap();
         let done = wait_for(&s, |x| x.phase == Phase::Failed);
         let error = done.task.unwrap().error.unwrap();
         assert!(error.contains("Focus moved"), "{error}");
         assert!(l.launched.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_selected_search_requires_approval_even_with_legacy_trust() {
+        let (s, launcher, ..) = setup(usize::MAX);
+        s.set_trust_actions(true);
+        let task = s.plan("search this on github", Mode::Actions).unwrap();
+        assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+        assert!(launcher.launched.lock().unwrap().is_empty());
+        s.approve(task.id).unwrap();
+        wait_for(&s, |x| x.phase == Phase::Completed);
+        assert!(launcher.launched.lock().unwrap()[0].contains(ERROR));
     }
 
     #[test]
@@ -1402,6 +1437,28 @@ mod saved_workflows {
     }
 
     #[test]
+    fn legacy_trust_cannot_start_a_workflow_that_closes_a_window() {
+        let r = rig();
+        r.s.set_trust_actions(true);
+        let mut workflow = r.s.workflow_store().get("coding").unwrap();
+        workflow.steps.push(crate::workflows::Step {
+            id: "cleanup".into(),
+            action: StepAction::CloseOpenedWindow {
+                opened_by: workflow.steps[0].id.clone(),
+            },
+            requires: vec![workflow.steps[0].id.clone()],
+            timeout_secs: None,
+            on_failure: crate::workflows::model::OnFailure::Stop,
+        });
+        r.s.workflow_store().save(&workflow).unwrap();
+        let task = r.s.plan("start coding", Mode::Actions).unwrap();
+        assert_eq!(r.s.snapshot(0).phase, Phase::AwaitingApproval);
+        assert!(task.steps.iter().all(|step| step.status == "pending"));
+        r.s.approve(task.id).unwrap();
+        wait_for(&r.s, |snapshot| snapshot.phase == Phase::Completed);
+    }
+
+    #[test]
     fn opencode_steps_need_opencode_installed() {
         let r = rig();
         let mut agent = r.s.workflow_store().get("coding").unwrap();
@@ -1470,9 +1527,9 @@ mod saved_workflows {
         assert!(!bridge.permit(&step), "planned but not approved");
         r.s.lock().phase = Phase::Running; // as approve() would, without starting the run
         assert!(bridge.permit(&step), "approved and running");
-        r.s.lock().stop_requested = true;
+        r.s.lock().stop.request();
         assert!(!bridge.permit(&step), "Stop was pressed");
-        r.s.lock().stop_requested = false;
+        r.s.lock().stop = Cancellation::default();
         r.s.lock().workflow = None;
         assert!(!bridge.permit(&step), "the approved run is gone");
         r.s.lock().phase = Phase::Idle;
@@ -1555,4 +1612,650 @@ mod saved_workflows {
             assert!(!err.starts_with("Not understood"), "{said}: {err}");
         }
     }
+}
+
+#[test]
+fn a_task_key_is_bound_to_the_current_step_and_claimed_once() {
+    let (s, _, launcher) = rig();
+    let prior = s.plan("open firefox", Mode::Actions).unwrap();
+    s.cancel();
+    let current = s.plan_spoken("open firefox", Mode::Actions).unwrap();
+    let old = prior.steps[0].request.as_ref().unwrap();
+    let request = current.steps[0].request.as_ref().unwrap();
+    assert_ne!(old.idempotency_key, request.idempotency_key);
+    assert_eq!(request.idempotency_key.task, current.id);
+    assert_eq!(request.origin, Origin::Rules);
+    assert_eq!(request.input_source, InputSource::PushToTalk);
+    assert_eq!(request.risk, Risk::Reversible);
+    assert_eq!(request.requirements, [tools::Requirement::Launch]);
+    assert!(s.approve(prior.id).is_err());
+
+    let results = thread::scope(|scope| {
+        let first = scope.spawn(|| s.approve(current.id));
+        let second = scope.spawn(|| s.approve(current.id));
+        [first.join().unwrap(), second.join().unwrap()]
+    });
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    wait_for(&s, |snapshot| snapshot.phase == Phase::Completed);
+    assert_eq!(*launcher.launched.lock().unwrap(), ["Open firefox"]);
+}
+
+#[test]
+fn audit_records_approval_and_dispatch_without_the_command_text() {
+    let audit = tempfile::tempdir().unwrap();
+    let (s, _, launcher) = rig();
+    s.configure_ledger(audit.path()).unwrap();
+    let task = s
+        .plan("search youtube for private task content", Mode::Actions)
+        .unwrap();
+    s.approve(task.id).unwrap();
+    wait_for(&s, |snapshot| snapshot.phase == Phase::Completed);
+    assert_eq!(launcher.launched.lock().unwrap().len(), 1);
+    let file = std::fs::read_to_string(audit.path().join("x-action-ledger.ndjson")).unwrap();
+    assert!(!file.contains("private task content"));
+    let records: Vec<serde_json::Value> = file
+        .lines()
+        .skip(1)
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let kinds: Vec<_> = records
+        .iter()
+        .map(|record| record["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["planned", "approved", "claimed", "launched", "finished"]
+    );
+    assert_eq!(records[2]["action"]["idempotency_key"]["task"], task.id);
+    assert_eq!(records[2]["action"]["risk"], "reversible");
+    assert_eq!(records[4]["phase"], "completed");
+}
+
+#[test]
+fn a_broken_configured_audit_cannot_dispatch_an_action() {
+    let audit = tempfile::tempdir().unwrap();
+    let (s, _, launcher) = rig();
+    s.configure_ledger(audit.path()).unwrap();
+    let task = s.plan("open firefox", Mode::Actions).unwrap();
+    std::fs::write(
+        audit.path().join("x-action-ledger.ndjson"),
+        b"{\"schema\":2}\n",
+    )
+    .unwrap();
+    let error = s.approve(task.id).unwrap_err();
+    assert!(error.contains("Unknown X audit ledger schema"), "{error}");
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
+}
+
+#[test]
+fn an_explicit_spoken_stop_discards_a_late_model_plan() {
+    use std::sync::{Barrier, mpsc};
+
+    struct HeldPlanner {
+        entered: mpsc::Sender<()>,
+        release: Arc<Barrier>,
+    }
+    impl Planner for HeldPlanner {
+        fn plan(&self, _: &str, _: bool) -> Result<tools::Reply, String> {
+            self.entered.send(()).unwrap();
+            self.release.wait();
+            Ok(tools::Reply::Steps(vec![Action::App {
+                target: "firefox".into(),
+            }]))
+        }
+        fn name(&self) -> String {
+            "fixture planner".into()
+        }
+    }
+
+    let (svc, _, launcher) = rig();
+    svc.set_trust_actions(true);
+    let (entered, entered_rx) = mpsc::channel();
+    let release = Arc::new(Barrier::new(2));
+    svc.set_planner(Some(Arc::new(HeldPlanner {
+        entered,
+        release: release.clone(),
+    })));
+    let background = svc.clone();
+    let planning = thread::spawn(move || background.plan("bring up the fox", Mode::Actions));
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(svc.snapshot(0).phase, Phase::Planning);
+    let stopped = svc.request_stop_from_text("Friday, stop the task.");
+    release.wait();
+    assert!(stopped);
+    assert_eq!(planning.join().unwrap().unwrap_err(), "Stopped");
+    assert!(svc.snapshot(0).task.is_none());
+    assert!(launcher.launched.lock().unwrap().is_empty());
+}
+
+#[test]
+fn work_uses_the_same_adapter_interface_with_a_fake() {
+    struct FakeHarness;
+    impl harness::Adapter for FakeHarness {
+        fn descriptor(&self) -> harness::Descriptor {
+            harness::Descriptor {
+                kind: harness::Kind::OpenCode,
+                event_schema: 1,
+                version: Some("fixture".into()),
+                capabilities: &[harness::Capability::OwnedRun],
+            }
+        }
+
+        fn start(
+            &self,
+            request: harness::Request,
+            events: harness::EventSink,
+            stop: &Cancellation,
+        ) -> Result<Box<dyn harness::OwnedRun>, String> {
+            assert!(!stop.requested());
+            assert_eq!(request.prompt, "inspect the tests");
+            assert!(request.workspace.is_dir());
+            assert!(request.allow_commands.is_empty());
+            events(harness::Event::new(
+                harness::EventKind::Text,
+                "fixture event",
+            ));
+            Ok(Box::new(FakeResult))
+        }
+    }
+
+    struct FakeResult;
+    impl harness::OwnedRun for FakeResult {
+        fn join(self: Box<Self>) -> harness::RunResult {
+            harness::RunResult {
+                status: RunStatus::Completed,
+                exit_code: Some(0),
+                accepted_session: None,
+                errors: Vec::new(),
+                stderr: Vec::new(),
+                changed_files: None,
+            }
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("repo");
+    std::fs::create_dir(&workspace).unwrap();
+    let service = Service::with_harness(
+        Arc::new(FakeStt::default()),
+        Arc::new(FakeLauncher::default()),
+        Some(Arc::new(FakeHarness)),
+    );
+    service.set_workspace(workspace.to_str().unwrap()).unwrap();
+    let task = service.plan("inspect the tests", Mode::Work).unwrap();
+    let staged = service.snapshot(0);
+    assert_eq!(staged.phase, Phase::AwaitingApproval);
+    assert_eq!(staged.harness.unwrap().version.as_deref(), Some("fixture"));
+    assert!(
+        !staged
+            .events
+            .iter()
+            .any(|event| event.text == "fixture event")
+    );
+    service.approve(task.id).unwrap();
+    let done = wait_for(&service, |snapshot| snapshot.phase == Phase::Completed);
+    assert!(
+        done.events
+            .iter()
+            .any(|event| event.kind == "text" && event.text == "fixture event")
+    );
+}
+
+#[test]
+fn selecting_an_open_code_session_is_scoped_to_the_current_project() {
+    let (s, _, _) = rig();
+    let root = tempfile::tempdir().unwrap();
+    let a = root.path().join("project_a");
+    std::fs::create_dir(&a).unwrap();
+    let b = root.path().join("project_b");
+    std::fs::create_dir(&b).unwrap();
+    let a = a.canonicalize().unwrap();
+    let target =
+        harness::Session::from_open_code("ses_known".into(), "Session", &a, &a, 1).unwrap();
+
+    s.set_workspace(b.to_str().unwrap()).unwrap();
+    assert!(s.select_session(target.clone()).is_err());
+    assert!(s.snapshot(0).selected_session.is_none());
+
+    s.set_workspace(a.to_str().unwrap()).unwrap();
+    s.select_session(target.clone()).unwrap();
+    assert_eq!(s.snapshot(0).selected_session, Some(target));
+
+    s.set_workspace(b.to_str().unwrap()).unwrap();
+    assert!(s.snapshot(0).selected_session.is_none());
+}
+
+#[test]
+fn named_work_waits_for_approval_and_can_stop_the_acknowledged_run() {
+    let (s, work, _) = work_rig(
+        r#"echo '{"type":"step_start","sessionID":"ses_exact","part":{"type":"step-start"}}'
+exec sleep 60"#,
+    );
+    let verified = Arc::new(AtomicUsize::new(0));
+    let verify = verified.clone();
+    let s = s.with_session_verifier(move |target| {
+        assert_eq!(target.id.as_str(), "ses_exact");
+        verify.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    });
+    s.set_trust_actions(true);
+    let workspace = s.workspace_path().unwrap();
+    let target = harness::Session::from_open_code(
+        "ses_exact".into(),
+        "A scoped session",
+        &workspace,
+        &workspace,
+        1,
+    )
+    .unwrap();
+    s.select_session(target.clone()).unwrap();
+    let task = s.plan_session_send("inspect the tests").unwrap();
+    assert_eq!(task.session, Some(target));
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert_eq!(verified.load(Ordering::SeqCst), 0);
+    assert!(work.path().is_dir());
+    s.approve(task.id).unwrap();
+    let delivery = wait_for(&s, |state| {
+        state.events.iter().any(|event| event.kind == "delivery")
+    });
+    assert_eq!(
+        delivery.task.unwrap().accepted_session.unwrap().as_str(),
+        "ses_exact"
+    );
+    assert_eq!(verified.load(Ordering::SeqCst), 1);
+    s.cancel();
+    assert_eq!(
+        wait_for(&s, |state| state.phase == Phase::Cancelled).phase,
+        Phase::Cancelled
+    );
+}
+
+#[test]
+fn stale_named_work_never_starts_a_new_session() {
+    let (service, work, _) = work_rig("touch should-not-run");
+    let service = service.with_session_verifier(|_| Err("The session is stale".into()));
+    let workspace = service.workspace_path().unwrap();
+    let target = harness::Session::from_open_code(
+        "ses_stale".into(),
+        "A stale session",
+        &workspace,
+        &workspace,
+        1,
+    )
+    .unwrap();
+    service.select_session(target).unwrap();
+    let task = service.plan_session_send("inspect the tests").unwrap();
+    service.approve(task.id).unwrap();
+    let failed = wait_for(&service, |s| s.phase == Phase::Failed)
+        .task
+        .unwrap();
+    assert_eq!(failed.error.as_deref(), Some("The session is stale"));
+    assert!(failed.accepted_session.is_none());
+    assert!(!work.path().join("should-not-run").exists());
+    assert!(!workspace.join("should-not-run").exists());
+}
+
+#[test]
+fn spoken_selection_uses_the_displayed_session_and_denies_all_tools() {
+    let (s, _dir, repo) = work_rig(
+        r#"printf '%s' "$OPENCODE_CONFIG_CONTENT" > policy.json
+echo '{"type":"text","sessionID":"ses_first","part":{"text":"received selection"}}'"#,
+    );
+    let s = s.with_session_verifier(|target| {
+        assert_eq!(target.id.as_str(), "ses_first");
+        Ok(())
+    });
+    let (context, _, _) = crate::context::tests::editor();
+    s.set_context(Arc::new(context));
+    s.set_trust_actions(true);
+    let workspace = s.workspace_path().unwrap();
+    let list = ["ses_first", "ses_second"]
+        .into_iter()
+        .map(|id| {
+            harness::Session::from_open_code(
+                id.into(),
+                "A displayed session",
+                &workspace,
+                &workspace,
+                1,
+            )
+            .unwrap()
+        })
+        .collect();
+    s.record_listed_sessions(&workspace, list).unwrap();
+
+    let command = "Friday, give this to session one";
+    assert!(!s.needs_model(command));
+    let task = s.plan_spoken(command, Mode::Actions).unwrap();
+    assert_eq!(task.mode, Mode::Work);
+    assert_eq!(task.session.as_ref().unwrap().id.as_str(), "ses_first");
+    assert_eq!(task.work_access, harness::WorkAccess::SelectionOnly);
+    assert!(task.text.contains(crate::context::tests::ERROR));
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(!repo.join("policy.json").exists());
+    s.approve(task.id).unwrap();
+    let result = wait_for(&s, |snapshot| !snapshot.phase.is_busy());
+    assert_eq!(result.phase, Phase::Completed, "{:?}", result.task);
+    let raw = std::fs::read_to_string(repo.join("policy.json")).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap(),
+        serde_json::json!({
+            "permissions":[{"action":"*","resource":"*","effect":"deny"}],
+            "policies":[
+                {"action":"tool.use","resource":"*","effect":"deny"},
+                {"action":"skill.use","resource":"*","effect":"deny"},
+                {"action":"mcp.use","resource":"*","effect":"deny"},
+                {"action":"plugin.use","resource":"*","effect":"deny"},
+                {"action":"websearch.use","resource":"*","effect":"deny"},
+            ],
+        })
+    );
+}
+
+#[test]
+fn a_closed_selection_window_refuses_the_spoken_handoff() {
+    let (s, _dir, repo) = work_rig("touch should-not-run");
+    let s = s.with_session_verifier(|_| Ok(()));
+    let (context, windows, _) = crate::context::tests::editor();
+    s.set_context(Arc::new(context));
+    let workspace = s.workspace_path().unwrap();
+    let session =
+        harness::Session::from_open_code("ses_scoped".into(), "Test", &workspace, &workspace, 1)
+            .unwrap();
+    s.record_listed_sessions(&workspace, vec![session]).unwrap();
+    let task = s
+        .plan_spoken("give this to session one", Mode::Actions)
+        .unwrap();
+    windows.close("0xa");
+    s.approve(task.id).unwrap();
+    let result = wait_for(&s, |snapshot| !snapshot.phase.is_busy());
+    assert_eq!(result.phase, Phase::Failed);
+    assert!(result.task.unwrap().error.unwrap().contains("was closed"));
+    assert!(!repo.join("should-not-run").exists());
+}
+
+fn fake_claude(dir: &std::path::Path, logged_in: bool, responses: &str) -> PathBuf {
+    use std::fmt::Write;
+    let mut script = String::from("#!/bin/sh\n");
+    let flags = [
+        "--print",
+        "--output-format stream-json",
+        "--resume",
+        "--permission-mode",
+        "--tools",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "--setting-sources",
+        "--disable-slash-commands",
+    ];
+    writeln!(
+        script,
+        "if [ \"$1\" = '--help' ]; then printf '%s\\n' {}; exit 0; fi",
+        flags
+            .iter()
+            .map(|flag| format!("'{flag}'"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+    .unwrap();
+    writeln!(
+        script,
+        "if [ \"$1\" = '--version' ]; then echo '2.1.328 (Claude Code)'; exit 0; fi"
+    )
+    .unwrap();
+    writeln!(
+        script,
+        "if [ \"$1\" = 'auth' ]; then echo '{{\"loggedIn\":{logged_in}}}'; exit 0; fi"
+    )
+    .unwrap();
+    script.push_str(responses);
+    let path = dir.join("claude");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[test]
+fn approved_claude_work_streams_and_resumes_its_own_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = directory.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let exe = fake_claude(
+        directory.path(),
+        true,
+        r#"
+printf '%s\n' "$@" > received-args
+echo '{"type":"assistant","session_id":"5e3b19e7-c7ce-42f0-919d-15a735a1ed16","message":{"content":[{"type":"text","text":"fixture reply"}]}}'
+echo '{"type":"result","subtype":"success","is_error":false,"session_id":"5e3b19e7-c7ce-42f0-919d-15a735a1ed16","result":"fixture done"}'
+"#,
+    );
+    let (s, _, _) = rig();
+    let s = s.with_claude(Some(exe));
+    s.set_workspace(repo.to_str().unwrap()).unwrap();
+    s.set_trust_actions(true);
+    assert!(s.plan_claude("continue the session", true).is_err());
+    let fresh = s
+        .plan_claude("summarize the supplied context", false)
+        .unwrap();
+    assert_eq!(fresh.work_harness, Some(harness::Kind::ClaudeCode));
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(!repo.join("received-args").exists());
+    s.approve(fresh.id).unwrap();
+    let done = wait_for(&s, |state| !state.phase.is_busy());
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.task);
+    assert!(
+        done.events
+            .iter()
+            .any(|event| event.kind == "text" && event.text == "fixture reply")
+    );
+    let reference = done.claude_session.unwrap();
+    let resumed = s.plan_claude("continue the context summary", true).unwrap();
+    assert_eq!(resumed.session, Some(reference.clone()));
+    s.approve(resumed.id).unwrap();
+    wait_for(&s, |state| state.phase == Phase::Completed);
+    let args = std::fs::read_to_string(repo.join("received-args")).unwrap();
+    assert!(args.contains(&format!("--resume\n{}\n", reference.id.as_str())));
+    assert!(args.contains("--tools\n\n"));
+    assert!(!args.contains("--dangerously-skip-permissions"));
+}
+
+#[test]
+fn claude_login_refusal_does_not_start_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = directory.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let exe = fake_claude(directory.path(), false, "touch should-not-start\n");
+    let (s, _, _) = rig();
+    let s = s.with_claude(Some(exe));
+    s.set_workspace(repo.to_str().unwrap()).unwrap();
+    let task = s.plan_claude("inspect the supplied text", false).unwrap();
+    s.approve(task.id).unwrap();
+    let done = wait_for(&s, |state| !state.phase.is_busy());
+    assert_eq!(done.phase, Phase::Failed);
+    assert!(
+        done.task
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("login is required")
+    );
+    assert!(!repo.join("should-not-start").exists());
+}
+
+#[test]
+fn spoken_open_code_task_holds_approval_for_the_chosen_project() {
+    let (service, _dir, project) = work_rig(
+        r#"echo '{"type":"text","sessionID":"ses_spoken","part":{"text":"read the project"}}'
+touch ran-spoken-task"#,
+    );
+    service.set_trust_actions(true);
+    let transcript = "Friday, ask OpenCode to Inspect the backend tests";
+    assert!(!service.needs_model(transcript));
+    let task = service.plan_spoken(transcript, Mode::Actions).unwrap();
+    assert_eq!(task.text, "Inspect the backend tests");
+    assert_eq!(task.work_harness, Some(harness::Kind::OpenCode));
+    assert_eq!(task.workspace.as_deref(), project.to_str());
+    assert_eq!(service.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(!project.join("ran-spoken-task").exists());
+    service.approve(task.id).unwrap();
+    let done = wait_for(&service, |snapshot| !snapshot.phase.is_busy());
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.task);
+    assert_eq!(
+        done.task.unwrap().accepted_session.unwrap().as_str(),
+        "ses_spoken"
+    );
+    assert!(project.join("ran-spoken-task").exists());
+}
+
+#[test]
+fn spoken_claude_request_does_not_fall_back_to_opencode() {
+    let (service, _dir, project) = work_rig("touch unrequested-opencode-run");
+    let error = service
+        .plan_hands_free(
+            "Friday, ask Claude Code to inspect the tests",
+            Mode::Actions,
+        )
+        .unwrap_err();
+    assert!(error.contains("Claude Code CLI not found on PATH"));
+    assert_eq!(service.snapshot(0).phase, Phase::Idle);
+    assert!(!project.join("unrequested-opencode-run").exists());
+}
+
+#[test]
+fn spoken_project_commands_resolve_locally_and_pin_the_approved_project() {
+    let (service, _, launcher) = rig();
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("home");
+    let support = directory.path().join("support");
+    let first = home.join("frontend");
+    let second = home.join("backend");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    let registry = crate::projects::Registry::new(support.clone(), home.clone());
+    let (frontend, _) = registry.register("Front End", "~/frontend").unwrap();
+    let (backend, _) = registry.register("Back End", "~/backend").unwrap();
+    service.configure_session_storage(support, home);
+    service.set_autonomy_mode(AutonomyMode::Autonomous);
+    service.set_planner(Some(Arc::new(FakePlanner(Err(
+        "Unexpected remote planner".into(),
+    )))));
+    service
+        .select_registered_project(&frontend.id.to_string())
+        .unwrap();
+
+    let listing = service
+        .plan_spoken("Friday, list projects", Mode::Actions)
+        .unwrap();
+    assert_eq!(listing.phase, Phase::Completed);
+    assert!(listing.summary.unwrap().contains("Front End"));
+    let found = service
+        .plan_spoken("Friday, find project Back End", Mode::Actions)
+        .unwrap();
+    assert!(found.summary.unwrap().contains(&backend.id.to_string()));
+    assert_eq!(service.workspace_path(), Some(frontend.root.clone()));
+
+    let utterance = "Friday, switch to project Back End.";
+    assert!(!service.needs_model(utterance));
+    let plan = service.plan_smart(utterance).unwrap();
+    assert_eq!(plan.phase, Phase::AwaitingApproval);
+    assert!(plan.text.contains("Back End"));
+    assert_eq!(service.workspace_path(), Some(frontend.root.clone()));
+    service.approve(plan.id).unwrap();
+    let done = wait_for(&service, |state| !state.phase.is_busy());
+    assert_eq!(done.phase, Phase::Completed);
+    assert_eq!(service.workspace_path(), Some(backend.root.clone()));
+
+    registry
+        .add_alias(&frontend.id.to_string(), "Shared")
+        .unwrap();
+    registry
+        .add_alias(&backend.id.to_string(), "Shared")
+        .unwrap();
+    let error = service
+        .plan_spoken("Friday, open my Shared project", Mode::Actions)
+        .unwrap_err();
+    assert!(error.contains(&frontend.id.to_string()));
+    assert!(error.contains(&backend.id.to_string()));
+    assert_eq!(service.workspace_path(), Some(backend.root.clone()));
+
+    let plan = service
+        .plan_spoken("Friday, open project Back End", Mode::Actions)
+        .unwrap();
+    assert!(plan.text.contains("file manager"));
+    service.cancel();
+    assert!(service.approve(plan.id).is_err());
+    assert!(launcher.launched.lock().unwrap().is_empty());
+
+    let plan = service
+        .plan_spoken("Friday, open project Back End", Mode::Actions)
+        .unwrap();
+    service.approve(plan.id).unwrap();
+    let done = wait_for(&service, |state| !state.phase.is_busy());
+    assert_eq!(done.task.unwrap().steps[0].status, "launched");
+    assert_eq!(
+        *launcher.launched.lock().unwrap(),
+        [backend.root.display().to_string()]
+    );
+    assert_eq!(registry.last_selected().unwrap().unwrap().id, backend.id);
+}
+
+#[test]
+fn spoken_session_resume_requires_current_provider_evidence_after_approval() {
+    let (service, _, _) = rig();
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("home");
+    let support = directory.path().join("support");
+    std::fs::create_dir_all(home.join("repo")).unwrap();
+    let registry = crate::projects::Registry::new(support.clone(), home.clone());
+    let (project, _) = registry.register("Project", "~/repo").unwrap();
+    service.configure_session_storage(support, home);
+    let checks = Arc::new(AtomicUsize::new(0));
+    let verifier_checks = Arc::clone(&checks);
+    let expected_root = project.root.clone();
+    let service = service.with_session_verifier(move |session| {
+        assert_eq!(session.workspace, expected_root);
+        verifier_checks.fetch_add(1, Ordering::SeqCst);
+        if session.id.as_str() == "ses_fixture" {
+            Ok(())
+        } else {
+            Err("That exact OpenCode session is no longer available".into())
+        }
+    });
+    service
+        .select_registered_project(&project.id.to_string())
+        .unwrap();
+    let plan = service
+        .plan_spoken("Friday, resume OpenCode session ses_fixture", Mode::Actions)
+        .unwrap();
+    assert_eq!(plan.phase, Phase::AwaitingApproval);
+    assert_eq!(checks.load(Ordering::SeqCst), 0);
+    assert!(service.snapshot(0).selected_session.is_none());
+    service.approve(plan.id).unwrap();
+    let result = wait_for(&service, |state| !state.phase.is_busy());
+    assert_eq!(result.phase, Phase::Completed);
+    assert_eq!(result.selected_session.unwrap().id.as_str(), "ses_fixture");
+    let listing = service
+        .plan_spoken("Friday, list saved sessions", Mode::Actions)
+        .unwrap();
+    let summary = listing.summary.unwrap();
+    assert!(summary.contains("unverified availability"));
+    assert!(summary.contains("ses_fixture"));
+
+    let stale = service
+        .plan_spoken("Friday, resume OpenCode session ses_missing", Mode::Actions)
+        .unwrap();
+    service.approve(stale.id).unwrap();
+    let result = wait_for(&service, |state| !state.phase.is_busy());
+    assert_eq!(result.phase, Phase::Failed);
+    assert!(
+        result
+            .task
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("no longer available")
+    );
+    assert_eq!(result.selected_session.unwrap().id.as_str(), "ses_fixture");
+    assert_eq!(checks.load(Ordering::SeqCst), 2);
 }

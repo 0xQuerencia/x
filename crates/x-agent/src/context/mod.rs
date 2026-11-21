@@ -7,6 +7,7 @@
 //! or a model prompt body, never a command.
 
 pub mod a11y;
+pub mod bundle;
 pub mod commands;
 
 use std::sync::Arc;
@@ -384,6 +385,11 @@ impl Engine {
     /// prompt); otherwise it is enough that the window still exists, since an approval
     /// prompt may itself have taken focus.
     pub fn recheck(&self, ctx: &Context, strict_focus: bool) -> Result<(), ContextError> {
+        if !ctx.is_fresh() {
+            return Err(ContextError::Stale(
+                "The captured window context has expired".into(),
+            ));
+        }
         let Some(want) = ctx.window_ref() else {
             return Ok(()); // nothing was referred to, so nothing can have gone stale
         };

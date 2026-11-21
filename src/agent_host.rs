@@ -18,23 +18,13 @@ use x_agent::service::{Mode, RealLauncher, Service};
 use crate::control::{AgentAction, ControlReply};
 
 pub(crate) mod heard;
+mod projects;
+mod sessions;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod wake;
 mod workflows;
 
 const DISABLED: &str = "X is off. Turn it on with `hex labs on x-agent`";
-
-/// OpenCode's installer puts the real binary in `~/.opencode/bin`, which shell aliases
-/// and wrappers on PATH can shadow, so look there too.
-fn opencode_exe() -> Option<PathBuf> {
-    x_agent::tools::which("opencode")
-        .map(PathBuf::from)
-        .or_else(|| {
-            dirs::home_dir()
-                .map(|h| h.join(".opencode/bin/opencode"))
-                .filter(|p| p.is_file())
-        })
-}
 
 pub fn service() -> &'static Service {
     static SERVICE: OnceLock<Service> = OnceLock::new();
@@ -51,11 +41,33 @@ pub fn service() -> &'static Service {
         let service = Service::new(
             Arc::new(HexCli { exe }),
             Arc::new(RealLauncher),
-            opencode_exe(),
-        );
-        service.set_trust_actions(trust_file().is_some_and(|path| path.is_file()));
-        if let (Ok(dir), Some(home)) = (crate::app_paths::support_dir(), dirs::home_dir()) {
-            service.set_workflow_dirs(dir.join("workflows"), home);
+            x_agent::harness::probe::locate(x_agent::harness::Kind::OpenCode),
+        )
+        .with_session_verifier(sessions::verify)
+        .with_claude(x_agent::harness::probe::locate(
+            x_agent::harness::Kind::ClaudeCode,
+        ));
+        restore_execution_policy(&service);
+        if let Ok(dir) = crate::app_paths::support_dir() {
+            if let Err(error) = service.configure_ledger(&dir) {
+                tracing::warn!(%error, "could not open X audit ledger");
+            }
+            if let Some(home) = dirs::home_dir() {
+                service.configure_session_storage(dir.clone(), home.clone());
+                let projects = x_agent::projects::Registry::new(dir.clone(), home.clone());
+                match projects.last_selected() {
+                    Ok(Some(project)) => {
+                        if let Some(path) = project.root.to_str()
+                            && let Err(error) = service.set_workspace(path)
+                        {
+                            tracing::warn!(%error, "could not restore X project");
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => tracing::warn!(%error, "could not read saved X project"),
+                }
+                service.set_workflow_dirs(dir.join("workflows"), home);
+            }
         }
         service.set_computer_apps(load_computer_apps());
         service.set_computer_remote(computer_remote_file().is_some_and(|path| path.is_file()));
@@ -80,6 +92,23 @@ fn trust_file() -> Option<PathBuf> {
     crate::app_paths::support_dir()
         .ok()
         .map(|dir| dir.join("x-trusted-actions"))
+}
+
+fn restore_execution_policy(service: &Service) {
+    let Some(path) = trust_file() else {
+        return;
+    };
+    let trusted = path.is_file();
+    service.set_trust_actions(trusted);
+    let marker = path.with_file_name("x-approval-policy-v1");
+    if !marker.is_file() {
+        if trusted {
+            service.note_policy_upgrade();
+        }
+        if let Err(error) = write_private(&marker, b"1") {
+            tracing::warn!(%error, "could not save X execution policy migration");
+        }
+    }
 }
 
 fn planner_file() -> Option<PathBuf> {
@@ -189,13 +218,9 @@ fn wake_words_command(command: &str, value: &str) -> ControlReply {
     ControlReply::done(wake_summary())
 }
 
-fn private_file(path: &std::path::Path, append: bool) -> std::io::Result<std::fs::File> {
+fn private_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
-    options
-        .create(true)
-        .write(true)
-        .append(append)
-        .truncate(!append);
+    options.create(true).write(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let file = options.open(path)?;
@@ -208,11 +233,7 @@ fn private_file(path: &std::path::Path, append: bool) -> std::io::Result<std::fs
 }
 
 fn write_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
-    std::io::Write::write_all(&mut private_file(path, false)?, contents)
-}
-
-fn append_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
-    std::io::Write::write_all(&mut private_file(path, true)?, contents)
+    std::io::Write::write_all(&mut private_file(path)?, contents)
 }
 
 fn computer_apps_file() -> Option<PathBuf> {
@@ -231,12 +252,6 @@ fn computer_vision_file() -> Option<PathBuf> {
     crate::app_paths::support_dir()
         .ok()
         .map(|dir| dir.join("x-computer-vision"))
-}
-
-fn approval_audit_file() -> Option<PathBuf> {
-    crate::app_paths::support_dir()
-        .ok()
-        .map(|dir| dir.join("x-approval-audit.ndjson"))
 }
 
 fn load_computer_apps() -> Vec<String> {
@@ -346,7 +361,7 @@ fn set_trust(on: bool) -> ControlReply {
         Ok(()) => {
             service().set_trust_actions(on);
             ControlReply::done(if on {
-                "Autonomous mode: safe Actions and granted computer apps start without repeated approvals; Work and protected actions still need review"
+                "Autonomous mode: low-risk desktop actions start automatically. Typing, closing windows, operating apps, and Work ask for approval."
             } else {
                 "Default mode: X asks approval before each desktop task"
             })
@@ -435,6 +450,13 @@ fn load_voice_mode() -> VoiceMode {
 pub fn voice_mode() -> VoiceMode {
     service();
     VoiceMode::from_u8(VOICE.load(Ordering::Relaxed))
+}
+
+/// Read the initialized voice policy without causing agent initialization from
+/// a transcription thread. This is used only for opt-in recognizer biasing.
+#[cfg(target_os = "linux")]
+pub(crate) fn action_voice_bias_enabled() -> bool {
+    crate::labs::x_agent() && VOICE.load(Ordering::Relaxed) == VoiceMode::Actions as u8
 }
 
 pub fn set_voice_mode(mode: VoiceMode) -> ControlReply {
@@ -727,17 +749,6 @@ fn watch(svc: &Service) {
             seen = last.n;
         }
         for event in &snapshot.events {
-            if event.kind == "approval"
-                && let Some(path) = approval_audit_file()
-            {
-                let line = serde_json::json!({"timestamp": event.t, "event": event.text});
-                if let Ok(mut bytes) = serde_json::to_vec(&line) {
-                    bytes.push(b'\n');
-                    if let Err(error) = append_private(&path, &bytes) {
-                        tracing::warn!(%error, "could not append X approval audit");
-                    }
-                }
-            }
             match event.kind.as_str() {
                 "error" => toast("X: problem", &event.text),
                 "permission" if event.text.starts_with("Blocked ") => toast(
@@ -766,6 +777,39 @@ fn watch(svc: &Service) {
     }
 }
 
+pub(crate) fn doctor_report(source: x_agent::wm::ProbeSource) -> ControlReply {
+    let key_path = crate::app_paths::support_dir()
+        .ok()
+        .map(|dir| dir.join("openrouter-key"));
+    let doctor =
+        x_agent::wm::doctor(key_path.as_deref()).with_identity(source, env!("HEX_BUILD_VERSION"));
+    let harnesses = x_agent::harness::probe::local();
+    match serde_json::to_value(&doctor) {
+        Ok(mut report) => {
+            report["harnesses"] = serde_json::json!(harnesses);
+            let mut lines = doctor.lines();
+            for harness in &harnesses {
+                use std::fmt::Write;
+                let _ = write!(
+                    lines,
+                    "
+{} {} | compatibility: {} | login: {}",
+                    harness.kind.label(),
+                    harness.version.as_deref().unwrap_or("unknown version"),
+                    harness.compatibility.label(),
+                    harness.auth.label(),
+                );
+            }
+            ControlReply::AgentDoctor {
+                report,
+                lines,
+                ready: doctor.ready,
+            }
+        }
+        Err(error) => ControlReply::error("internal", error.to_string()),
+    }
+}
+
 fn snapshot(since: u64) -> ControlReply {
     match serde_json::to_value(service().snapshot(since)) {
         Ok(snapshot) => ControlReply::Agent { snapshot },
@@ -780,6 +824,9 @@ fn background(work: impl FnOnce(&Service) + Send + 'static) {
 }
 
 pub fn handle(action: AgentAction) -> ControlReply {
+    if action == AgentAction::Doctor {
+        return doctor_report(x_agent::wm::ProbeSource::RunningService);
+    }
     if !crate::labs::x_agent() {
         return ControlReply::error("disabled", DISABLED);
     }
@@ -808,6 +855,9 @@ pub fn handle(action: AgentAction) -> ControlReply {
             }
         },
         AgentAction::Say { text, mode } => {
+            if svc.request_stop_from_text(&text) {
+                return snapshot(0);
+            }
             if mode == "actions"
                 && let Some(result) = follow_up_window_choice(&text)
             {
@@ -880,6 +930,17 @@ pub fn handle(action: AgentAction) -> ControlReply {
         AgentAction::Trust { on } => set_trust(on),
         AgentAction::Autonomy { mode } => set_autonomy(&mode),
         AgentAction::Planner { model } => set_planner(&model),
+        AgentAction::Claude { text, resume } => match svc.plan_claude(&text, resume) {
+            Ok(_) => snapshot(0),
+            Err(error) => ControlReply::error("refused", error),
+        },
+        AgentAction::SendToSession { text } => match svc.plan_session_send(&text) {
+            Ok(_) => snapshot(0),
+            Err(error) => ControlReply::error("refused", error),
+        },
+        AgentAction::Projects { command } => projects::handle(svc, command),
+        AgentAction::Sessions { resume } => sessions::handle(svc, resume),
+        AgentAction::Doctor => unreachable!("doctor is handled before initializing X"),
         AgentAction::Desktop => {
             let r = x_agent::wm::report();
             ControlReply::done(serde_json::to_string(&r).unwrap_or_default())
@@ -1009,6 +1070,24 @@ mod tests {
         for model in ["decider", "decider-flash"] {
             assert!(planner_for(model).is_some());
         }
+    }
+
+    #[test]
+    fn doctor_control_keeps_structured_diagnostics_in_the_reply() {
+        let request = serde_json::from_value(serde_json::json!({"action":"doctor"})).unwrap();
+        let ControlReply::AgentDoctor {
+            report,
+            lines,
+            ready,
+        } = handle(request)
+        else {
+            panic!("expected a structured diagnostics reply");
+        };
+        assert_eq!(report["source"], "running_service");
+        assert_eq!(report["build"], env!("HEX_BUILD_VERSION"));
+        assert_eq!(report["ready"], ready);
+        assert!(report["desktop"]["capabilities"].is_array());
+        assert!(lines.contains("running X service"));
     }
 
     #[test]

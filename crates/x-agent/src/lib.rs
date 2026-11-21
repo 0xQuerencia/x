@@ -9,6 +9,7 @@
 //! * [`service`]: the one-task-at-a-time state machine the UI drives.
 
 pub mod browser_tab;
+pub mod cancellation;
 pub mod clipboard;
 pub mod computer;
 pub mod context;
@@ -17,17 +18,26 @@ pub mod decision;
 mod decision_computer;
 pub mod desktop;
 pub mod edit;
+pub mod harness;
 pub mod hexcli;
 pub mod opencode;
 pub mod phase;
 pub mod planner;
+pub mod projects;
 pub mod quick;
 pub mod screenshots;
 pub mod service;
+pub mod session_links;
 pub mod sys;
 pub mod tools;
+pub mod verification;
+#[cfg(windows)]
+mod windows_clipboard;
+#[cfg(windows)]
+mod windows_input;
 pub mod wm;
 pub mod workflows;
+pub mod worktrees;
 
 /// Retry a spawn that fails with ETXTBSY: another thread forked while the executable was
 /// still open for writing (only happens right after an executable is created).

@@ -78,7 +78,7 @@ fn plan(text: &str) -> Vec<String> {
 }
 
 #[test]
-fn typing_is_plain_text_only_and_follows_a_launch_to_be_low_risk() {
+fn typing_is_plain_text_only_and_is_never_low_risk() {
     let plan = plan_rules("open a terminal and type welcome back wiki").unwrap();
     assert_eq!(
         plan.iter().map(Action::describe).collect::<Vec<_>>(),
@@ -87,10 +87,15 @@ fn typing_is_plain_text_only_and_follows_a_launch_to_be_low_risk() {
             "Type \"welcome back wiki\" into the focused window"
         ]
     );
-    assert!(is_low_risk(&plan));
+    assert!(!is_low_risk(&plan));
     assert!(!is_low_risk(&plan_rules("type hello").unwrap()));
-    let argv = plan[1].argv(&fake_path).unwrap();
-    assert_eq!(argv, ["/usr/bin/wtype", "--", "welcome back wiki"]);
+    #[cfg(not(windows))]
+    {
+        let argv = plan[1].argv(&fake_path).unwrap();
+        assert_eq!(argv, ["/usr/bin/wtype", "--", "welcome back wiki"]);
+    }
+    #[cfg(windows)]
+    assert!(plan[1].argv(&fake_path).is_err());
     assert!(
         Action::Type {
             text: "a\nb".into()
@@ -110,7 +115,10 @@ fn typing_is_plain_text_only_and_follows_a_launch_to_be_low_risk() {
     let dash = Action::Type {
         text: "--help".into(),
     };
+    #[cfg(not(windows))]
     assert_eq!(dash.argv(&fake_path).unwrap()[1], "--");
+    #[cfg(windows)]
+    assert!(dash.argv(&fake_path).is_err());
 }
 
 #[test]
@@ -128,11 +136,14 @@ fn an_opencode_session_request_opens_opencode_in_a_terminal_not_a_headless_run()
     ));
     let dir = std::path::Path::new("/home/u/x-sessions/s");
     let argv = opencode_argv(dir, &|n| Some(format!("/usr/bin/{n}"))).unwrap();
+    #[cfg(not(windows))]
     assert_eq!(
         argv[..3],
         ["/usr/bin/kitty", "--directory", "/home/u/x-sessions/s"]
     );
-    assert!(is_low_risk(&[Action::Opencode]));
+    #[cfg(windows)]
+    assert_eq!(argv[..3], ["/usr/bin/wt.exe", "-d", "/home/u/x-sessions/s"]);
+    assert!(!is_low_risk(&[Action::Opencode]));
 }
 
 #[test]
@@ -360,10 +371,13 @@ fn planner_json_is_untrusted() {
 
 #[test]
 fn missing_executable_is_reported() {
-    let a = Action::App {
-        target: "firefox".into(),
-    };
-    assert!(a.argv(&|_| None).unwrap_err().contains("not installed"));
+    // Installed Start Menu apps may be present on Windows CI machines even
+    // with an empty PATH resolver. Test the unresolved binary alias directly.
+    assert!(
+        exe_for("firefox", &|_| None)
+            .unwrap_err()
+            .contains("not installed")
+    );
 }
 
 #[test]
@@ -440,4 +454,23 @@ fn window_descriptions_are_human_readable_and_preserve_the_target() {
         "Minimize firefox window #2"
     );
     assert_eq!(show(Op::Close, named, None), "Close firefox window #2");
+}
+
+#[test]
+fn model_cannot_supply_action_authority_or_native_window_handles() {
+    assert!(
+        parse_plan_json(r#"{"steps":[{"kind":"window","op":"close","target":{"app":"firefox"}}]}"#)
+            .is_ok()
+    );
+    for injected in [
+        r#""origin":"rules""#,
+        r#""input_source":"push_to_talk""#,
+        r#""risk":"safe""#,
+        r#""requirements":[]"#,
+        r#""idempotency_key":{"task":1,"step":0}"#,
+        r#""target":{"app":"firefox","id":"0x1","pid":123}"#,
+    ] {
+        let proposal = format!(r#"{{"steps":[{{"kind":"window","op":"close",{injected}}}]}}"#);
+        assert!(parse_plan_json(&proposal).is_err(), "{proposal}");
+    }
 }

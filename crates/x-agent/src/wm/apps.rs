@@ -1,14 +1,15 @@
-//! What is installed, from the XDG desktop entries every Linux desktop already keeps, so
-//! "the browser", "the terminal" or "spotify" reach the right windows without an app list
-//! baked into X. Entry text is data only: it is matched against window classes and never
-//! executed or shown as a command.
+//! Installed applications: XDG desktop entries on Linux and Start Menu links on Windows.
+//! Names map to actual installed apps, not a list baked into X. Catalog strings
+//! are evidence only; neither speech nor filenames are executed as shell code.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const TTL: Duration = Duration::from_secs(60);
+#[cfg(target_os = "linux")]
 const MAX_FILES: usize = 4000;
+#[cfg(target_os = "linux")]
 const MAX_FILE: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -168,6 +169,7 @@ pub fn parse_entry(id: &str, text: &str) -> Option<Entry> {
     Some(entry)
 }
 
+#[cfg(target_os = "linux")]
 fn dirs() -> Vec<PathBuf> {
     let home = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -204,6 +206,7 @@ fn dirs() -> Vec<PathBuf> {
 
 /// Scan paths with a global cap, including one level of real subdirectories.
 /// Follow desktop-entry *file* symlinks, but never recursively follow directories.
+#[cfg(target_os = "linux")]
 fn scan_paths(paths: &[PathBuf]) -> Vec<Entry> {
     fn walk(dir: &std::path::Path, depth: u8, out: &mut Vec<Entry>, seen: &mut usize) {
         let Ok(read) = std::fs::read_dir(dir) else {
@@ -248,8 +251,86 @@ fn scan_paths(paths: &[PathBuf]) -> Vec<Entry> {
     out
 }
 
+#[cfg(windows)]
+fn scan() -> Vec<Entry> {
+    super::windows_apps::scan()
+}
+
+#[cfg(target_os = "linux")]
 fn scan() -> Vec<Entry> {
     scan_paths(&dirs())
+}
+
+/// Read a small, local catalog of .app bundles. Never descend into an app bundle
+/// or follow directory symlinks: a visible installed app is a directory with
+/// Contents/Info.plist, not an arbitrary filename returned by a model.
+#[cfg(target_os = "macos")]
+fn scan_macos_paths(roots: &[PathBuf]) -> Vec<Entry> {
+    fn walk(dir: &std::path::Path, depth: u8, seen: &mut usize, out: &mut Vec<Entry>) {
+        if *seen >= 2_048 {
+            return;
+        }
+        let Ok(read) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut paths: Vec<PathBuf> = read.flatten().map(|entry| entry.path()).collect();
+        paths.sort();
+        for path in paths {
+            if *seen >= 2_048 {
+                break;
+            }
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !metadata.file_type().is_dir() {
+                continue;
+            }
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+            {
+                *seen += 1;
+                if !path.join("Contents/Info.plist").is_file() {
+                    continue;
+                }
+                let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let name = name.trim().to_lowercase();
+                if name.is_empty() || name.chars().any(char::is_control) {
+                    continue;
+                }
+                out.push(Entry {
+                    id: name.clone(),
+                    path,
+                    names: vec![name.clone()],
+                    classes: vec![name],
+                    ..Entry::default()
+                });
+            } else if depth == 0 {
+                // Application collections such as Utilities may be one level down.
+                walk(&path, 1, seen, out);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    let mut seen = 0;
+    for root in roots {
+        walk(root, 0, &mut seen, &mut found);
+    }
+    found
+}
+
+#[cfg(target_os = "macos")]
+fn scan() -> Vec<Entry> {
+    let mut roots = vec![
+        PathBuf::from("/Applications"),
+        PathBuf::from("/System/Applications"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join("Applications"));
+    }
+    scan_macos_paths(&roots)
 }
 
 /// Exact installed application lookup. Do not use fuzzy matching for launch:
@@ -270,8 +351,37 @@ fn installed_in(name: &str, entries: &[Entry]) -> Option<Entry> {
     matches.next().is_none().then_some(found)
 }
 
-/// GLib parses Exec, file placeholders, quoting and Flatpak launch wrappers
-/// according to the Desktop Entry specification. Nothing reaches a shell.
+/// Windows resolves a .lnk through Explorer, not through a command shell.
+#[cfg(windows)]
+pub fn launch_argv(
+    entry: &Entry,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Result<Vec<String>, String> {
+    if entry.id.is_empty()
+        || !entry.path.is_absolute()
+        || !entry.path.is_file()
+        || !entry
+            .path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("lnk"))
+    {
+        return Err("Installed Windows app must have a valid .lnk shortcut".into());
+    }
+    let explorer = resolve("explorer.exe")
+        .or_else(|| {
+            std::env::var_os("SystemRoot").map(|root| {
+                PathBuf::from(root)
+                    .join("explorer.exe")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+        })
+        .ok_or("Windows Explorer could not be found")?;
+    Ok(vec![explorer, entry.path.to_string_lossy().into_owned()])
+}
+
+/// GLib parses Exec and Flatpak launch wrappers on Linux; no shell is used.
+#[cfg(target_os = "linux")]
 pub fn launch_argv(
     entry: &Entry,
     resolve: &dyn Fn(&str) -> Option<String>,
@@ -290,6 +400,33 @@ pub fn launch_argv(
         return Ok(vec![gtk_launch, entry.id.clone()]);
     }
     Err("An installed app needs gio or gtk-launch to start (install GLib utilities)".into())
+}
+
+/// Launch only an observed, installed macOS bundle by its exact path.
+#[cfg(target_os = "macos")]
+pub fn launch_argv(
+    entry: &Entry,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Result<Vec<String>, String> {
+    if entry.id.is_empty()
+        || !entry.path.is_absolute()
+        || !entry.path.is_dir()
+        || !entry
+            .path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+        || !entry.path.join("Contents/Info.plist").is_file()
+    {
+        return Err("Installed macOS app must be a valid .app bundle".into());
+    }
+    let open = resolve("open")
+        .or_else(|| {
+            std::path::Path::new("/usr/bin/open")
+                .is_file()
+                .then(|| "/usr/bin/open".into())
+        })
+        .ok_or("macOS open utility is unavailable")?;
+    Ok(vec![open, "-a".into(), entry.path.display().to_string()])
 }
 
 static CACHE: Mutex<Option<(Instant, Vec<Entry>)>> = Mutex::new(None);
@@ -428,7 +565,7 @@ mod tests {
         assert!(!app.terminal);
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn installed_app_uses_glib_launcher_and_rejects_ambiguity() {
         let temp = tempfile::tempdir().unwrap();
@@ -465,6 +602,30 @@ mod tests {
         assert!(launch_argv(&entry, &|_| None).is_err());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn discovers_only_real_app_bundles_and_uses_open_without_a_shell() {
+        let temp = tempfile::tempdir().unwrap();
+        let apps = temp.path().join("Applications");
+        let bundle = apps.join("Visual Studio Code.app");
+        std::fs::create_dir_all(bundle.join("Contents")).unwrap();
+        std::fs::write(bundle.join("Contents/Info.plist"), "fixture").unwrap();
+        std::fs::create_dir_all(apps.join("Fake.app")).unwrap();
+        let entry = scan_macos_paths(&[apps]).pop().unwrap();
+        assert_eq!(entry.names, ["visual studio code"]);
+        assert_eq!(
+            installed_in("Visual Studio Code", &[entry.clone()]),
+            Some(entry.clone())
+        );
+        assert_eq!(
+            launch_argv(&entry, &|program| (program == "open")
+                .then(|| "/usr/bin/open".into()))
+            .unwrap(),
+            ["/usr/bin/open", "-a", bundle.to_str().unwrap()]
+        );
+        assert!(installed_in("not installed", &[entry]).is_none());
+    }
+
     #[test]
     fn wrappers_never_become_application_identities() {
         assert_eq!(
@@ -497,7 +658,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn catalog_follows_flatpak_file_symlinks_and_one_nested_directory() {
         use std::os::unix::fs::symlink;

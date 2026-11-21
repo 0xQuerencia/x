@@ -1,6 +1,25 @@
 <!-- tallow -->
 # Hex Agent Guide
 
+## X fork policy — `0xQuerencia/x` (overrides upstream branch/PR text)
+
+This repository is an independently maintained **X fork** of Hex. For X-specific
+changes the canonical integration branch is **`main`**. Make a focused branch,
+open a pull request against **`0xQuerencia/x:main`**, and merge only after
+`cargo fmt --all -- --check`, `cargo clippy --locked -p x-agent --all-targets
+-- -D warnings`, `cargo test --locked -p x-agent --all-targets`, and applicable
+desktop/UI checks succeed. The upstream guidance below concerning
+`anomalyco/hex`, `dev`, `production`, Dax's ruleset, self-merging before CI,
+or rejecting pull requests does **not** replace this X fork policy.
+
+Never tag a release, publish to AUR, change the deployed website, or claim a
+platform supported solely because fake unit tests pass. Run
+`docs/x-release-qa.md` on a real installed artifact; the owner must explicitly
+approve publication. Preserve Hex dictation behavior and X's validated-action
+safety boundaries. Do not change upstream-protected workflows without review.
+
+
+
 ## Private Kit Tool
 
 `dev` and `production` take changes only through pull requests (Dax's

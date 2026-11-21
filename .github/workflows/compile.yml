@@ -21,6 +21,11 @@ on:
       - "scripts/smoke-x/**"
       - "packaging/aur-x/PKGBUILD"
       - ".github/workflows/compile.yml"
+      - ".github/workflows/check-linux.yml"
+      - ".github/workflows/check-macos.yml"
+      - ".github/workflows/check-windows.yml"
+      - ".github/workflows/x-windows-preview.yml"
+      - ".github/workflows/x-linux-preview.yml"
   workflow_dispatch:
 
 permissions:
@@ -137,3 +142,5 @@ jobs:
           $combined = if ($env:CMAKE_PREFIX_PATH) { "$prefix;$env:CMAKE_PREFIX_PATH" } else { $prefix }
           Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=$combined"
       - run: cargo clippy --locked --bin hex -- -D warnings
+      - run: cargo clippy --locked -p x-agent --all-targets -- -D warnings
+      - run: cargo test --locked -p x-agent --all-targets

@@ -1,0 +1,139 @@
+name: X Windows 11 preview (unsigned)
+
+# Windows 11 preview: produce an unsigned X-branded binary, verify its checksum,
+# then attach it to a clearly labeled GitHub *prerelease*. No installer, signed
+# production release or updater feed is published.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/x-windows-preview.yml"
+      - "crates/x-agent/src/browser_tab.rs"
+      - "crates/x-agent/src/windows_input.rs"
+      - "crates/x-agent/src/wm/tests.rs"
+      - "src/windows/input.rs"
+      - "src/windows/input/rearm.rs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x-win11-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    name: Windows 11 x64 preview
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      # Brand and sandbox as X; prevent self-update into a Hex installation.
+      X_BUILD: "1"
+      HEX_LOCAL_BUILD: "1"
+      HEX_TEST_BUILD: "1"
+      TRANSCRIBE_CMAKE_ARGS: -DGGML_NATIVE=OFF
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+      - name: Install the Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@30ba978f977e81b72d091fc8888feb1fb26f9aff # v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+      - name: Install SPIRV-Headers
+        shell: pwsh
+        run: |
+          vcpkg install spirv-headers:x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg installation failed" }
+          $prefix = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows" -replace '\\','/'
+          $combined = if ($env:CMAKE_PREFIX_PATH) { "$prefix;$env:CMAKE_PREFIX_PATH" } else { $prefix }
+          Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=$combined"
+      - name: Formatting and agent tests
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw "Rustfmt failed" }
+          cargo clippy --locked -p x-agent --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw "X agent Clippy failed" }
+          cargo test --locked -p x-agent --all-targets
+          if ($LASTEXITCODE -ne 0) { throw "X agent tests failed" }
+      - name: Compile unsigned X executable
+        shell: pwsh
+        run: |
+          cargo build --locked --release --bin hex
+          if ($LASTEXITCODE -ne 0) { throw "X build failed" }
+          New-Item -Type Directory -Force dist | Out-Null
+          Copy-Item target/release/hex.exe dist/x.exe
+          & .\dist\x.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "Windows preview could not launch" }
+          $sha = (Get-FileHash dist/x.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  x.exe" | Set-Content -Encoding ascii dist/SHA256SUMS
+          "Unsigned developer preview only. No real Windows 11 desktop and microphone acceptance has been recorded." |
+            Set-Content -Encoding utf8 dist/README-preview.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: x-win11-preview-${{ github.sha }}
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  prerelease:
+    name: Upload verified Windows preview to Releases
+    if: github.ref == 'refs/heads/main'
+    needs: windows-x64
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: x-win11-preview-${{ github.sha }}
+          path: dist
+      - name: Verify downloaded preview checksum
+        shell: bash
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS
+          test -s x.exe
+      - name: Publish experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          short=${GITHUB_SHA:0:12}
+          tag="x-win11-preview-$short"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::Preview for $short already exists; leaving it unchanged"
+            exit 0
+          fi
+          cat > notes.md <<EOF
+          **Experimental Windows x64 preview. NOT a stable or fully tested Windows 11 release.**
+
+          This unsigned x.exe was built from X source commit $GITHUB_SHA
+          after formatting and x-agent unit tests on a Windows CI runner.
+          The attached SHA256SUMS is verified before publication.
+
+          This build has **not** passed a real Windows 11 microphone, desktop,
+          accessibility, workflows, system-control or installer smoke test.
+          Windows virtual-desktop switching is not supported. It may fail
+          with SmartScreen or at runtime. Avoid using it for important work.
+
+          See [Windows QA](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/docs/x-win11.md).
+          This is a portable preview binary, **not an installer**.
+          EOF
+          gh release create "$tag" dist/x.exe dist/SHA256SUMS dist/README-preview.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "X Windows 11 experimental preview ($short)" \
+            --prerelease \
+            --notes-file notes.md

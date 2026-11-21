@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 
+pub(super) mod contract;
+
 #[derive(Default)]
 struct World {
     wins: Vec<WinInfo>,
@@ -12,6 +14,9 @@ struct World {
     /// window that is not there.
     inert: bool,
     dead: bool,
+    probe_list: bool,
+    disconnect_on_command: bool,
+    reuse_identity_on_command: bool,
     log: Vec<Cmd>,
 }
 
@@ -87,6 +92,11 @@ impl Backend for Fake {
     fn caps(&self) -> Vec<Cap> {
         self.0.lock().unwrap().caps.clone()
     }
+    fn probe_window_list(&self) -> Option<Result<(), WmError>> {
+        let enabled = self.0.lock().unwrap().probe_list;
+        enabled.then(|| self.windows().map(drop))
+    }
+
     fn windows(&self) -> Result<Vec<WinInfo>, WmError> {
         let w = self.0.lock().unwrap();
         if w.dead {
@@ -103,6 +113,15 @@ impl Backend for Fake {
     fn run(&self, cmd: &Cmd) -> Result<(), WmError> {
         let mut w = self.0.lock().unwrap();
         w.log.push(cmd.clone());
+        if w.disconnect_on_command {
+            w.dead = true;
+            return Ok(());
+        }
+        if w.reuse_identity_on_command
+            && let Some(window) = w.wins.first_mut()
+        {
+            window.pid += 1;
+        }
         if w.inert {
             return Ok(());
         }
@@ -310,6 +329,24 @@ fn minimize_maximize_round_trip() {
 }
 
 #[test]
+fn close_needs_a_successful_read_to_verify_disappearance() {
+    let (mut controller, fake) = setup();
+    fake.0.lock().unwrap().disconnect_on_command = true;
+    let result = ask(&mut controller, "close this");
+    assert!(matches!(result, Err(WmError::Backend(_))), "{result:?}");
+    assert_eq!(fake.0.lock().unwrap().log.len(), 1);
+}
+
+#[test]
+fn a_reused_window_id_does_not_verify_a_move() {
+    let (mut controller, fake) = setup();
+    fake.0.lock().unwrap().reuse_identity_on_command = true;
+    let result = ask(&mut controller, "move this to workspace 3");
+    assert!(matches!(result, Err(WmError::Unverified(_))), "{result:?}");
+    assert!(controller.history.is_empty());
+}
+
+#[test]
 fn close_reports_a_window_that_stays_open() {
     let (mut c, fake) = setup();
     fake.0.lock().unwrap().inert = true;
@@ -383,6 +420,7 @@ fn history_is_bounded() {
     assert!(c.history.len() <= UNDO_DEPTH);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn rejects_hostile_ids_in_real_backends() {
     use crate::wm::hypr::Hypr;
@@ -426,73 +464,89 @@ fn parse_phrases() {
 }
 
 /// Real Hyprland, one disposable foot window. `cargo test -- --ignored live_hyprland`.
+#[cfg(not(windows))]
 #[test]
 #[ignore = "needs a running Hyprland session"]
 fn live_hyprland() {
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("foot")
-        .args(["-a", "xwm-live", "-T", "x-wm-live", "sleep", "120"])
-        .stdin(Stdio::null())
-        .spawn()
-        .expect("foot");
+    use std::process::{Child, Command, Stdio};
+
+    struct Fixture(Child);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let class = format!("xwm-live-{}", std::process::id());
+    let fixture = Fixture(
+        Command::new("foot")
+            .args(["-a", &class, "-T", &class, "sleep", "35"])
+            .stdin(Stdio::null())
+            .spawn()
+            .expect("foot"),
+    );
     let mut c = Controller::new(Box::new(hypr::Hypr));
+    contract::assert_live_report(c.backend.as_ref());
     let me = |c: &Controller| {
         c.backend
             .windows()
             .unwrap()
             .into_iter()
-            .find(|w| w.class == "xwm-live")
+            .find(|w| w.class == class && w.pid == fixture.0.id())
     };
-    for _ in 0..50 {
-        if me(&c).is_some() && c.backend.focused().unwrap() == me(&c).map(|w| w.id) {
-            break;
+    let timeout = std::time::Instant::now() + Duration::from_secs(8);
+    let start = loop {
+        if let Some(window) = me(&c) {
+            break window;
         }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let start = me(&c).expect("window mapped");
+        assert!(
+            std::time::Instant::now() < timeout,
+            "the fixture window did not map"
+        );
+        std::thread::sleep(Duration::from_millis(75));
+    };
+    let workspace = if start.workspace == 7 { 8 } else { 7 };
+    assert!(
+        c.move_exact(&start.id, start.pid ^ 1, &start.class, workspace)
+            .is_err(),
+        "the wrong PID cannot move the fixture window"
+    );
+    assert_eq!(me(&c).unwrap().place, start.place);
+    c.focus_exact(&start.id, start.pid, &start.class).unwrap();
     assert_eq!(
         c.backend.focused().unwrap().as_deref(),
-        Some(start.id.as_str()),
-        "focus was stolen"
+        Some(start.id.as_str())
     );
-    let t = std::time::Instant::now();
-    let out = ask(&mut c, "move this window to workspace 7").unwrap();
-    eprintln!("move: {} in {:?}", out.message, t.elapsed());
-    assert_eq!(me(&c).unwrap().workspace, 7);
+
+    c.move_exact(&start.id, start.pid, &start.class, workspace)
+        .unwrap();
+    assert_eq!(me(&c).unwrap().workspace, workspace);
     ask(&mut c, "undo").unwrap();
     assert_eq!(me(&c).unwrap().place, start.place);
-    // A moved-away window loses focus. Every later "this" must still be the test window.
-    let mine = |c: &mut Controller| {
-        let id = me(c).unwrap().id;
-        c.backend.run(&Cmd::Focus(id.clone())).unwrap();
-        for _ in 0..30 {
-            if c.backend.focused().unwrap().as_deref() == Some(id.as_str()) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        panic!("could not focus the test window");
-    };
-    for step in ["maximize this", "undo", "minimize this", "undo"] {
-        if step != "undo" {
-            mine(&mut c);
-        }
-        eprintln!(
-            "{step}: {}",
-            ask(&mut c, step)
-                .map(|o| o.message)
-                .unwrap_or_else(|e| e.to_string())
-        );
-    }
-    assert!(!me(&c).unwrap().minimized);
-    mine(&mut c);
-    eprintln!(
-        "close: {}",
-        ask(&mut c, "close this window").unwrap().message
-    );
-    let _ = child.kill();
-    let _ = child.wait();
+
+    let previous_workspace = c.backend.workspace().unwrap();
+    c.switch(workspace).unwrap();
+    assert_eq!(c.backend.workspace().unwrap(), workspace);
+    ask(&mut c, "undo").unwrap();
+    assert_eq!(c.backend.workspace().unwrap(), previous_workspace);
+
+    assert!(!me(&c).unwrap().maximized);
+    c.maximize(&start).unwrap();
+    assert!(me(&c).unwrap().maximized);
+    ask(&mut c, "undo").unwrap();
+    assert!(!me(&c).unwrap().maximized);
+
+    c.minimize(&start).unwrap();
+    assert!(me(&c).unwrap().minimized);
+    ask(&mut c, "undo").unwrap();
+    let restored = me(&c).unwrap();
+    assert!(!restored.minimized);
+    assert_eq!(restored.place, start.place);
+
+    c.close_exact(&start.id, start.pid, &start.class).unwrap();
     assert!(me(&c).is_none());
+    assert!(c.focus_exact(&start.id, start.pid, &start.class).is_err());
 }
 
 /// Real Sway in a headless compositor; run via scripts/smoke-x/sway-ci.sh.
@@ -510,6 +564,7 @@ fn live_sway() {
         bin: "swaymsg",
         label: "Sway",
     }));
+    contract::assert_live_report(controller.backend.as_ref());
     let own_window = |c: &Controller| {
         c.backend
             .windows()
@@ -679,6 +734,18 @@ fn an_app_launched_inside_a_terminal_is_not_the_terminals_window() {
 }
 
 #[test]
+fn a_valid_window_command_takes_precedence_over_catalog_repairs() {
+    let entry = apps::parse_entry(
+        "com.usebottles.bottles.desktop",
+        "[Desktop Entry]\nType=Application\nName=Bottles\nExec=bottles\nKeywords=windows;\n",
+    )
+    .unwrap();
+    let request = parse::parse_with("close this window", &[entry]).unwrap();
+    assert_eq!(request.op, Op::Close);
+    assert_eq!(request.target, Target::default());
+}
+
+#[test]
 fn a_split_installed_app_name_resolves_from_catalog() {
     let mut entries = catalog();
     entries.push(
@@ -703,4 +770,54 @@ fn a_misheard_workspace_command_still_parses() {
     let r = p("Move terminal two to work space four.").unwrap();
     assert_eq!((r.op, r.ws), (Op::Move, Some(Ws::N(4))));
     assert_eq!(r.target.pick, Some(2));
+}
+
+#[test]
+fn prepared_close_requires_the_same_focused_window_identity() {
+    let (mut controller, fake) = setup();
+    let request = p("close this window").unwrap();
+    let target = controller.prepare_close(&request.target).unwrap();
+    assert!(target.label().unwrap().contains("Docs"));
+
+    fake.0.lock().unwrap().focus = Some("0x2".into());
+    assert!(matches!(
+        controller.run_with_target(&request, Some(&target)),
+        Err(WmError::NotFound(_))
+    ));
+    let original = {
+        let mut w = fake.0.lock().unwrap();
+        w.focus = Some("0x1".into());
+        let original = w.wins[0].clone();
+        w.wins[0].pid += 10;
+        original
+    };
+    assert!(matches!(
+        controller.run_with_target(&request, Some(&target)),
+        Err(WmError::NotFound(_))
+    ));
+    assert!(fake.0.lock().unwrap().log.is_empty());
+
+    fake.0.lock().unwrap().wins[0] = original;
+    controller.run_with_target(&request, Some(&target)).unwrap();
+    assert_eq!(fake.0.lock().unwrap().log, [Cmd::Close("0x1".into())]);
+}
+
+#[test]
+fn prepared_ambiguous_close_still_requires_a_choice_after_window_disappears() {
+    let fake = world(vec![
+        win("0x1", "firefox", "Browser", 1),
+        win("0x2", "foot", "First", 1),
+        win("0x3", "foot", "Second", 1),
+    ]);
+    let mut controller = Controller::new(Box::new(fake.clone())).with_catalog(catalog);
+    let request = p("close terminal").unwrap();
+    let target = controller.prepare_close(&request.target).unwrap();
+    fake.0.lock().unwrap().wins.retain(|w| w.id != "0x2");
+    assert!(matches!(
+        controller.run_with_target(&request, Some(&target)),
+        Err(WmError::Ambiguous(choices)) if choices.len() == 2
+    ));
+    assert!(fake.0.lock().unwrap().log.is_empty());
+    controller.choose(2).unwrap();
+    assert_eq!(fake.0.lock().unwrap().log, [Cmd::Close("0x3".into())]);
 }

@@ -217,6 +217,17 @@ impl ControlRequest {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "operation", rename_all = "kebab-case")]
+pub enum ProjectCommand {
+    List,
+    Register { name: String, path: String },
+    Use { query: String },
+    AliasAdd { id: String, alias: String },
+    AliasRemove { id: String, alias: String },
+    Forget { id: String },
+}
+
 /// What `hex agent` asks X to do. Default requires approval; Autonomous may run safe Actions directly.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case")]
@@ -252,8 +263,8 @@ pub enum AgentAction {
         on: bool,
     },
     /// Explicit execution policy: default asks for each task; autonomous
-    /// auto-runs low-risk Actions and permitted computer sessions. Status reads
-    /// the same persisted state as the legacy Trust toggle.
+    /// auto-runs low-risk Actions. Status reads the same persisted state as the
+    /// legacy Trust toggle.
     Autonomy {
         mode: String,
     },
@@ -280,6 +291,27 @@ pub enum AgentAction {
     },
     /// Which window-control backend this desktop has and what it can do.
     Desktop,
+    /// Read-only diagnostics from the running service's environment.
+    Doctor,
+    /// List or select an existing OpenCode session in the current project.
+    Sessions {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume: Option<String>,
+    },
+    /// Manage explicitly registered local project directories.
+    Projects {
+        command: ProjectCommand,
+    },
+    /// Preview tool-free Claude Code Work in the selected project.
+    Claude {
+        text: String,
+        #[serde(default)]
+        resume: bool,
+    },
+    /// Preview explicit Work in the selected OpenCode session.
+    SendToSession {
+        text: String,
+    },
     /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
     /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
     Workflow {
@@ -338,6 +370,19 @@ pub enum ControlReply {
     /// `hex agent`: X's phase, task, and events (the `x-agent` crate's snapshot).
     Agent {
         snapshot: serde_json::Value,
+    },
+    AgentDoctor {
+        report: serde_json::Value,
+        lines: String,
+        ready: bool,
+    },
+    AgentProjects {
+        projects: Vec<x_agent::projects::Project>,
+        registered: bool,
+    },
+    AgentSessions {
+        sessions: Vec<x_agent::harness::Session>,
+        selected: bool,
     },
     Error {
         code: String,

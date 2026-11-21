@@ -28,6 +28,47 @@ cargo test -p x-agent --test live -- --ignored --test-threads=1
 For Rune UI changes, regenerate and inspect golden screenshots on Linux,
 using the repository's `AGENTS.md` instructions before merging.
 
+## Current X master-plan acceptance gate
+
+These checks are still **not evidence of a successful live run** until an
+operator records the actual results, machine and commit. The merged Rust unit
+tests do not substitute for any of the following.
+
+1. On a clean second person's Hyprland account, run the current installer,
+   `hex agent doctor`, service start/stop, and an explicit free-Decider setup
+   with `hex agent key set`. Run 20 real spoken commands, including installed
+   Flatpak apps, loose window phrasings, two matching windows, an Undo, network
+   offline behavior and a wake-word injection attempt. Require at least
+   **18 correct on first attempt**, no destructive action without its required
+   approval, a voice response to every ambiguity and a green doctor report.
+2. Execute both ignored live Hyprland suites only in a disposable session:
+
+   ```sh
+   cargo test --locked -p x-agent --test live -- --ignored --test-threads=1 --nocapture
+   cargo test --locked -p x-agent -- --ignored live_hyprland --test-threads=1
+   ```
+
+3. Measure 50 local CLI round trips using
+   `scripts/smoke-x/bench.sh hex 50`, and separately measure real
+   network Decider and action/verify p95. The bench script intentionally
+   **does not** measure model, microphone or actual action latency. Do not
+   claim the proposed 150ms/1.8s figures without physical measurements.
+4. Test the headless Sway and X11 fixtures in CI, and real desktops where
+   possible. KDE Plasma 6/KWin and GNOME Wayland must be reported as
+   **experimental or unsupported** until their dedicated live tests pass.
+   GNOME's companion extension is an owner decision, not an implied deliverable.
+5. Confirm the user control socket is user-owned and mode 0600, its parent
+   directory is 0700, and no logs contain voice transcripts, window titles,
+   selected text or the OpenRouter key. Check this on an installed service,
+   not only by reading the source.
+6. Validate that the real release artifact retains privacy settings, grants,
+   stored workflows and rollback semantics, and that the published website
+   does not overstate the supported Linux desktops.
+
+Unresolved: a second person's live Phase 1 exit run, user-machine performance
+numbers, real KDE Wayland smoke, any GNOME Wayland companion extension, and
+owner authorization for tags/AUR publishing.
+
 ## Physical application matrix
 
 Use a fresh install and real microphone, not injected transcript strings.
@@ -81,9 +122,10 @@ is saved. A saved out-of-range pick must be refused; never silently redirect
 it to a different window. Preflight should catch currently stale or ambiguous
 targets before side effects; execution must still recheck.
 
-Future improvement: replace ordinal picks with a native runtime chooser that
-pins and revalidates an exact window reference (ID, PID and class). Do not
-claim this exists until it is implemented and live-tested.
+X's interactive ambiguity chooser now retains and revalidates exact window
+identity (ID, PID and class) at choice time. Saved workflow `pick` values
+remain **ordinals**, not permanent identities: do not conflate the two.
+The live two-window chooser and late-window-open tests remain a release gate.
 
 ## Release checklist
 
