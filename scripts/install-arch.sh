@@ -94,6 +94,8 @@ export PATH="$HOME/.local/bin:$PATH"
 # Keep a fixed upstream version; npm writes package-lock.json alongside the
 # local install so reinstallations can reuse its locked dependency resolution.
 helper="$HOME/.local/opt/x/agent-desktop"
+# Refuse unexpected paths and unrelated commands before npm can write there.
+bash "$root/scripts/check-arch-helper.sh" "$helper" "$HOME/.local/bin/agent-desktop"
 mkdir -p "$helper"
 if [[ ! -f "$helper/package.json" ]]; then
   printf '%s\n' '{"private":true,"dependencies":{"agent-desktop":"1.1.0"}}' > "$helper/package.json"
