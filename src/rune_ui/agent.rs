@@ -30,6 +30,8 @@ pub(super) struct AgentPane {
     quick_file_preview: Option<String>,
     pending_process: Option<::x_agent::quick::processes::ProcessInfo>,
     workspace: TextEdit,
+    browser_url: TextEdit,
+    browser_title: TextEdit,
     project_choices: Vec<(String, String)>,
     project_page: usize,
     project_message: Option<String>,
@@ -60,6 +62,8 @@ impl Default for AgentPane {
             quick_file_preview: None,
             pending_process: None,
             workspace: TextEdit::default(),
+            browser_url: TextEdit::default(),
+            browser_title: TextEdit::default(),
             project_choices: Vec::new(),
             project_page: 0,
             project_message: None,
@@ -412,6 +416,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
         body = body.child(registered_projects_row(p, pane, busy));
+        body = body.child(browser_page_handoff_row(p, pane, busy));
         body = body.child(project_tests_row(p, pane, busy));
         body = body.child(recovery_review_row(p, pane));
     }
@@ -537,6 +542,59 @@ fn workspace_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
                 }
             },
         ))
+}
+
+fn browser_page_handoff_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
+    let url = TextInput::new(&pane.browser_url)
+        .placeholder(tr("https://example.com/page"))
+        .width(None)
+        .on_edit(|ui: &mut Ui| &mut ui.agent.browser_url)
+        .build(p.k)
+        .key("agent-browser-url");
+    let title = TextInput::new(&pane.browser_title)
+        .placeholder(tr("Optional page title"))
+        .width(None)
+        .on_edit(|ui: &mut Ui| &mut ui.agent.browser_title)
+        .build(p.k)
+        .key("agent-browser-title");
+    col()
+        .key("agent-browser-handoff")
+        .gap(6.0)
+        .child(text(tr("Share browser page with Work")).font(DESCRIPTION).color(p.text()))
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(url)
+                .child(title),
+        )
+        .child(button(
+            p,
+            "agent-browser-handoff-review",
+            tr("Review page handoff"),
+            if busy {
+                ButtonKind::Secondary
+            } else {
+                ButtonKind::Primary
+            },
+            |ui: &mut Ui, _| {
+                if ui.agent.is_busy() {
+                    return;
+                }
+                let url = ui.agent.browser_url.text.trim().to_owned();
+                let title = ui.agent.browser_title.text.trim().to_owned();
+                if let Err(error) =
+                    agent_host::service().plan_browser_page_to_session(&url, &title)
+                {
+                    agent_host::service().emit("error", &error);
+                }
+            },
+        ))
+        .child(
+            text(tr("Only the URL and title you type are shared with the selected session after approval. X does not read the browser or open the page."))
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        )
 }
 
 const PROJECT_CHOICES_PER_PAGE: usize = 5;
