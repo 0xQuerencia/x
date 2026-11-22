@@ -368,18 +368,20 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
             };
             #[cfg(not(windows))]
             {
-            runner.run("playerctl", &[command])?;
-            if matches!(op, Op::Play | Op::Pause) {
-                let status = runner.run("playerctl", &["status"])?;
-                let expected = if op == Op::Play { "Playing" } else { "Paused" };
-                if status.trim() != expected {
-                    return Err("Media player did not confirm the requested playback state".into());
+                runner.run("playerctl", &[command])?;
+                if matches!(op, Op::Play | Op::Pause) {
+                    let status = runner.run("playerctl", &["status"])?;
+                    let expected = if op == Op::Play { "Playing" } else { "Paused" };
+                    if status.trim() != expected {
+                        return Err(
+                            "Media player did not confirm the requested playback state".into()
+                        );
+                    }
+                    return Ok(format!("Media {expected} (verified)"));
                 }
-                return Ok(format!("Media {expected} (verified)"));
-            }
-            Ok(format!(
-                "Media {command} sent; track transition not verified"
-            ))
+                Ok(format!(
+                    "Media {command} sent; track transition not verified"
+                ))
             }
         }
     }
