@@ -510,6 +510,16 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Share owner-selected terminal stdout/stderr as untrusted Work context.
+    /// Use --stdin for up to 1200 bytes piped by the user; X runs no commands.
+    SendTerminalOutput {
+        #[arg(long)]
+        stdin: bool,
+        #[arg(num_args = 0..)]
+        text: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
     /// Plan a bounded project file-line excerpt for the selected OpenCode session.
     SendProjectFile {
         path: String,
@@ -980,6 +990,32 @@ pub fn run(command: ControlCli) -> u8 {
                 ),
                 AgentCommand::SendBrowserPage { url, title, output } => {
                     (AgentAction::SendBrowserPage { url, title }, output)
+                }
+                AgentCommand::SendTerminalOutput {
+                    stdin,
+                    text,
+                    output,
+                } => {
+                    use std::io::Read;
+                    let excerpt = if stdin {
+                        if !text.is_empty() {
+                            return fail("Use either --stdin or a literal excerpt");
+                        }
+                        let mut bytes = Vec::new();
+                        if std::io::stdin().take(1201).read_to_end(&mut bytes).is_err() {
+                            return fail("Cannot read the requested terminal input");
+                        }
+                        match String::from_utf8(bytes) {
+                            Ok(content) => content,
+                            Err(_) => return fail("Terminal output must be UTF-8 text"),
+                        }
+                    } else {
+                        text.join(" ")
+                    };
+                    if excerpt.is_empty() || excerpt.len() > 1200 {
+                        return fail("Choose 1-1200 bytes of terminal output");
+                    }
+                    (AgentAction::SendTerminalOutput { text: excerpt }, output)
                 }
                 AgentCommand::SendProjectFile {
                     path,
