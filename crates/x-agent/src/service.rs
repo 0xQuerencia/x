@@ -672,11 +672,7 @@ impl Service {
     /// Share only the owner's explicitly supplied browser URL metadata
     /// with the selected OpenCode session after a separate Work approval.
     /// No tabs are enumerated, captured or silently read.
-    pub fn plan_browser_page_to_session(
-        &self,
-        url: &str,
-        title: &str,
-    ) -> Result<Task, String> {
+    pub fn plan_browser_page_to_session(&self, url: &str, title: &str) -> Result<Task, String> {
         let session = {
             let state = self.lock();
             if state.phase.is_busy() {
