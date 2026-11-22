@@ -170,6 +170,8 @@ pub const NOT_A_COMMAND: &str = "That was dictation, not a command";
 const MAX_TYPED: usize = 300;
 
 static LAST_LAUNCHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+#[cfg(windows)]
+static LAST_VERIFIED_FOCUS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Explicitly classify every action: an added action must be reviewed before it
 /// can run without approval. In particular, close is never low-risk by default.
@@ -554,6 +556,10 @@ impl Action {
     ) -> Result<String, String> {
         let valid = self.clone().validate()?;
         stop.check()?;
+        #[cfg(windows)]
+        if valid.launches_window() {
+            LAST_VERIFIED_FOCUS.store(0, std::sync::atomic::Ordering::SeqCst);
+        }
         if let Self::Window { op, target, ws } = &valid {
             let req = crate::wm::Request {
                 op: op.clone(),
@@ -586,7 +592,14 @@ impl Action {
         }
         #[cfg(windows)]
         if let Self::Type { text } = &valid {
-            return crate::windows_input::type_text(text, stop);
+            let hwnd = LAST_VERIFIED_FOCUS.swap(0, std::sync::atomic::Ordering::SeqCst);
+            let expected = (hwnd != 0).then(|| {
+                (
+                    hwnd,
+                    LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst),
+                )
+            });
+            return crate::windows_input::type_text(text, expected, stop);
         }
         let argv = if matches!(valid, Self::Opencode) {
             let dir = session_dir("opencode");
@@ -1200,6 +1213,46 @@ pub fn wait_for_launched_focus() -> Result<(), String> {
     wait_for_launched_focus_scoped(&Cancellation::default())
 }
 
+/// Windows has no /proc or hyprctl. Require the same newly launched
+/// Win32 process *and* the same window identity to remain foreground across
+/// three samples; otherwise do not type into any window.
+#[cfg(windows)]
+pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), String> {
+    LAST_VERIFIED_FOCUS.store(0, std::sync::atomic::Ordering::SeqCst);
+    let pid = LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst);
+    if pid == 0 {
+        return Err("No launched process is available to verify".into());
+    }
+    let mut last_id: Option<String> = None;
+    let mut stable = 0;
+    for _ in 0..30 {
+        stop.check()?;
+        let observed =
+            focused().filter(|(id, actual_pid)| id.starts_with("win:") && *actual_pid == pid);
+        if let Some((id, _)) = observed {
+            if last_id.as_deref() == Some(id.as_str()) {
+                stable += 1;
+            } else {
+                last_id = Some(id.clone());
+                stable = 1;
+            }
+            if stable >= 3 {
+                let hwnd = crate::wm::native_handle(&id)
+                    .ok_or("The verified Windows window has no stable native handle")?;
+                stop.check()?;
+                LAST_VERIFIED_FOCUS.store(hwnd, std::sync::atomic::Ordering::SeqCst);
+                return Ok(());
+            }
+        } else {
+            last_id = None;
+            stable = 0;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    Err("The new Windows app never held verified foreground focus; nothing was typed".into())
+}
+
+#[cfg(not(windows))]
 pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), String> {
     let pid = LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst);
     if pid == 0 || which("hyprctl").is_none() {
