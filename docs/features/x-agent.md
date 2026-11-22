@@ -185,6 +185,22 @@ Project registration and alias editing remain in the existing CLI. Work
 must be idle before a project can be switched. A physical Rune smoke
 test is still needed to verify keyboard focus, layout and pagination.
 
+### Selecting existing OpenCode sessions in Rune
+
+The Work pane's **Find sessions** button asks the existing local OpenCode
+service for sessions scoped to the currently selected project. Up to six
+recent sessions are shown for selection; the CLI still lists all sessions.
+Selecting a listed session performs an **exact fresh provider lookup**
+before X records it, and refuses moved or disappeared sessions. Changing the
+project clears the Rune session list so stale selections are not implied
+valid. No session prompt or transcript is displayed, no job is started,
+and future Work sends still need approval.
+
+The lookup may take a few seconds and needs a running local OpenCode
+service. This is not a general process scanner, background session monitor,
+or automatic cross-project session switch. Real keyboard and layout
+acceptance in Rune remains pending.
+
 ### Owner-supplied browser metadata in Rune Work
 
 Rune's Work pane offers **Review page handoff** for a URL and optional title
