@@ -12,10 +12,11 @@ hex agent screenshot screen --output "$HOME/Pictures/x-example.png"
 
 X invokes Apple's fixed `/usr/sbin/screencapture` command to capture the
 **main display only** (noninteractive and with no shutter sound). macOS may
-ask for **Screen Recording** permission in System Settings. X must not
-attempt to bypass that permission. If the user denies it, no screenshot is
-delivered. On a multi-display Mac, the other displays are not implicitly
-captured.
+ask for **Screen Recording** permission in System Settings. X never
+bypasses that permission. Depending on macOS policy, a denial can cause a
+capture failure or a blank image, which X cannot independently distinguish
+from genuinely black content. On a multi-display Mac, the other displays
+are not implicitly captured.
 
 The screenshot is temporarily held in an X-owned, mode-0700 support folder.
 It must be a PNG of at most 24 MiB. X copies it to a **new**, mode-0600
