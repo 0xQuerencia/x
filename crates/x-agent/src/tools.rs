@@ -170,6 +170,9 @@ pub const NOT_A_COMMAND: &str = "That was dictation, not a command";
 const MAX_TYPED: usize = 300;
 
 static LAST_LAUNCHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+#[cfg(windows)]
+static LAST_VERIFIED_FOCUS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// Explicitly classify every action: an added action must be reviewed before it
 /// can run without approval. In particular, close is never low-risk by default.
@@ -554,6 +557,10 @@ impl Action {
     ) -> Result<String, String> {
         let valid = self.clone().validate()?;
         stop.check()?;
+        #[cfg(windows)]
+        if valid.launches_window() {
+            LAST_VERIFIED_FOCUS.store(0, std::sync::atomic::Ordering::SeqCst);
+        }
         if let Self::Window { op, target, ws } = &valid {
             let req = crate::wm::Request {
                 op: op.clone(),
@@ -586,7 +593,14 @@ impl Action {
         }
         #[cfg(windows)]
         if let Self::Type { text } = &valid {
-            return crate::windows_input::type_text(text, stop);
+            let hwnd = LAST_VERIFIED_FOCUS.swap(0, std::sync::atomic::Ordering::SeqCst);
+            let expected = (hwnd != 0).then(|| {
+                (
+                    hwnd,
+                    LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst),
+                )
+            });
+            return crate::windows_input::type_text(text, expected, stop);
         }
         let argv = if matches!(valid, Self::Opencode) {
             let dir = session_dir("opencode");
@@ -1205,6 +1219,7 @@ pub fn wait_for_launched_focus() -> Result<(), String> {
 /// three samples; otherwise do not type into any window.
 #[cfg(windows)]
 pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), String> {
+    LAST_VERIFIED_FOCUS.store(0, std::sync::atomic::Ordering::SeqCst);
     let pid = LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst);
     if pid == 0 {
         return Err("No launched process is available to verify".into());
@@ -1223,7 +1238,11 @@ pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), 
                 stable = 1;
             }
             if stable >= 3 {
-                return stop.check();
+                let hwnd = crate::wm::native_handle(&id)
+                    .ok_or("The verified Windows window has no stable native handle")?;
+                stop.check()?;
+                LAST_VERIFIED_FOCUS.store(hwnd, std::sync::atomic::Ordering::SeqCst);
+                return Ok(());
             }
         } else {
             last_id = None;
