@@ -329,6 +329,13 @@ pub enum AgentAction {
         command: String,
         value: String,
     },
+    /// Explicit owner-reviewed fast-forward of one X-owned Git worktree.
+    IntegrateFastForward {
+        project: String,
+        run_id: String,
+        task_id: String,
+        start_commit: String,
+    },
     /// What X can see right now: the focused window and what is selected (never the text).
     Context,
     /// The words that make speech a command: `list`, `add <word>`, `remove <word>`, `set <word>`.
