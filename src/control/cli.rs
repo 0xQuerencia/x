@@ -501,6 +501,16 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Plan a bounded project file-line excerpt for the selected OpenCode session.
+    SendProjectFile {
+        path: String,
+        #[arg(long, default_value_t = 1)]
+        line: u32,
+        #[arg(long, default_value_t = 10)]
+        count: u32,
+        #[command(flatten)]
+        output: Output,
+    },
     /// List or select an existing OpenCode session for the chosen workspace.
     Sessions {
         #[command(subcommand)]
@@ -934,6 +944,19 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Heard { .. } => unreachable!("heard handled locally"),
                 AgentCommand::Key { .. } => unreachable!("key handled locally"),
                 AgentCommand::Context { output } => (AgentAction::Context, output),
+                AgentCommand::SendProjectFile {
+                    path,
+                    line,
+                    count,
+                    output,
+                } => (
+                    AgentAction::SendProjectFile {
+                        path,
+                        start_line: line,
+                        line_count: count,
+                    },
+                    output,
+                ),
                 AgentCommand::Workflow {
                     command,
                     mut value,

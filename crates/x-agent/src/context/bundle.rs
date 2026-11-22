@@ -15,6 +15,7 @@ pub enum Source {
     ErrorLog,
     GitDiff,
     FileLocation,
+    ProjectFileExcerpt,
     BrowserPage,
     Screenshot,
 }
@@ -155,6 +156,110 @@ impl Bundle {
             redaction: Redaction::NotRequired,
             text: label,
             truncated: false,
+        });
+        Ok(())
+    }
+
+    /// Explicit, owner-selected project file content, never an implicit file search.
+    /// The 900-byte bound also keeps the native Work plan below MAX_INPUT.
+    pub fn push_project_file_excerpt(
+        &mut self,
+        project: &Path,
+        relative_file: &Path,
+        start_line: u32,
+        line_count: u32,
+        captured_at: u64,
+    ) -> Result<(), String> {
+        use std::io::Read;
+        const MAX_READ: usize = 128 * 1024;
+        const MAX_SEND: usize = 900;
+
+        self.ensure_room()?;
+        if start_line == 0 || !(1..=20).contains(&line_count) {
+            return Err("Choose a starting line and between 1 and 20 lines".into());
+        }
+        if relative_file.is_absolute()
+            || relative_file
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+        {
+            return Err("Choose a project-relative path without parent traversal".into());
+        }
+        let root = project
+            .canonicalize()
+            .map_err(|_| "The project is unavailable")?;
+        let file = root
+            .join(relative_file)
+            .canonicalize()
+            .map_err(|_| "The selected file is unavailable")?;
+        let relative = file
+            .strip_prefix(&root)
+            .map_err(|_| "The file is outside the selected project")?;
+        if !file.is_file()
+            || relative.components().any(|part| match part {
+                Component::Normal(name) => {
+                    let text = name.to_string_lossy();
+                    let lower = text.to_ascii_lowercase();
+                    text.starts_with('.')
+                        || matches!(
+                            lower.as_str(),
+                            "node_modules" | "secrets" | "credentials.json"
+                        )
+                        || lower.ends_with(".pem")
+                        || lower.ends_with(".key")
+                }
+                _ => true,
+            })
+        {
+            return Err("Hidden or sensitive file paths cannot be attached".into());
+        }
+        let label = relative.display().to_string();
+        if label.len() > 160 || label.chars().any(char::is_control) {
+            return Err("File path is too long or contains control characters".into());
+        }
+        let mut reader = std::fs::File::open(&file).map_err(|_| "Cannot open the file")?;
+        let mut data = Vec::new();
+        reader
+            .by_ref()
+            .take((MAX_READ + 1) as u64)
+            .read_to_end(&mut data)
+            .map_err(|_| "Cannot read the file")?;
+        if data.len() > MAX_READ {
+            return Err("Choose a file smaller than 128 KiB".into());
+        }
+        let text = String::from_utf8(data).map_err(|_| "Only UTF-8 files can be shared")?;
+        let selected = text
+            .lines()
+            .enumerate()
+            .skip(start_line as usize - 1)
+            .take(line_count as usize)
+            .map(|(idx, line)| format!("{}: {line}", idx + 1))
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            return Err("The selected line is outside this file".into());
+        }
+        let (clean, redacted) = redact(&selected.join("\n"));
+        let content = format!("File: {label}\n{clean}");
+        let room = MAX_TOTAL_BYTES.saturating_sub(self.text_bytes());
+        if room == 0 {
+            return Err("The context bundle is full".into());
+        }
+        let (content, truncated) = truncate_utf8(&content, MAX_SEND.min(room));
+        if content.is_empty() {
+            return Err("The context bundle is full".into());
+        }
+        self.items.push(Attachment {
+            source: Source::ProjectFileExcerpt,
+            captured_at,
+            scope: Scope::Project,
+            sensitivity: Sensitivity::Private,
+            redaction: if redacted {
+                Redaction::Applied
+            } else {
+                Redaction::NotRequired
+            },
+            text: content,
+            truncated,
         });
         Ok(())
     }
@@ -443,6 +548,58 @@ mod tests {
                 .push_browser_page("file:///etc/shadow", "", 0)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn chosen_file_lines_are_project_scoped_and_redacted() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("sample.rs"),
+            "fn demo() {}\npassword=do-not-leak\nprintln!(\"ok\");",
+        )
+        .unwrap();
+        let mut bundle = Bundle::default();
+        bundle
+            .push_project_file_excerpt(tmp.path(), Path::new("sample.rs"), 1, 3, 15)
+            .unwrap();
+        let attached = &bundle.items[0];
+        assert_eq!(attached.source, Source::ProjectFileExcerpt);
+        assert_eq!(attached.sensitivity, Sensitivity::Private);
+        assert_eq!(attached.redaction, Redaction::Applied);
+        assert!(attached.text.contains("1: fn demo"));
+        assert!(!attached.text.contains("do-not-leak"));
+        assert!(
+            bundle
+                .render_untrusted()
+                .unwrap()
+                .contains("project_file_excerpt")
+        );
+    }
+
+    #[test]
+    fn file_excerpts_refuse_hidden_paths_and_unbounded_selection() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".env"), "secret").unwrap();
+        std::fs::write(tmp.path().join("demo.rs"), "one\ntwo\n").unwrap();
+        let mut bundle = Bundle::default();
+        for forbidden in ["../demo.rs", ".env", "/etc/passwd", "file.key"] {
+            assert!(
+                bundle
+                    .push_project_file_excerpt(tmp.path(), Path::new(forbidden), 1, 2, 5)
+                    .is_err()
+            );
+        }
+        assert!(
+            bundle
+                .push_project_file_excerpt(tmp.path(), Path::new("demo.rs"), 5, 1, 5)
+                .is_err()
+        );
+        assert!(
+            bundle
+                .push_project_file_excerpt(tmp.path(), Path::new("demo.rs"), 1, 21, 5)
+                .is_err()
+        );
+        assert!(bundle.items.is_empty());
     }
 
     #[test]

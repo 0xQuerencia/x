@@ -938,6 +938,14 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Ok(_) => snapshot(0),
             Err(error) => ControlReply::error("refused", error),
         },
+        AgentAction::SendProjectFile {
+            path,
+            start_line,
+            line_count,
+        } => match svc.plan_project_file_to_session(&path, start_line, line_count) {
+            Ok(_) => snapshot(0),
+            Err(error) => ControlReply::error("refused", error),
+        },
         AgentAction::Projects { command } => projects::handle(svc, command),
         AgentAction::Sessions { resume } => sessions::handle(svc, resume),
         AgentAction::Doctor => unreachable!("doctor is handled before initializing X"),

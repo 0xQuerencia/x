@@ -312,6 +312,12 @@ pub enum AgentAction {
     SendToSession {
         text: String,
     },
+    /// Explicitly selected project file lines, shared with a session after approval.
+    SendProjectFile {
+        path: String,
+        start_line: u32,
+        line_count: u32,
+    },
     /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
     /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
     Workflow {

@@ -135,9 +135,19 @@ The same bundle contract supports bounded user-chosen log and Git diff excerpts,
 project-scoped file-line references and query-stripped browser page metadata
 with credential-like URL paths and titles redacted.
 Screenshot references require explicit screen permission; **image bytes are not
-automatically captured or sent**. Only the selected-text handoff is wired into
-the command surface in this slice. Future connectors must request separate
-permission and use these typed APIs rather than ad-hoc string interpolation.
+automatically captured or sent**. Selected text and explicit project-file
+excerpts are wired into the command surface. Other sources still need separate
+permissioned connectors rather than ad-hoc string interpolation.
+
+
+
+The CLI additionally accepts `hex agent send-project-file src/main.rs --line 5 --count 10`
+after explicitly selecting a project and an OpenCode session. X reads only the
+chosen 1–20 UTF-8 lines, refuses hidden/out-of-project paths, redacts common
+credential lines, and caps the excerpt to 900 bytes. The handoff uses the normal
+**Work approval** and selection-only harness mode; it does not grant file edits
+or scan surrounding files. Other browser and screen capture paths remain
+unwired until their own permissions and user-facing controls are implemented.
 
 ### Owner-approved isolated project tests
 
