@@ -1028,6 +1028,9 @@ const SESSION_KEYS: &[&str] = &[
     "HYPRLAND_INSTANCE_SIGNATURE",
     "SWAYSOCK",
     "I3SOCK",
+    // KDE's experimental KWin backend remains disabled unless explicitly
+    // enabled in the same graphical session that starts or restarts X.
+    "X_ENABLE_EXPERIMENTAL_KDE",
     // The window's cursor theme and input method.
     "XCURSOR_THEME",
     "XCURSOR_SIZE",
@@ -1202,11 +1205,23 @@ mod tests {
         assert!(body.contains("HYPRLAND_INSTANCE_SIGNATURE=\"\"\n"));
         assert!(body.contains("SWAYSOCK=\"\"\n"));
         assert!(body.contains("I3SOCK=\"\"\n"));
+        assert!(body.contains("X_ENABLE_EXPERIMENTAL_KDE=\"\"\n"));
         assert!(body.contains("XCURSOR_THEME=\"Adwaita\"\n"));
         assert!(body.contains("LANG=\"de_DE.UTF-8\"\n"));
         assert!(!body.contains("XDG_DATA_DIRS"));
         assert!(!body.contains("LC_ALL"));
         assert!(environment_line("DISPLAY", ":0\nEVIL=yes").is_err());
+    }
+
+    #[test]
+    fn kde_opt_in_survives_systemd_session_environment() {
+        let body = session_environment(|key| {
+            (key == "X_ENABLE_EXPERIMENTAL_KDE").then(|| "1".to_owned())
+        })
+        .unwrap();
+        assert!(body.contains("X_ENABLE_EXPERIMENTAL_KDE=\"1\"\n"));
+        assert!(body.contains("XDG_CURRENT_DESKTOP=\"\"\n"));
+        assert!(environment_line("X_ENABLE_EXPERIMENTAL_KDE", "1\nEVIL=1").is_err());
     }
 
     #[cfg(unix)]
