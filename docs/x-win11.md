@@ -72,7 +72,9 @@ until the relevant real-device matrix and packaged artifact are validated.
 The X Actions path can now wait for a newly started app window to become the
 foreground Win32 window **only when its HWND identity and process ID match
 three consecutive observations**. This supports a cautious launch-then-type
-sequence on Windows without Linux's `/proc` or `hyprctl`. An app that delegates
+sequence on Windows without Linux's `/proc` or `hyprctl`. The subsequent Windows Unicode
+typing path also rejects a changed HWND or PID **immediately before each
+character**, rather than trusting only the prior focus wait. An app that delegates
 to a different process, a stolen focus, unavailable window enumeration, or a
 slow startup fails closed: X refuses to type rather than guessing which window
 should receive the text. This is not yet evidence of live Windows 11 typing QA.
