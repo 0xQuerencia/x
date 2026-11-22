@@ -1,10 +1,14 @@
 //! On-demand Wayland screenshot capture. Private vision captures stay in memory;
 //! CLI-requested captures are written only to a user-selected or Pictures path.
+//! On Windows, explicit full-screen captures are BMP; window/region are refused.
 //! No hooks, polling, uploads or persistent screenshot history.
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "linux")]
 const MAX_PNG: usize = 4 * 1024 * 1024;
+
+#[cfg(windows)]
+mod win;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
@@ -67,7 +71,8 @@ pub fn capture_for_decider(app: &str, observed_title: &str) -> Result<Vec<u8>, S
     }
 }
 
-/// Return a PNG without leaving a private screenshot on disk.
+/// Return a local screenshot image without leaving it on disk.
+/// Linux returns PNG; explicit Windows full-screen capture returns BMP.
 pub fn capture(mode: Mode) -> Result<Vec<u8>, String> {
     #[cfg(target_os = "linux")]
     {
@@ -107,7 +112,18 @@ pub fn capture(mode: Mode) -> Result<Vec<u8>, String> {
         }
         Ok(png)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        // Windows captures are local BMP bytes. This path is never used by
+        // X's automatic visual Decider, which remains Linux/Hyprland-only.
+        match mode {
+            Mode::Screen => win::capture_screen_bmp(),
+            Mode::Window | Mode::Region => {
+                Err("Windows window/region screenshot capture is not supported yet".into())
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = mode;
         Err("Screenshots currently require Wayland on Linux".into())
@@ -294,12 +310,22 @@ fn region_geometry() -> Result<String, String> {
 
 /// Explicitly save a user-requested screenshot, never a model's private image.
 pub fn save(mode: Mode, output: Option<&Path>) -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    if output.is_some_and(|path| {
+        !path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("bmp"))
+    }) {
+        return Err("Windows screenshots must be saved with a .bmp extension".into());
+    }
     let png = capture(mode)?;
     let path = if let Some(path) = output {
         path.to_path_buf()
     } else {
+        let extension = if cfg!(windows) { "bmp" } else { "png" };
         let name = format!(
-            "X-screenshot-{}.png",
+            "X-screenshot-{}.{extension}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| "System clock is not set")?
