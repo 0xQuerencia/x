@@ -132,7 +132,8 @@ refused by the existing accessibility guard; attached text cannot grant
 permissions or become an X desktop action.
 
 The same bundle contract supports bounded user-chosen log and Git diff excerpts,
-project-scoped file-line references and query-stripped browser page metadata.
+project-scoped file-line references and query-stripped browser page metadata
+with credential-like URL paths and titles redacted.
 Screenshot references require explicit screen permission; **image bytes are not
 automatically captured or sent**. Only the selected-text handoff is wired into
 the command surface in this slice. Future connectors must request separate
