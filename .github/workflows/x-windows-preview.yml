@@ -19,6 +19,8 @@ on:
       - "resources/**"
       - "assets/**"
       - "scripts/build*"
+      - "scripts/install-win11-preview.ps1"
+      - "scripts/uninstall-win11-preview.ps1"
 
 permissions:
   contents: read
@@ -84,6 +86,30 @@ jobs:
           "$sha  x.exe" | Set-Content -Encoding ascii dist/SHA256SUMS
           "Unsigned developer preview only. No real Windows 11 desktop and microphone acceptance has been recorded." |
             Set-Content -Encoding utf8 dist/README-preview.txt
+      - name: Smoke-test the isolated X preview install and build ZIP
+        shell: pwsh
+        run: |
+          $originalLocal = $env:LOCALAPPDATA
+          $originalRoaming = $env:APPDATA
+          try {
+            $env:LOCALAPPDATA = "$env:RUNNER_TEMP/x-preview-local"
+            $env:APPDATA = "$env:RUNNER_TEMP/x-preview-roaming"
+            New-Item -ItemType Directory -Force $env:LOCALAPPDATA, $env:APPDATA | Out-Null
+            & ./scripts/install-win11-preview.ps1 -Executable (Resolve-Path dist/x.exe)
+            & "$env:LOCALAPPDATA/XPreview/x.exe" --version
+            if ($LASTEXITCODE -ne 0) { throw "Installed X preview did not launch" }
+            & ./scripts/install-win11-preview.ps1 -Executable (Resolve-Path dist/x.exe)
+            & ./scripts/uninstall-win11-preview.ps1
+            if (Test-Path "$env:LOCALAPPDATA/XPreview/x.exe") { throw "Preview uninstall left its executable" }
+          } finally {
+            $env:LOCALAPPDATA = $originalLocal
+            $env:APPDATA = $originalRoaming
+          }
+          Copy-Item scripts/install-win11-preview.ps1 dist/
+          Copy-Item scripts/uninstall-win11-preview.ps1 dist/
+          Compress-Archive -Path dist/x.exe, dist/install-win11-preview.ps1, dist/uninstall-win11-preview.ps1, dist/README-preview.txt -DestinationPath dist/x-win11-preview-x64.zip
+          $sha = (Get-FileHash dist/x-win11-preview-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Add-Content -Encoding ascii dist/SHA256SUMS "$sha  x-win11-preview-x64.zip"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: x-win11-preview-${{ github.sha }}
@@ -109,6 +135,7 @@ jobs:
           cd dist
           sha256sum -c SHA256SUMS
           test -s x.exe
+          test -s x-win11-preview-x64.zip
       - name: Publish experimental prerelease
         env:
           GH_TOKEN: ${{ github.token }}
@@ -134,9 +161,10 @@ jobs:
           with SmartScreen or at runtime. Avoid using it for important work.
 
           See [Windows QA](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/docs/x-win11.md).
-          This is a portable preview binary, **not an installer**.
+          This is an unsigned portable preview with a separate X-only install/uninstall
+          script in the ZIP. It does not install, sign or update official Hex.
           EOF
-          gh release create "$tag" dist/x.exe dist/SHA256SUMS dist/README-preview.txt \
+          gh release create "$tag" dist/x.exe dist/x-win11-preview-x64.zip dist/SHA256SUMS dist/README-preview.txt \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "X Windows 11 experimental preview ($short)" \
