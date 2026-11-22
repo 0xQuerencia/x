@@ -59,8 +59,8 @@ fn require_private_stage() -> Result<PathBuf, String> {
         .join("X");
     let dir = root.join("screen-capture");
     fs::create_dir_all(&dir).map_err(|_| "Cannot create the screenshot staging folder")?;
-    let meta = fs::symlink_metadata(&dir)
-        .map_err(|_| "Cannot inspect the screenshot staging folder")?;
+    let meta =
+        fs::symlink_metadata(&dir).map_err(|_| "Cannot inspect the screenshot staging folder")?;
     if !meta.is_dir() || meta.file_type().is_symlink() || meta.uid() != unsafe { libc::geteuid() } {
         return Err("Refusing a linked or unowned screenshot staging folder".into());
     }
@@ -119,9 +119,9 @@ pub(super) fn save(mode: Mode, explicit: Option<&Path>) -> Result<PathBuf, Strin
         .spawn()
         .map_err(|_| "macOS screencapture is unavailable")?;
     wait_screencapture(child)?;
-    let info = fs::symlink_metadata(&stage.0)
-        .map_err(|_| "macOS did not write the screenshot")?;
-    if !info.file_type().is_file() || info.file_type().is_symlink()
+    let info = fs::symlink_metadata(&stage.0).map_err(|_| "macOS did not write the screenshot")?;
+    if !info.file_type().is_file()
+        || info.file_type().is_symlink()
         || info.uid() != unsafe { libc::geteuid() }
         || info.len() > MAX_PNG as u64
     {
