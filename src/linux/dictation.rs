@@ -191,8 +191,16 @@ impl DictationOutput {
         started: Instant,
         recording: Option<crate::history::Recording>,
     ) -> Result<String> {
+        use crate::agent_host::{self, VoiceMode};
+
+        let voice = if paster.is_some() && crate::labs::x_agent() {
+            agent_host::voice_mode()
+        } else {
+            VoiceMode::Dictate
+        };
+        let smart_command = voice == VoiceMode::Smart && agent_host::intercept(voice, &raw_text);
         let context = crate::linux::context::capture();
-        let processed = if raw {
+        let processed = if raw || smart_command {
             crate::dictation::processor::Processed::unchanged(raw_text.trim())
         } else {
             let modes = self
@@ -207,7 +215,8 @@ impl DictationOutput {
         }
         let printed = paster.is_none();
         if let Some(paster) = paster
-            && !crate::agent_host::intercept(&processed.text)
+            && !smart_command
+            && (voice == VoiceMode::Smart || !agent_host::intercept(voice, &processed.text))
         {
             paster.paste(&processed.text)?;
             crate::agent_host::record_insertion(&processed.text);

@@ -528,11 +528,11 @@ pub fn record_insertion(text: &str) {
 /// Called with a finished dictation before it is pasted: true when X took it, so it is
 /// not typed. Dictate mode, X off, and an Auto transcript without the prefix return false.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub fn intercept(text: &str) -> bool {
+pub fn intercept(mode: VoiceMode, text: &str) -> bool {
     if !crate::labs::x_agent() {
         return false;
     }
-    let (mode, command) = match voice_mode() {
+    let (mode, command) = match mode {
         VoiceMode::Dictate => return false,
         VoiceMode::Smart => {
             return match service().plan_smart(text.trim()) {

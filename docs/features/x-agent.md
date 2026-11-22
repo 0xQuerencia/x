@@ -79,6 +79,14 @@ planner whether speech is a command. A planner error is reported and consumed; i
 passed to the focused app as dictation. Escape cancels an active Agent task while the Agent
 pane is selected.
 
+On Linux, use `x agent voice smart` with your usual dictation shortcut. Try
+“open Firefox” without a wake word. Smart checks the original transcript
+before dictation rewrites. Recognized commands go through the normal approval
+policy. Speech classified as dictation goes through your usual processing and
+paste. With the planner off, Smart only recognizes built-in commands. A remote
+planner receives transcripts that the local rules could not classify, including
+ordinary dictation. Smart only runs after you use the shortcut.
+
 **The Agent shortcut.** Bind `hex agent toggle` (and `hex agent stop`) to a key in your
 desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
 once: X refuses to start while any task or recording of its own is in flight.
