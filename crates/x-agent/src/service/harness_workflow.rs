@@ -12,7 +12,7 @@ use crate::workflows::dag::{Graph, Job};
 use crate::workflows::harness_exec::{
     ApprovedHarnessExecutor, Assignment, Proof, approval_scope, to_kind,
 };
-use crate::workflows::recovery::{Claim, Journal};
+use crate::workflows::recovery::{Claim, Journal, State};
 use crate::workflows::scheduler::{self, Outcome};
 use crate::worktrees::{Manager, OwnedWorktree};
 
@@ -36,6 +36,42 @@ struct PlannedJob {
     project: Project,
     commit: String,
     adapter: Arc<dyn Adapter>,
+}
+
+fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
+    claims.sort_by(|a, b| {
+        a.run_id
+            .cmp(&b.run_id)
+            .then_with(|| a.node_id.cmp(&b.node_id))
+    });
+    let jobs = claims
+        .into_iter()
+        .map(|claim| {
+            let (status, needs_reconciliation) = match claim.state {
+                State::Claimed => ("possibly_delivered", true),
+                State::Verified => ("verified", false),
+                State::Failed => ("failed", true),
+                State::Unverified => ("unverified", true),
+                State::Cancelled => ("cancelled", true),
+            };
+            serde_json::json!({
+                "run_id": claim.run_id,
+                "node_id": claim.node_id,
+                "status": status,
+                "attempt": claim.attempt,
+                "evidence_recorded": claim.evidence_id.is_some(),
+                "requires_provider_check_before_retry": needs_reconciliation,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "count": jobs.len(),
+        "jobs": jobs,
+        "executed": false,
+        "retried": false,
+        "provider_checked": false,
+        "note": "A status record is not evidence of delivery. Never retry without an independent provider check and a new approval.",
+    })
 }
 
 fn reconciliation_preview(mut claims: Vec<Claim>) -> serde_json::Value {
@@ -78,6 +114,22 @@ impl Service {
             .ok_or("Could not locate X's local data directory")?;
         let claims = Journal::new(support.join("workflow-journal")).uncertain()?;
         Ok(reconciliation_preview(claims))
+    }
+
+    /// Read-only local claim history. Does not expose prompts, fingerprints,
+    /// provider evidence identifiers or any token needed to forge approval.
+    pub fn coding_claims_summary(&self) -> Result<serde_json::Value, String> {
+        let (dir, _) = self
+            .workflow_dirs
+            .lock()
+            .map_err(|_| "Workflow storage is unavailable")?
+            .clone()
+            .ok_or("Workflow storage is not configured")?;
+        let support = dir
+            .parent()
+            .ok_or("Could not locate X's local data directory")?;
+        let claims = Journal::new(support.join("workflow-journal")).snapshot()?;
+        Ok(claim_status_preview(claims))
     }
 
     pub fn plan_graph_workflow(&self, id: &str) -> Result<Task, String> {
@@ -377,6 +429,47 @@ mod reconciliation_tests {
         assert!(!rendered.contains("fingerprint"));
         assert!(!rendered.contains("ses_private_provider_id"));
         assert!(!rendered.contains("private-coding-task"));
+    }
+
+    #[test]
+    fn full_claim_preview_is_sorted_and_does_not_expose_private_evidence() {
+        let run = Uuid::new_v4();
+        let claims = vec![
+            Claim {
+                run_id: run,
+                node_id: "z_job".into(),
+                request_fingerprint: "private-fingerprint".into(),
+                attempt: 2,
+                state: State::Failed,
+                evidence_id: Some("ses_private".into()),
+            },
+            Claim {
+                run_id: run,
+                node_id: "a_job".into(),
+                request_fingerprint: "even-more-private".into(),
+                attempt: 1,
+                state: State::Verified,
+                evidence_id: Some("provider_secret".into()),
+            },
+        ];
+        let report = claim_status_preview(claims);
+        assert_eq!(report["count"], 2);
+        assert_eq!(report["jobs"][0]["node_id"], "a_job");
+        assert_eq!(report["jobs"][0]["status"], "verified");
+        assert_eq!(report["jobs"][1]["status"], "failed");
+        assert_eq!(report["jobs"][1]["attempt"], 2);
+        assert_eq!(report["jobs"][1]["requires_provider_check_before_retry"], true);
+        assert_eq!(report["executed"], false);
+        assert_eq!(report["provider_checked"], false);
+        let text = report.to_string();
+        for private in [
+            "fingerprint",
+            "private",
+            "provider_secret",
+            "ses_private",
+        ] {
+            assert!(!text.contains(private));
+        }
     }
 
     #[test]
