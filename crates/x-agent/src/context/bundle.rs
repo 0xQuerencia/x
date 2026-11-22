@@ -185,7 +185,9 @@ impl Bundle {
         {
             return Err("Choose a project-relative path without parent traversal".into());
         }
-        let root = project.canonicalize().map_err(|_| "The project is unavailable")?;
+        let root = project
+            .canonicalize()
+            .map_err(|_| "The project is unavailable")?;
         let file = root
             .join(relative_file)
             .canonicalize()
@@ -199,7 +201,10 @@ impl Bundle {
                     let text = name.to_string_lossy();
                     let lower = text.to_ascii_lowercase();
                     text.starts_with('.')
-                        || matches!(lower.as_str(), "node_modules" | "secrets" | "credentials.json")
+                        || matches!(
+                            lower.as_str(),
+                            "node_modules" | "secrets" | "credentials.json"
+                        )
                         || lower.ends_with(".pem")
                         || lower.ends_with(".key")
                 }
@@ -563,7 +568,12 @@ mod tests {
         assert_eq!(attached.redaction, Redaction::Applied);
         assert!(attached.text.contains("1: fn demo"));
         assert!(!attached.text.contains("do-not-leak"));
-        assert!(bundle.render_untrusted().unwrap().contains("project_file_excerpt"));
+        assert!(
+            bundle
+                .render_untrusted()
+                .unwrap()
+                .contains("project_file_excerpt")
+        );
     }
 
     #[test]
