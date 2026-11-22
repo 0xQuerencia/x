@@ -19,6 +19,7 @@ on:
       - "resources/**"
       - "assets/**"
       - "scripts/build*"
+      - "scripts/write-preview-manifest.py"
 
 permissions:
   contents: read
@@ -78,6 +79,12 @@ jobs:
             'KDE agent requires kdotool, Plasma 6 Wayland and X_ENABLE_EXPERIMENTAL_KDE=1.' \
             'Not an installer, .deb, .rpm, or signed stable release.' \
             > dist/README-preview.txt
+          python3 scripts/write-preview-manifest.py create \
+            --directory dist --source-sha "$GITHUB_SHA" --platform linux \
+            --target x86_64-unknown-linux-gnu --compiler "$(rustc --version)" \
+            --artifact x-linux-x64
+          (cd dist && sha256sum BUILD_INFO.json >> SHA256SUMS && sha256sum --check SHA256SUMS)
+          python3 scripts/write-preview-manifest.py verify --directory dist --source-sha "$GITHUB_SHA" --platform linux
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: x-linux-preview-${{ github.sha }}
@@ -93,6 +100,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: x-linux-preview-${{ github.sha }}
@@ -103,6 +113,7 @@ jobs:
           (cd dist && sha256sum --check SHA256SUMS)
           file dist/x-linux-x64 | grep -E 'ELF 64-bit.*x86-64'
           test -s dist/x-linux-x64
+          python3 scripts/write-preview-manifest.py verify --directory dist --source-sha "$GITHUB_SHA" --platform linux
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
@@ -130,7 +141,7 @@ jobs:
           validate KDE, Hyprland, a real microphone, or all desktop actions.
           See docs/x-release-qa.md for physical acceptance criteria.
           EOF
-          gh release create "$tag" dist/x-linux-x64 dist/SHA256SUMS dist/README-preview.txt \
+          gh release create "$tag" dist/x-linux-x64 dist/SHA256SUMS dist/README-preview.txt dist/BUILD_INFO.json \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "X Linux x64 experimental preview ($short)" \
