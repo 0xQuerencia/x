@@ -401,7 +401,11 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         .key("agent-body")
         .gap(16.0)
         .child(mode_row)
-        .child(capture)
+        .child(capture);
+    if let Some(task) = &snapshot.task {
+        body = body.child(task_card(p, snapshot, task));
+    }
+    body = body
         .child(voice_row)
         .child(autonomy_control)
         .child(text(tr("Autonomous: safe Actions and granted apps run without repeated approval. Work and protected actions still ask."))
@@ -414,9 +418,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         body = body.child(project_tests_row(p, pane, busy));
         body = body.child(recovery_review_row(p, pane));
     }
-    if let Some(task) = &snapshot.task {
-        body = body.child(task_card(p, snapshot, task));
-    } else {
+    if snapshot.task.is_none() {
         body = body.child(message(
             p,
             "agent-empty",
@@ -437,7 +439,10 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             .shrink()
             .px(24.0)
             .py(16.0)
-            .child(body),
+            .child(super::list_detail::card_scroll(
+                "agent-command-scroll",
+                body,
+            )),
     )
 }
 
