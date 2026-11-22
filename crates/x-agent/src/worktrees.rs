@@ -188,6 +188,49 @@ impl Manager {
         Ok(worktree.path.clone())
     }
 
+    /// Reconstruct ownership only from the locally generated X path and
+    /// independently verified Git common directory. Arbitrary user paths
+    /// never become trusted worktrees.
+    pub fn reattach(
+        &self,
+        project: &Project,
+        run_id: Uuid,
+        task_id: &str,
+        start_commit: &str,
+    ) -> Result<OwnedWorktree, String> {
+        if run_id.is_nil() || !valid_slug(task_id) || !valid_commit(start_commit) {
+            return Err("Enter an exact X run, task and starting commit".into());
+        }
+        let base = self.validated_base()?;
+        let path = base
+            .join(project.id.to_string())
+            .join(format!("{run_id}-{task_id}"));
+        let owned = OwnedWorktree {
+            project_id: project.id,
+            path,
+            run_id,
+            task_id: task_id.into(),
+            start_commit: start_commit.into(),
+        };
+        self.validate_owned(project, &owned)?;
+        let verified = git(
+            &project.root,
+            &[
+                "rev-parse",
+                "--verify",
+                &format!("{start_commit}^{{commit}}"),
+            ],
+        )?;
+        if verified.trim() != start_commit {
+            return Err("The recorded starting commit no longer exists".into());
+        }
+        git(
+            owned.path(),
+            &["merge-base", "--is-ancestor", start_commit, "HEAD"],
+        )?;
+        Ok(owned)
+    }
+
     /// Never delete edited, untracked, ignored or otherwise unknown files.
     /// An owner-approved cleanup uses Git without `--force` and never deletes
     /// the primary checkout.
@@ -473,6 +516,34 @@ mod tests {
         assert_eq!(
             fs::read_to_string(owned.path().join("untracked.txt")).unwrap(),
             "keep"
+        );
+    }
+
+    #[test]
+    fn reattach_accepts_only_exact_owned_paths_and_existing_ancestry() {
+        let (_dir, project, manager, sha) = fixture();
+        let run = Uuid::new_v4();
+        let owned = manager
+            .allocate(&project, run, "frontend", &sha, true)
+            .unwrap();
+        let recovered = manager.reattach(&project, run, "frontend", &sha).unwrap();
+        assert_eq!(recovered.path(), owned.path());
+        assert_eq!(recovered.start_commit(), sha);
+        assert!(manager.reattach(&project, run, "other-task", &sha).is_err());
+        assert!(
+            manager
+                .reattach(&project, run, "../frontend", &sha)
+                .is_err()
+        );
+        assert!(
+            manager
+                .reattach(&project, Uuid::nil(), "frontend", &sha)
+                .is_err()
+        );
+        assert!(
+            manager
+                .reattach(&project, run, "frontend", &"0".repeat(40))
+                .is_err()
         );
     }
 
