@@ -100,7 +100,13 @@ fn parse_window(row: &Value) -> Option<WinInfo> {
     if class.is_empty() || class.len() > 256 {
         return None;
     }
-    let ws = row.get("workspace")?.as_i64()?.clamp(0, 10);
+    // KWin can expose more desktops than X's explicit 1-10 action range.
+    // Never silently treat desktop 11 as desktop 10: that misidentifies a
+    // window's location and can make focus/move verification unsafe.
+    let ws = row
+        .get("workspace")?
+        .as_i64()
+        .filter(|ws| (0..=10).contains(ws))?;
     Some(WinInfo {
         id: id.to_string(),
         pid,
@@ -293,6 +299,11 @@ mod tests {
         bad["pid"] = serde_json::json!(1234);
         bad["id"] = serde_json::json!("0x1");
         assert!(parse_window(&bad).is_none());
+        let mut unsupported_desktop = good.clone();
+        unsupported_desktop["workspace"] = serde_json::json!(11);
+        assert!(parse_window(&unsupported_desktop).is_none());
+        unsupported_desktop["workspace"] = serde_json::json!(-1);
+        assert!(parse_window(&unsupported_desktop).is_none());
     }
 
     #[test]
