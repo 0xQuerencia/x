@@ -54,8 +54,9 @@ fn destination(mode: Mode, explicit: Option<&Path>) -> Result<PathBuf, String> {
 }
 
 fn require_private_stage() -> Result<PathBuf, String> {
-    let root = crate::app_paths::support_dir()
-        .map_err(|_| "X's private support folder is unavailable")?;
+    let root = dirs::data_local_dir()
+        .ok_or("X's local application support folder is unavailable")?
+        .join("X");
     let dir = root.join("screen-capture");
     fs::create_dir_all(&dir).map_err(|_| "Cannot create the screenshot staging folder")?;
     let meta = fs::symlink_metadata(&dir)
