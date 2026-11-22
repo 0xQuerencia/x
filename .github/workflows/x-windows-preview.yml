@@ -1,8 +1,8 @@
 name: X Windows 11 preview (unsigned)
 
 # Windows 11 preview: rebuild on executable-relevant changes, verify its checksum,
-# then attach it to a clearly labeled GitHub *prerelease*. No installer, signed
-# production release or updater feed is published.
+# then attach it to a clearly labeled GitHub *prerelease*. Its optional
+# per-user setup is unsigned. No signed release or updater feed is published.
 on:
   workflow_dispatch:
   push:
@@ -156,7 +156,7 @@ jobs:
           The attached SHA256SUMS is verified before publication.
 
           This build has **not** passed a real Windows 11 microphone, desktop,
-          accessibility, workflows, system-control or installer smoke test.
+          accessibility, workflows, system-control or physical installer smoke test.
           Windows virtual-desktop switching is not supported. It may fail
           with SmartScreen or at runtime. Avoid using it for important work.
 
