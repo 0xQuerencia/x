@@ -171,8 +171,7 @@ const MAX_TYPED: usize = 300;
 
 static LAST_LAUNCHED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 #[cfg(windows)]
-static LAST_VERIFIED_FOCUS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+static LAST_VERIFIED_FOCUS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Explicitly classify every action: an added action must be reviewed before it
 /// can run without approval. In particular, close is never low-risk by default.
@@ -1234,7 +1233,7 @@ pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), 
             if last_id.as_deref() == Some(id.as_str()) {
                 stable += 1;
             } else {
-                last_id = Some(id);
+                last_id = Some(id.clone());
                 stable = 1;
             }
             if stable >= 3 {
