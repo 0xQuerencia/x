@@ -32,6 +32,8 @@ pub(super) struct AgentPane {
     workspace: TextEdit,
     browser_url: TextEdit,
     browser_title: TextEdit,
+    session_choices: Vec<(String, String)>,
+    session_message: Option<String>,
     project_choices: Vec<(String, String)>,
     project_page: usize,
     project_message: Option<String>,
@@ -64,6 +66,8 @@ impl Default for AgentPane {
             workspace: TextEdit::default(),
             browser_url: TextEdit::default(),
             browser_title: TextEdit::default(),
+            session_choices: Vec::new(),
+            session_message: None,
             project_choices: Vec::new(),
             project_page: 0,
             project_message: None,
@@ -416,6 +420,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
         body = body.child(registered_projects_row(p, pane, busy));
+        body = body.child(session_picker_row(p, pane, busy));
         body = body.child(browser_page_handoff_row(p, pane, busy));
         body = body.child(project_tests_row(p, pane, busy));
         body = body.child(recovery_review_row(p, pane));
@@ -597,6 +602,101 @@ fn browser_page_handoff_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
         )
 }
 
+fn session_picker_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
+    let mut list = col()
+        .key("agent-opencode-sessions")
+        .gap(6.0)
+        .child(text(tr("OpenCode sessions")).font(DESCRIPTION).color(p.text()))
+        .child(button(
+            p,
+            "agent-find-opencode-sessions",
+            tr("Find sessions"),
+            ButtonKind::Secondary,
+            |ui: &mut Ui, _| {
+                if ui.agent.is_busy() {
+                    return;
+                }
+                match agent_host::handle(AgentAction::Sessions { resume: None }) {
+                    crate::control::ControlReply::AgentSessions { sessions, .. } => {
+                        let total = sessions.len();
+                        ui.agent.session_choices = sessions
+                            .into_iter()
+                            .take(6)
+                            .map(|session| {
+                                let label = session.title
+                                    .chars()
+                                    .filter(|ch| !ch.is_control())
+                                    .take(80)
+                                    .collect();
+                                (session.id.as_str().to_owned(), label)
+                            })
+                            .collect();
+                        ui.agent.session_message = if total > 6 {
+                            Some(format!("Showing 6 of {total}; use the CLI for the full list"))
+                        } else if total == 0 {
+                            Some("No OpenCode sessions in the selected project".into())
+                        } else {
+                            None
+                        };
+                    }
+                    crate::control::ControlReply::Error { message, .. } => {
+                        ui.agent.session_choices.clear();
+                        ui.agent.session_message = Some(message);
+                    }
+                    _ => {
+                        ui.agent.session_message =
+                            Some("The OpenCode session list was unavailable".into());
+                    }
+                }
+            },
+        ));
+    if let Some(message) = &pane.session_message {
+        list = list.child(
+            text(message.clone())
+                .key("agent-session-message")
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    }
+    for (id, title) in &pane.session_choices {
+        let session_id = id.clone();
+        list = list.child(button(
+            p,
+            &format!("agent-session-{id}"),
+            &format!("Select {title}"),
+            ButtonKind::Secondary,
+            move |ui: &mut Ui, _| {
+                if ui.agent.is_busy() {
+                    return;
+                }
+                match agent_host::handle(AgentAction::Sessions {
+                    resume: Some(session_id.clone()),
+                }) {
+                    crate::control::ControlReply::AgentSessions { selected: true, .. } => {
+                        ui.agent.session_message =
+                            Some(format!("Verified and selected {session_id}"));
+                    }
+                    crate::control::ControlReply::Error { message, .. } => {
+                        ui.agent.session_message = Some(message);
+                    }
+                    _ => {
+                        ui.agent.session_message =
+                            Some("This session could not be verified".into());
+                    }
+                }
+            },
+        ));
+    }
+    if busy {
+        list = list.child(
+            text(tr("Finish the current task before selecting a session."))
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    }
+    list
+}
+
 const PROJECT_CHOICES_PER_PAGE: usize = 5;
 
 fn registered_projects_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
@@ -666,6 +766,8 @@ fn registered_projects_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
                 match agent_host::service().select_registered_project(&project_id) {
                     Ok((project, _)) => {
                         ui.agent.workspace.text = project.root.display().to_string();
+                        ui.agent.session_choices.clear();
+                        ui.agent.session_message = None;
                         ui.agent.project_message = Some(format!("Selected {}", project.name));
                     }
                     Err(error) => {
