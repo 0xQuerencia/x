@@ -70,8 +70,10 @@ impl Bundle {
     ) -> Result<(), String> {
         if !matches!(
             (source, scope),
-            (Source::AccessibilitySelection, Scope::FocusedApp)
-                | (Source::ErrorLog | Source::GitDiff, Scope::Project)
+            (
+                Source::AccessibilitySelection,
+                Scope::FocusedApp | Scope::BrowserTab
+            ) | (Source::ErrorLog | Source::GitDiff, Scope::Project)
         ) {
             return Err("Context source and scope do not match".into());
         }

@@ -34,7 +34,7 @@ pub const APPS: &[(&str, &[&str])] = &[
     ),
     ("files", &["nautilus", "dolphin", "thunar", "pcmanfm"]),
 ];
-const BROWSERS: &[&str] = &["firefox", "chrome", "chromium", "brave"];
+pub(crate) const BROWSERS: &[&str] = &["firefox", "chrome", "chromium", "brave"];
 const SITES: &[(&str, &str)] = &[
     ("youtube", "https://www.youtube.com"),
     ("github", "https://github.com"),

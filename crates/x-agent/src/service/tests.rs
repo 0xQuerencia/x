@@ -917,6 +917,83 @@ mod contextual {
     }
 
     #[test]
+    fn browser_selection_requires_grant_and_fresh_approval_for_the_exact_session() {
+        let (service, _directory, repo) = work_rig(
+            r#"printf '%s' "$OPENCODE_CONFIG_CONTENT" > policy.json
+echo '{"type":"text","sessionID":"ses_browser","part":{"text":"received selection"}}'"#,
+        );
+        let service = service.with_session_verifier(|session| {
+            assert_eq!(session.id.as_str(), "ses_browser");
+            Ok(())
+        });
+        let workspace = service.workspace_path().unwrap();
+        let session = harness::Session::from_open_code(
+            "ses_browser".into(),
+            "Fixture",
+            &workspace,
+            &workspace,
+            1,
+        )
+        .unwrap();
+        service.select_session(session).unwrap();
+
+        let (_, windows, a11y) = crate::context::tests::editor();
+        service.set_context(Arc::new(
+            Engine::new(windows.clone(), a11y.clone()).with_primary(Arc::new(Primary(ERROR))),
+        ));
+        service.set_autonomy_mode(AutonomyMode::Autonomous);
+        assert!(service.plan_browser_selection_to_session().is_err());
+        service.set_computer_remote(true);
+        windows.focus(Some("0xb"));
+        assert!(service.plan_browser_selection_to_session().is_err());
+        service.set_computer_apps(vec!["firefox".into()]);
+        windows.focus(Some("0xa"));
+        assert!(service.plan_browser_selection_to_session().is_err());
+        windows.focus(Some("0xb"));
+        a11y.set(Err("Browser accessibility is unavailable".into()));
+        assert!(service.plan_browser_selection_to_session().is_err());
+        a11y.set(Ok(crate::context::a11y::Focus {
+            selection: Some(format!(
+                "{ERROR}\nAuthorization: Bearer browser-fixture-secret"
+            )),
+            ..Default::default()
+        }));
+        let task = service.plan_browser_selection_to_session().unwrap();
+        assert_eq!(task.phase, Phase::AwaitingApproval);
+        assert!(task.text.contains("browser_tab"));
+        assert!(task.text.contains("Cannot read properties"));
+        assert!(!task.text.contains("browser-fixture-secret"));
+        assert!(!repo.join("policy.json").exists());
+
+        service.set_computer_apps(vec![]);
+        service.approve(task.id).unwrap();
+        wait_for(&service, |state| state.phase == Phase::Failed);
+        assert!(!repo.join("policy.json").exists());
+
+        service.set_computer_apps(vec!["firefox".into()]);
+        let task = service.plan_browser_selection_to_session().unwrap();
+        windows.focus(Some("0xa"));
+        service.approve(task.id).unwrap();
+        let done = wait_for(&service, |state| state.phase == Phase::Completed);
+        assert_eq!(
+            done.task.unwrap().accepted_session.unwrap().as_str(),
+            "ses_browser"
+        );
+        let policy: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(repo.join("policy.json")).unwrap())
+                .unwrap();
+        assert_eq!(policy["permissions"][0]["effect"], "deny");
+        assert_eq!(policy["permissions"][0]["action"], "*");
+        assert!(
+            policy["policies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|permission| permission["effect"] == "deny")
+        );
+    }
+
+    #[test]
     fn a_primary_selection_is_always_shown_for_approval_even_with_trusted_actions() {
         let (s, l, _, a11y) = setup(usize::MAX);
         a11y.set(Err("the focused app does not expose accessibility".into()));

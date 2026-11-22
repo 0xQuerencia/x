@@ -323,6 +323,8 @@ pub enum AgentAction {
         url: String,
         title: String,
     },
+    /// Capture an explicit accessibility selection from the granted foreground browser.
+    SendBrowserSelection,
     /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
     /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
     Workflow {

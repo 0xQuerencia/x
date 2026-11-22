@@ -510,6 +510,11 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Preview the selected text in the focused, granted browser for OpenCode.
+    SendBrowserSelection {
+        #[command(flatten)]
+        output: Output,
+    },
     /// Plan a bounded project file-line excerpt for the selected OpenCode session.
     SendProjectFile {
         path: String,
@@ -936,6 +941,9 @@ pub fn run(command: ControlCli) -> u8 {
                         output,
                     ),
                 },
+                AgentCommand::SendBrowserSelection { output } => {
+                    (AgentAction::SendBrowserSelection, output)
+                }
                 AgentCommand::Projects { command } => {
                     use super::ProjectCommand;
                     let (command, output) = match command {

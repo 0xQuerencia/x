@@ -952,6 +952,10 @@ pub fn handle(action: AgentAction) -> ControlReply {
                 Err(error) => ControlReply::error("refused", error),
             }
         }
+        AgentAction::SendBrowserSelection => match svc.plan_browser_selection_to_session() {
+            Ok(_) => snapshot(0),
+            Err(error) => ControlReply::error("refused", error),
+        },
         AgentAction::Projects { command } => projects::handle(svc, command),
         AgentAction::Sessions { resume } => sessions::handle(svc, resume),
         AgentAction::Doctor => unreachable!("doctor is handled before initializing X"),

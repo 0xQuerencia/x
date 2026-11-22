@@ -171,6 +171,20 @@ a stale project or changed commit is refused. The resulting worktree is left
 for inspection; it is **not merged or deleted automatically**. A green test
 exit only verifies that preset's process result, not the project as a whole.
 
+### Share selected browser text
+
+With a project and an OpenCode session selected, use a desktop keybinding for
+`hex agent send-browser-selection` while the browser has focus and text is
+selected. X requires a grant for that browser and `hex agent computer remote on`
+before reading through accessibility. It rejects missing or oversized
+selections and leaves the clipboard alone.
+
+Review the redacted excerpt and selected session in the Work preview.
+Approval rechecks the browser grant and window identity before handing the
+excerpt to OpenCode with tools disabled. Focus can move to X for review.
+This command shares selected text only. It leaves tabs, console logs, and
+screenshots untouched.
+
 ### Read-only recovery claim history
 
 `hex agent workflow claims` displays every locally recorded coding job's run
