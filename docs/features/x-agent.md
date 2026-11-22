@@ -139,6 +139,23 @@ automatically captured or sent**. Only the selected-text handoff is wired into
 the command surface in this slice. Future connectors must request separate
 permission and use these typed APIs rather than ad-hoc string interpolation.
 
+### Owner-approved isolated project tests
+
+`x agent workflow test-project <registered-project-id> <suite>` plans a bounded,
+non-model-selected test on a **new isolated Git worktree** at the approved
+project's current commit. Suite is one of `cargo-workspace`, `cargo-agent`,
+`npm`, `pnpm`, `pytest`, or `go`. Tests execute arbitrary repository scripts **with the user's normal OS permissions**.
+An isolated Git worktree protects the primary checkout from ordinary writes,
+but is **not a security sandbox**: untrusted scripts can read the home directory,
+use the network or alter files elsewhere. Tests therefore **never run
+automatically**, even in Autonomous mode.
+Review and approve the exact project, commit, and preset from the Agent pane or
+`x agent approve <id>`. Stop cancels the supervised test process. A private
+one-use, exact-scope grant is consumed immediately before test execution;
+a stale project or changed commit is refused. The resulting worktree is left
+for inspection; it is **not merged or deleted automatically**. A green test
+exit only verifies that preset's process result, not the project as a whole.
+
 ### Read-only workflow graph preview
 
 Run `hex agent workflow preview <id>` to validate a saved workflow or v2

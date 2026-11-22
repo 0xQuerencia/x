@@ -127,6 +127,22 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             ),
             Err(error) => refuse(error),
         },
+        "test-project" if value.is_empty() => need("a registered project id and test suite"),
+        "test-project" => {
+            let args: Vec<_> = value.split_whitespace().collect();
+            if args.len() != 2 {
+                need(
+                    "exactly a project id and suite (cargo-workspace, cargo-agent, npm, pnpm, pytest, go)",
+                )
+            } else {
+                match x_agent::verification::test_runner::Suite::parse(args[1])
+                    .and_then(|suite| svc.plan_worktree_tests(args[0], suite).map(|_| ()))
+                {
+                    Ok(()) => super::snapshot(0),
+                    Err(error) => refuse(error),
+                }
+            }
+        }
         "run-graph" if value.is_empty() => need("a workflow id"),
         "run-graph" => match svc.plan_graph_workflow(value) {
             Ok(_) => super::snapshot(0),
@@ -158,7 +174,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, run, run-graph, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }

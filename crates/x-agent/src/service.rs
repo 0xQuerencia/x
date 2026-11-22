@@ -28,6 +28,7 @@ mod policy;
 mod project_commands;
 mod request;
 mod session_targets;
+mod test_worktree;
 mod workflow;
 pub use edit::Preview;
 use ledger::{Kind as AuditKind, Ledger};
@@ -296,6 +297,7 @@ struct State {
     /// The saved workflow waiting to run, or running.
     workflow: Option<crate::workflows::Workflow>,
     graph_workflow: Option<harness_workflow::PendingGraph>,
+    pending_tests: Option<test_worktree::PendingTests>,
     project_command: Option<project_commands::Pending>,
     create_workspace: bool,
     /// How to put back the last workflow run's changes.
@@ -394,6 +396,7 @@ impl Service {
             edit: None,
             workflow: None,
             graph_workflow: None,
+            pending_tests: None,
             project_command: None,
             create_workspace: false,
             undo: vec![],
@@ -1291,7 +1294,7 @@ impl Service {
     }
 
     fn approve_from(&self, task_id: u64, approval: Approval) -> Result<(), String> {
-        let (task, actions, is_edit, is_workflow, graph, project_command, stop) = {
+        let (task, actions, is_edit, is_workflow, graph, tests, project_command, stop) = {
             let mut s = self.lock();
             let matches_task = s.task.as_ref().is_some_and(|t| t.id == task_id);
             if !matches_task || s.phase != Phase::AwaitingApproval {
@@ -1328,6 +1331,7 @@ impl Service {
                 s.edit.is_some(),
                 s.workflow.is_some(),
                 s.graph_workflow.take(),
+                s.pending_tests.take(),
                 s.project_command.take(),
                 s.stop.clone(),
             )
@@ -1336,6 +1340,9 @@ impl Service {
         thread::spawn(move || {
             if let Some(graph) = graph {
                 return me.run_graph_workflow(graph, &stop);
+            }
+            if let Some(tests) = tests {
+                return me.run_worktree_tests(tests, &stop);
             }
             if let Some(command) = project_command {
                 return me.run_project_command(command, &stop);
@@ -1852,6 +1859,7 @@ impl Service {
         s.edit = None;
         s.workflow = None;
         s.graph_workflow = None;
+        s.pending_tests = None;
         s.project_command = None;
         set_phase(&mut s, phase);
         audit_best_effort(&mut s, AuditKind::Finished, None);
@@ -1889,6 +1897,7 @@ impl Service {
                 s.edit = None;
                 s.workflow = None;
                 s.graph_workflow = None;
+                s.pending_tests = None;
                 s.project_command = None;
                 s.actions.clear();
                 s.guard = None;
