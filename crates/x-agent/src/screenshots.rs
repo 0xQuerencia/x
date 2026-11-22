@@ -320,49 +320,49 @@ pub fn save(mode: Mode, output: Option<&Path>) -> Result<PathBuf, String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-    #[cfg(windows)]
-    if output.is_some_and(|path| {
-        !path
-            .extension()
-            .and_then(std::ffi::OsStr::to_str)
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("bmp"))
-    }) {
-        return Err("Windows screenshots must be saved with a .bmp extension".into());
-    }
-    let png = capture(mode)?;
-    let path = if let Some(path) = output {
-        path.to_path_buf()
-    } else {
-        let extension = if cfg!(windows) { "bmp" } else { "png" };
-        let name = format!(
-            "X-screenshot-{}.{extension}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| "System clock is not set")?
-                .as_millis()
-        );
-        dirs::picture_dir()
-            .or_else(dirs::home_dir)
-            .ok_or("Cannot find Pictures directory")?
-            .join(name)
-    };
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    use std::io::Write;
-    let mut file = opts
-        .open(&path)
-        .map_err(|e| format!("Cannot create screenshot {}: {e}", path.display()))?;
-    if let Err(error) = file.write_all(&png) {
-        drop(file);
-        let _ = std::fs::remove_file(&path);
-        return Err(format!("Cannot save screenshot: {error}"));
-    }
-    Ok(path)
+        #[cfg(windows)]
+        if output.is_some_and(|path| {
+            !path
+                .extension()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("bmp"))
+        }) {
+            return Err("Windows screenshots must be saved with a .bmp extension".into());
+        }
+        let png = capture(mode)?;
+        let path = if let Some(path) = output {
+            path.to_path_buf()
+        } else {
+            let extension = if cfg!(windows) { "bmp" } else { "png" };
+            let name = format!(
+                "X-screenshot-{}.{extension}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| "System clock is not set")?
+                    .as_millis()
+            );
+            dirs::picture_dir()
+                .or_else(dirs::home_dir)
+                .ok_or("Cannot find Pictures directory")?
+                .join(name)
+        };
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        use std::io::Write;
+        let mut file = opts
+            .open(&path)
+            .map_err(|e| format!("Cannot create screenshot {}: {e}", path.display()))?;
+        if let Err(error) = file.write_all(&png) {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+            return Err(format!("Cannot save screenshot: {error}"));
+        }
+        Ok(path)
     }
 }
 
