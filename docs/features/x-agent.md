@@ -135,9 +135,9 @@ The same bundle contract supports bounded user-chosen log and Git diff excerpts,
 project-scoped file-line references and query-stripped browser page metadata
 with credential-like URL paths and titles redacted.
 Screenshot references require explicit screen permission; **image bytes are not
-automatically captured or sent**. Only the selected-text handoff is wired into
-the command surface in this slice. Future connectors must request separate
-permission and use these typed APIs rather than ad-hoc string interpolation.
+automatically captured or sent**. Selected text and explicit project-file
+excerpts are wired into the command surface. Other sources still need separate
+permissioned connectors rather than ad-hoc string interpolation.
 
 
 
