@@ -38,6 +38,7 @@ struct Input {
 unsafe extern "system" {
     fn SendInput(count: u32, data: *const Input, size: i32) -> u32;
     fn GetForegroundWindow() -> *mut c_void;
+    fn GetWindowThreadProcessId(window: *mut c_void, pid: *mut u32) -> u32;
 }
 
 fn virtual_key(key: u16, up: bool) -> Input {
@@ -149,7 +150,21 @@ fn stroke(unit: u16, key_up: bool) -> Input {
     }
 }
 
-pub(crate) fn type_text(text: &str, stop: &Cancellation) -> Result<String, String> {
+fn matches_expected_focus(
+    expected: Option<(usize, u32)>,
+    hwnd: usize,
+    observed_pid: u32,
+) -> bool {
+    expected.is_none_or(|(expected_hwnd, expected_pid)| {
+        expected_hwnd != 0 && expected_hwnd == hwnd && expected_pid == observed_pid
+    })
+}
+
+pub(crate) fn type_text(
+    text: &str,
+    expected: Option<(usize, u32)>,
+    stop: &Cancellation,
+) -> Result<String, String> {
     if text.trim().is_empty() || text.chars().count() > 300 {
         return Err("Typed text must contain 1-300 characters".into());
     }
@@ -161,9 +176,22 @@ pub(crate) fn type_text(text: &str, stop: &Cancellation) -> Result<String, Strin
     if original.is_null() {
         return Err("No Windows window has focus".into());
     }
+    let mut pid = 0;
+    // SAFETY: only an opaque native window identity and process ID are read.
+    unsafe { GetWindowThreadProcessId(original, &mut pid) };
+    if !matches_expected_focus(expected, original as usize, pid) {
+        return Err("The launched app lost verified focus; no text was sent".into());
+    }
     for unit in text.encode_utf16() {
         stop.check()?;
-        if unsafe { GetForegroundWindow() } != original {
+        let current = unsafe { GetForegroundWindow() };
+        let mut current_pid = 0;
+        if !current.is_null() {
+            unsafe { GetWindowThreadProcessId(current, &mut current_pid) };
+        }
+        if current != original
+            || !matches_expected_focus(expected, current as usize, current_pid)
+        {
             return Err("Focus changed; typing was stopped".into());
         }
         let inputs = [stroke(unit, false), stroke(unit, true)];
@@ -211,6 +239,15 @@ mod tests {
             }));
             assert_eq!(*released.borrow(), expected);
         }
+    }
+
+    #[test]
+    fn text_target_must_match_the_approved_window_and_process() {
+        assert!(matches_expected_focus(None, 44, 9));
+        assert!(matches_expected_focus(Some((44, 9)), 44, 9));
+        assert!(!matches_expected_focus(Some((44, 9)), 45, 9));
+        assert!(!matches_expected_focus(Some((44, 9)), 44, 10));
+        assert!(!matches_expected_focus(Some((0, 9)), 0, 9));
     }
 
     #[test]
