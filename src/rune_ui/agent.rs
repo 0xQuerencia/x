@@ -30,6 +30,9 @@ pub(super) struct AgentPane {
     quick_file_preview: Option<String>,
     pending_process: Option<::x_agent::quick::processes::ProcessInfo>,
     workspace: TextEdit,
+    project_choices: Vec<(String, String)>,
+    project_page: usize,
+    project_message: Option<String>,
     test_project: TextEdit,
     test_suite_index: usize,
     recovery_summary: Option<String>,
@@ -57,6 +60,9 @@ impl Default for AgentPane {
             quick_file_preview: None,
             pending_process: None,
             workspace: TextEdit::default(),
+            project_choices: Vec::new(),
+            project_page: 0,
+            project_message: None,
             test_project: TextEdit::default(),
             test_suite_index: 0,
             recovery_summary: None,
@@ -405,6 +411,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     body = body.child(access_row(p, snapshot));
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
+        body = body.child(registered_projects_row(p, pane, busy));
         body = body.child(project_tests_row(p, pane, busy));
         body = body.child(recovery_review_row(p, pane));
     }
@@ -530,6 +537,130 @@ fn workspace_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
                 }
             },
         ))
+}
+
+const PROJECT_CHOICES_PER_PAGE: usize = 5;
+
+fn registered_projects_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
+    let mut list = col()
+        .key("agent-registered-projects")
+        .gap(6.0)
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(text(tr("Registered projects")).font(DESCRIPTION).color(p.text()))
+                .child(button(
+                    p,
+                    "agent-list-projects",
+                    tr("Browse projects"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        match agent_host::service().list_registered_projects() {
+                            Ok(projects) => {
+                                ui.agent.project_choices = projects
+                                    .into_iter()
+                                    .map(|project| {
+                                        (project.id.to_string(), project.name)
+                                    })
+                                    .collect();
+                                ui.agent.project_page = 0;
+                                ui.agent.project_message = if ui.agent.project_choices.is_empty() {
+                                    Some("No registered projects. Use x agent projects register to add one.".into())
+                                } else {
+                                    None
+                                };
+                            }
+                            Err(error) => {
+                                ui.agent.project_choices.clear();
+                                ui.agent.project_page = 0;
+                                ui.agent.project_message = Some(error);
+                            }
+                        }
+                    },
+                )),
+        );
+    if let Some(message) = &pane.project_message {
+        list = list.child(
+            text(message.clone())
+                .key("agent-project-message")
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    }
+    let start = pane
+        .project_page
+        .saturating_mul(PROJECT_CHOICES_PER_PAGE)
+        .min(pane.project_choices.len());
+    let end = (start + PROJECT_CHOICES_PER_PAGE).min(pane.project_choices.len());
+    for (id, name) in &pane.project_choices[start..end] {
+        let project_id = id.clone();
+        let shown = name.clone();
+        list = list.child(
+            button(
+                p,
+                &format!("agent-choose-project-{id}"),
+                &format!("Use {name}"),
+                ButtonKind::Secondary,
+                move |ui: &mut Ui, _| {
+                    if ui.agent.is_busy() {
+                        return;
+                    }
+                    match agent_host::service().select_registered_project(&project_id) {
+                        Ok((project, _)) => {
+                            ui.agent.workspace.text = project.root.display().to_string();
+                            ui.agent.project_message =
+                                Some(format!("Selected {}", project.name));
+                        }
+                        Err(error) => {
+                            ui.agent.project_message =
+                                Some(format!("Cannot select {shown}: {error}"));
+                        }
+                    }
+                },
+            ),
+        );
+    }
+    if pane.project_choices.len() > PROJECT_CHOICES_PER_PAGE {
+        let page = pane.project_page;
+        let pages = pane.project_choices.len().div_ceil(PROJECT_CHOICES_PER_PAGE);
+        list = list.child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(button(
+                    p,
+                    "agent-project-previous",
+                    tr("Previous"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        ui.agent.project_page = ui.agent.project_page.saturating_sub(1);
+                    },
+                ))
+                .child(
+                    text(format!("{} / {pages}", page + 1))
+                        .font(DESCRIPTION)
+                        .color(p.muted()),
+                )
+                .child(button(
+                    p,
+                    "agent-project-next",
+                    tr("Next"),
+                    ButtonKind::Secondary,
+                    move |ui: &mut Ui, _| {
+                        ui.agent.project_page = (ui.agent.project_page + 1).min(pages - 1);
+                    },
+                )),
+        );
+    }
+    if busy {
+        list = list.child(
+            text(tr("Finish the current task before switching projects."))
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    }
+    list
 }
 
 const TEST_SUITES: [(&str, ::x_agent::verification::test_runner::Suite); 6] = [
