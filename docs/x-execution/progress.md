@@ -84,6 +84,23 @@ still have substantial UI, integration and release-acceptance work. Do not
 claim an exact source-completion percentage without an individually weighted
 acceptance inventory.
 
+## Continuation checks on November 23, 2026
+
+These PRs are open for review. The checks below apply to their individual
+branches or named preview artifacts.
+
+| Phase | PR | Verified | Still open |
+| --- | --- | --- | --- |
+| P4.4 / P5.6 | [#185](https://github.com/0xQuerencia/x/pull/185) | The workflow executor writes structured delivery evidence before completion. Tests reopen the journal, preserve acknowledgements on failure and refuse replay or stale settlement. Linux, macOS and Windows compile CI passed. | Provider-side reconciliation when receipt is unknown, approved retries and an actual mid-run disconnect or restart. |
+| P8 | [#186](https://github.com/0xQuerencia/x/pull/186) | The published Linux preview at `143fcb480489` crashed on startup on a Ryzen 7 7435HS without AVX-512. The exact unsigned CI artifact at `d23780d5e99e068cb9d4e80376238c46864e1499` passed checksum, provenance and service lifecycle checks on the same machine. | Distribution and physical release acceptance for the fixed artifact. |
+| P3.5 / P7.1 | [#187](https://github.com/0xQuerencia/x/pull/187) | In isolated Chromium and Openbox, X refused ungranted selection capture, then reviewed and sent a redacted excerpt to a real OpenCode session using a loopback provider. The provider received neither the fixture credential nor the requested dummy skill's contents. | Automatic tab metadata, console and screenshot handoff. Additional browser and native OS coverage. |
+| P6 | [#188](https://github.com/0xQuerencia/x/pull/188) | In the native Linux app under Xvfb, the Commands controls fit at narrow widths. At 860 × 560, Work approval was visible and scrolling reached project tests and recovery. Escape discarded the preview. | Native Windows and macOS Rune acceptance, plus checks on the open project and session picker PRs. |
+
+The unsigned Windows and macOS previews at `143fcb480489` passed downloaded
+checksum, provenance and executable-format checks on Linux. The physical
+Windows and macOS install, microphone, permissions, accessibility and rollback
+checks still need those systems.
+
 ## Unfinished work across the full P0–P8 roadmap
 
 The table above tracks integrated PRs, not full roadmap completion.
