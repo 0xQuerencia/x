@@ -1,6 +1,7 @@
-//! On-demand Wayland screenshot capture. Private vision captures stay in memory;
+//! Explicit desktop screenshot capture. Private Hyprland vision stays in memory;
 //! CLI-requested captures are written only to a user-selected or Pictures path.
-//! On Windows, explicit full-screen captures are BMP; window/region are refused.
+//! Windows screen captures are BMP; macOS uses a private temporary PNG.
+//! Both refuse unsupported window/region requests rather than broadening scope.
 //! No hooks, polling, uploads or persistent screenshot history.
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,9 @@ const MAX_PNG: usize = 4 * 1024 * 1024;
 
 #[cfg(windows)]
 mod win;
+
+#[cfg(target_os = "macos")]
+mod macos;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
@@ -310,6 +314,12 @@ fn region_geometry() -> Result<String, String> {
 
 /// Explicitly save a user-requested screenshot, never a model's private image.
 pub fn save(mode: Mode, output: Option<&Path>) -> Result<PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        return macos::save(mode, output);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
     #[cfg(windows)]
     if output.is_some_and(|path| {
         !path
@@ -353,6 +363,7 @@ pub fn save(mode: Mode, output: Option<&Path>) -> Result<PathBuf, String> {
         return Err(format!("Cannot save screenshot: {error}"));
     }
     Ok(path)
+    }
 }
 
 /// No dependency, clipboard access, temp file or external process for encoding.
