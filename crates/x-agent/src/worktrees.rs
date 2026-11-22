@@ -224,10 +224,13 @@ impl Manager {
         if verified.trim() != start_commit {
             return Err("The recorded starting commit no longer exists".into());
         }
-        git(
+        let (ancestor, _) = git(
             owned.path(),
             &["merge-base", "--is-ancestor", start_commit, "HEAD"],
         )?;
+        if !ancestor {
+            return Err("The recorded starting commit is not an ancestor of this worktree".into());
+        }
         Ok(owned)
     }
 
@@ -543,6 +546,31 @@ mod tests {
         assert!(
             manager
                 .reattach(&project, run, "frontend", &"0".repeat(40))
+                .is_err()
+        );
+        assert!(
+            Command::new("git")
+                .current_dir(&project.root)
+                .args([
+                    "-c",
+                    "user.name=X test",
+                    "-c",
+                    "user.email=x@invalid.example",
+                    "-c",
+                    "core.hooksPath=",
+                    "commit",
+                    "--allow-empty",
+                    "-qm",
+                    "new primary commit",
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let newer_sha = git(&project.root, &["rev-parse", "HEAD"]).unwrap();
+        assert!(
+            manager
+                .reattach(&project, run, "frontend", newer_sha.trim())
                 .is_err()
         );
     }
