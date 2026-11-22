@@ -1,0 +1,29 @@
+name: X preview provenance safety
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/x-preview-provenance-check.yml"
+      - ".github/workflows/x-linux-preview.yml"
+      - ".github/workflows/x-windows-preview.yml"
+      - "scripts/write-preview-manifest.py"
+      - "scripts/tests/test_preview_manifest.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-provenance:
+    name: Preview manifest safety
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check unsigned preview integrity helpers
+        run: python -m unittest discover -s scripts/tests -p test_preview_manifest.py
