@@ -68,6 +68,13 @@ Recheck `x agent doctor` and live service behavior after rollback. A fresh
 install has no previous executable to restore. The installer and rollback
 still need a real clean-account acceptance run before release.
 
+A macOS release also requires the `screen_permission` and `screenshot`
+cases to be recorded as passing: capture the main display under an explicit
+local request, revoke Screen Recording, verify no protected content is leaked
+and check that unsupported window/region capture refuses. Do not mark the
+permission test passing merely because a screenshot file was created; macOS
+may return blank content when recording access is denied.
+
 ## Private local physical-acceptance record
 
 A release gate cannot infer live microphone, UI, window identity or installer
