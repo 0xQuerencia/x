@@ -30,15 +30,22 @@ using the repository's `AGENTS.md` instructions before merging.
 
 ## macOS source preview (unsigned)
 
-`x-macos-preview-<commit>` prereleases, when a macOS arm64 runner
-successfully compiles and tests X, contain a **bare executable**
-(`x-macos-arm64`), `BUILD_INFO.json`, `SHA256SUMS` and notes. The source
-build sets X-specific branding and uses **no upstream Hex signing or
-release service**. The binary is **not** a `.app`, DMG, installer,
-notarized application or stable distribution. Real macOS microphone,
-shortcut, accessibility, window-control, quarantine, app-bundle and
-process lifecycle behavior remain unverified. An unsigned CI binary
-must never be described as a ready-to-install macOS application.
+`x-macos-preview-<commit>` prereleases, when the macOS arm64 runner
+successfully compiles and tests X, contain the **bare executable**
+(`x-macos-arm64`) and a distinct unsigned **X Preview.app ZIP** called
+`x-macos-preview-arm64.zip`, together with `BUILD_INFO.json`,
+`SHA256SUMS` and notes. The bundle ID is
+`art.querencia.x.preview`, its executable matches the bare X binary
+byte-for-byte, and its Info.plist explains why microphone access may
+be requested. The build sets X-specific data and display identities
+and does not use upstream Hex signing or release infrastructure.
+
+The `.app` is **not notarized, Developer ID signed, a DMG, an installer
+or a verified macOS distribution**. Gatekeeper may refuse it; don't
+disable system protections to make an untrusted preview run. Real
+microphone, shortcut, accessibility, window-control, screen-recording,
+quarantine and process-lifecycle behavior are still unverified. CI
+bundle structure checks alone do not establish a functional Mac app.
 
 ## Preview artifact provenance
 
