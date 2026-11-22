@@ -530,11 +530,23 @@ fn workspace_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
 }
 
 const TEST_SUITES: [(&str, ::x_agent::verification::test_runner::Suite); 6] = [
-    ("Cargo workspace", ::x_agent::verification::test_runner::Suite::CargoWorkspace),
-    ("Cargo x-agent", ::x_agent::verification::test_runner::Suite::CargoAgent),
+    (
+        "Cargo workspace",
+        ::x_agent::verification::test_runner::Suite::CargoWorkspace,
+    ),
+    (
+        "Cargo x-agent",
+        ::x_agent::verification::test_runner::Suite::CargoAgent,
+    ),
     ("npm test", ::x_agent::verification::test_runner::Suite::Npm),
-    ("pnpm test", ::x_agent::verification::test_runner::Suite::Pnpm),
-    ("pytest", ::x_agent::verification::test_runner::Suite::Pytest),
+    (
+        "pnpm test",
+        ::x_agent::verification::test_runner::Suite::Pnpm,
+    ),
+    (
+        "pytest",
+        ::x_agent::verification::test_runner::Suite::Pytest,
+    ),
     ("go test", ::x_agent::verification::test_runner::Suite::Go),
 ];
 
