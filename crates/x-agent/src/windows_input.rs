@@ -150,11 +150,7 @@ fn stroke(unit: u16, key_up: bool) -> Input {
     }
 }
 
-fn matches_expected_focus(
-    expected: Option<(usize, u32)>,
-    hwnd: usize,
-    observed_pid: u32,
-) -> bool {
+fn matches_expected_focus(expected: Option<(usize, u32)>, hwnd: usize, observed_pid: u32) -> bool {
     expected.is_none_or(|(expected_hwnd, expected_pid)| {
         expected_hwnd != 0 && expected_hwnd == hwnd && expected_pid == observed_pid
     })
@@ -189,9 +185,7 @@ pub(crate) fn type_text(
         if !current.is_null() {
             unsafe { GetWindowThreadProcessId(current, &mut current_pid) };
         }
-        if current != original
-            || !matches_expected_focus(expected, current as usize, current_pid)
-        {
+        if current != original || !matches_expected_focus(expected, current as usize, current_pid) {
             return Err("Focus changed; typing was stopped".into());
         }
         let inputs = [stroke(unit, false), stroke(unit, true)];
