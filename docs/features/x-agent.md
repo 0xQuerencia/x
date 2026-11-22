@@ -185,6 +185,17 @@ Project registration and alias editing remain in the existing CLI. Work
 must be idle before a project can be switched. A physical Rune smoke
 test is still needed to verify keyboard focus, layout and pagination.
 
+### Owner-supplied browser metadata in Rune Work
+
+Rune's Work pane offers **Review page handoff** for a URL and optional title
+typed by the owner. The same `plan_browser_page_to_session` validation and
+redaction used by the CLI binds this metadata to the currently selected
+OpenCode session with a new one-use Work approval. Browsing the project list
+or entering the URL does not send data, open a browser, read tabs or start
+code. The actual browser page body, cookies, screenshots and browser state
+are **not** captured. Confirm privacy, keyboard focus and review text on
+the actual Rune UI before treating the flow as release-ready.
+
 ### Read-only recovery claim history
 
 `hex agent workflow claims` displays every locally recorded coding job's run
