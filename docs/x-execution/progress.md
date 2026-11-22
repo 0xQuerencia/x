@@ -1,8 +1,9 @@
 # X roadmap progress
 
-Integration snapshot: 2026-11-22. PRs #82, #93–#132, #140, #141, #144
-and #149 are merged, along with #153–#170 (except #171, which remains
-under review), and #172. Individual PRs retain historical CI evidence.
+Integration snapshot: 2026-11-23. PRs #82, #93–#132, #140, #141,
+#144, #149, #153–#174 and #177 are merged. New #178–#183 are open
+development work and must not be counted until their checks pass and they
+merge. Individual PRs retain historical CI evidence.
 This is source integration progress, not physical-platform acceptance.
 **Merged source is not real-device acceptance.** Linux, macOS, and Windows
 CI cannot verify microphone, accessibility, install, signing or release parity.
@@ -57,10 +58,31 @@ CI cannot verify microphone, accessibility, install, signing or release parity.
 | Coding recovery and Rune inspection | [#167](https://github.com/0xQuerencia/x/pull/167), [#170](https://github.com/0xQuerencia/x/pull/170) | Read-only persisted claim status plus a Rune Work-pane summary, without automatic retries or private provider IDs. Cross-platform CI passed. | Provider-confirmed restart/reconciliation and user-facing retry approval |
 | Physical release acceptance gate | [#172](https://github.com/0xQuerencia/x/pull/172) | Privacy-minimal, exact-commit, per-platform operator checklist that refuses any missing, failed or unsupported case. Linux/Windows schema tests passed. | Actually perform the test matrix on real machines and sign/distribute stable artifacts |
 | Build provenance | [#162](https://github.com/0xQuerencia/x/pull/162) | SHA256, compiler, target and exact commit in Linux/Windows `BUILD_INFO.json` and tests against tampering | Signing, trusted-source validation and physical release QA |
+| Arch helper ownership | [#171](https://github.com/0xQuerencia/x/pull/171) | Installer refuses linked or unrelated agent-desktop directories and commands; isolated installation safety CI passed | Physical fresh install and upgrade on another user's account |
+| macOS arm64 bare preview | [#173](https://github.com/0xQuerencia/x/pull/173) | Unsigned arm64 CLI build and checksum/provenance CI; no upstream Hex identity or release changes | Separate signed/notarized app packaging and physical Apple Silicon QA |
+| macOS screenshot and clipboard | [#174](https://github.com/0xQuerencia/x/pull/174), [#177](https://github.com/0xQuerencia/x/pull/177) | User-requested local screenshot handling, native clipboard write and readback; cross-platform CI succeeded | macOS privacy permissions, app-level clipboard and screen QA |
+
 
 All merged CI checks are **source/build evidence**, not live-desktop evidence.
 The preview tool has not passed the full cross-platform acceptance matrix.
 No signed or stable X release is justified yet.
+
+## Open implementation PRs — not yet delivered
+
+| PR | Work | Dependency / outstanding gate |
+| --- | --- | --- |
+| [#178](https://github.com/0xQuerencia/x/pull/178) | Owner-selected terminal output as untrusted Work context | Linux, Windows and macOS CI and actual selected-session handoff |
+| [#179](https://github.com/0xQuerencia/x/pull/179) | Paged registered-project picker in Rune | Cross-platform CI and real UI keyboard/screenshot checks |
+| [#180](https://github.com/0xQuerencia/x/pull/180) | Rune URL/title handoff to selected OpenCode session | Depends on #179; CI and real approval review |
+| [#181](https://github.com/0xQuerencia/x/pull/181) | More natural registered-project voice phrases | Cross-platform CI and actual microphone acceptance |
+| [#182](https://github.com/0xQuerencia/x/pull/182) | Experimental isolated X Preview.app ZIP for Apple Silicon | CI, real Mac and signing/notarization before stable release |
+| [#183](https://github.com/0xQuerencia/x/pull/183) | Exact-identity OpenCode session picker in Rune | Depends on #180 and #179; provider and UI QA |
+
+A numbered PR is not a roadmap percentage. Core P0/P1 source work is merged,
+P2–P5 have material implementations with live and integration gaps, and P6–P8
+still have substantial UI, integration and release-acceptance work. Do not
+claim an exact source-completion percentage without an individually weighted
+acceptance inventory.
 
 ## Unfinished work across the full P0–P8 roadmap
 
@@ -71,12 +93,12 @@ Until these are verified on the actual target systems, do not label X stable.
 | --- | --- |
 | P0–P1 | Clean-host Doctor, real microphone, 20 spoken commands, real provider failure and Stop tests |
 | P2 | Physical KDE, macOS and Windows 11 acceptance; Windows virtual desktops, window/region screenshots, verified media state, native process controls and macOS window parity |
-| P3 | Live permissioned browser-tab and screen context, project voice selection, metadata provenance and privacy acceptance |
+| P3 | Existing exact project voice selection needs additional natural-language coverage; live permissioned browser-tab/screen context and privacy acceptance remain |
 | P4 | Live Git merge-back; provider-confirmed restart recovery and explicit operator retries (read-only claims now wired) |
 | P5 | Live approved worktree tests and actual desktop/accessibility result readback |
 | P6 | Remaining Rune operator UX and keyboard-accessibility/screenshot acceptance (recovery status and tests are now surfaced) |
-| P7 | Browser/terminal context handoff and remaining spoken interaction/monitoring capabilities |
-| P8 | Real installation/upgrade/rollback, signed/macOS packages, privacy audit and physical multi-platform release acceptance; macOS experimental preview, local screenshot permissions and Arch helper hardening are under review |
+| P7 | Owner-provided terminal excerpt handoff remains in review; live browser/terminal context integration and advanced spoken interaction remain |
+| P8 | Real installation/upgrade/rollback, signatures and notarization, privacy audit and physical multi-platform release acceptance; an unsigned macOS arm64 preview exists, with an experimental .app ZIP under review |
 
 See [release acceptance](../x-release-qa.md). A preview executable is not
 a verified release, and a code-only test does not substitute for a physical
