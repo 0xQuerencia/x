@@ -5,8 +5,10 @@ on:
     paths:
       - ".github/workflows/x-arch-install.yml"
       - "scripts/install-arch.sh"
+      - "scripts/activate-arch-x.sh"
       - "scripts/rollback-arch-x.sh"
       - "scripts/smoke-x/rollback-test.sh"
+      - "scripts/smoke-x/activation-test.sh"
 
 permissions:
   contents: read
@@ -23,6 +25,9 @@ jobs:
         shell: bash
         run: |
           bash -n scripts/install-arch.sh
+          bash -n scripts/activate-arch-x.sh
           bash -n scripts/rollback-arch-x.sh
           bash -n scripts/smoke-x/rollback-test.sh
+          bash -n scripts/smoke-x/activation-test.sh
           bash scripts/smoke-x/rollback-test.sh
+          bash scripts/smoke-x/activation-test.sh
