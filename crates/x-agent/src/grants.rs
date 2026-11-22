@@ -16,6 +16,8 @@ pub enum Permission {
     StartHarness,
     /// Run one approved test suite in an owned Git worktree.
     RunTests,
+    /// Apply only one explicitly reviewed clean Git fast-forward.
+    IntegrateFastForward,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -68,7 +70,9 @@ impl Grants {
         }
         let limit = match permission {
             Permission::InspectProject => (Duration::from_secs(600), 16),
-            Permission::StartHarness | Permission::RunTests => (Duration::from_secs(60), 1),
+            Permission::StartHarness | Permission::RunTests | Permission::IntegrateFastForward => {
+                (Duration::from_secs(60), 1)
+            }
         };
         if duration.is_zero() || duration > limit.0 || uses == 0 || uses > limit.1 {
             return Err("Grant exceeds its permitted lifetime or use count".into());
@@ -77,7 +81,7 @@ impl Grants {
             (Permission::InspectProject, Scope::Project { project_id }) if !project_id.is_nil() => {
             }
             (
-                Permission::StartHarness | Permission::RunTests,
+                Permission::StartHarness | Permission::RunTests | Permission::IntegrateFastForward,
                 Scope::Task {
                     project_id,
                     run_id,
@@ -309,6 +313,45 @@ mod tests {
         assert!(
             grants
                 .consume(&receipt, Permission::StartHarness, &target)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn fast_forward_grants_require_current_exact_owner_approval() {
+        let grants = Grants::default();
+        let scope = task();
+        assert!(
+            grants
+                .issue(
+                    Permission::IntegrateFastForward,
+                    scope.clone(),
+                    Duration::from_secs(30),
+                    1,
+                    false
+                )
+                .is_err()
+        );
+        let receipt = grants
+            .issue(
+                Permission::IntegrateFastForward,
+                scope.clone(),
+                Duration::from_secs(30),
+                1,
+                true,
+            )
+            .unwrap();
+        assert!(
+            grants
+                .consume(&receipt, Permission::StartHarness, &scope)
+                .is_err()
+        );
+        grants
+            .consume(&receipt, Permission::IntegrateFastForward, &scope)
+            .unwrap();
+        assert!(
+            grants
+                .consume(&receipt, Permission::IntegrateFastForward, &scope)
                 .is_err()
         );
     }
