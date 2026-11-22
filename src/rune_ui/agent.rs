@@ -32,6 +32,7 @@ pub(super) struct AgentPane {
     workspace: TextEdit,
     test_project: TextEdit,
     test_suite_index: usize,
+    recovery_summary: Option<String>,
     mode: Mode,
     snapshot: Option<Snapshot>,
     /// Serialized form of the last snapshot, so polling redraws only on change.
@@ -58,6 +59,7 @@ impl Default for AgentPane {
             workspace: TextEdit::default(),
             test_project: TextEdit::default(),
             test_suite_index: 0,
+            recovery_summary: None,
             mode: Mode::Actions,
             snapshot: None,
             shown: String::new(),
@@ -404,6 +406,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
         body = body.child(project_tests_row(p, pane, busy));
+        body = body.child(recovery_review_row(p, pane));
     }
     if let Some(task) = &snapshot.task {
         body = body.child(task_card(p, snapshot, task));
@@ -604,6 +607,70 @@ fn project_tests_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
                 .font(DESCRIPTION)
                 .color(p.warning()),
         )
+}
+
+fn recovery_review_row(p: Paint, pane: &AgentPane) -> El {
+    let mut item = col()
+        .key("agent-recovery-review")
+        .gap(6.0)
+        .child(text(tr("Coding recovery")).font(DESCRIPTION).color(p.text()))
+        .child(button(
+            p,
+            "agent-inspect-recovery",
+            tr("Inspect interrupted jobs"),
+            ButtonKind::Secondary,
+            |ui: &mut Ui, _| {
+                match agent_host::service().coding_claims_summary() {
+                    Ok(report) => {
+                        let jobs = report["jobs"].as_array();
+                        let count = jobs.map_or(0, Vec::len);
+                        let need_check = jobs.map_or(0, |list| {
+                            list.iter()
+                                .filter(|job| {
+                                    job["requires_provider_check_before_retry"]
+                                        .as_bool() == Some(true)
+                                })
+                                .count()
+                        });
+                        let mut lines = vec![format!(
+                            "{count} recorded coding jobs; {need_check} require an independent provider check before any retry."
+                        )];
+                        if let Some(jobs) = jobs {
+                            for job in jobs.iter().take(5) {
+                                let node = job["node_id"].as_str().unwrap_or("unknown");
+                                let status = job["status"].as_str().unwrap_or("unknown");
+                                let attempt = job["attempt"].as_u64().unwrap_or(0);
+                                lines.push(format!("{node}: {status} (attempt {attempt})"));
+                            }
+                            if jobs.len() > 5 {
+                                lines.push(format!(
+                                    "{} more jobs: see x agent workflow claims",
+                                    jobs.len() - 5
+                                ));
+                            }
+                        }
+                        ui.agent.recovery_summary = Some(lines.join("\n"));
+                    }
+                    Err(error) => {
+                        ui.agent.recovery_summary = Some(format!("Recovery unavailable: {error}"));
+                    }
+                }
+            },
+        ))
+        .child(
+            text(tr("Read-only inspection; no coding job is retried or resumed."))
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    if let Some(summary) = &pane.recovery_summary {
+        item = item.child(
+            text(summary.clone())
+                .key("agent-recovery-summary")
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    }
+    item
 }
 
 fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> El {
