@@ -960,6 +960,15 @@ pub fn handle(action: AgentAction) -> ControlReply {
             ControlReply::done(serde_json::to_string(&r).unwrap_or_default())
         }
         AgentAction::Workflow { command, value } => workflows::handle(svc, &command, &value),
+        AgentAction::IntegrateFastForward {
+            project,
+            run_id,
+            task_id,
+            start_commit,
+        } => match svc.plan_fast_forward(&project, &run_id, &task_id, &start_commit) {
+            Ok(_) => snapshot(0),
+            Err(error) => ControlReply::error("refused", error),
+        },
         AgentAction::Context => {
             let engine = svc.context_engine();
             let report = serde_json::json!({
