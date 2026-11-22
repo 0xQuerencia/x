@@ -47,20 +47,23 @@ fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
     let jobs = claims
         .into_iter()
         .map(|claim| {
-            let (status, needs_reconciliation) = match claim.state {
-                State::Claimed => ("possibly_delivered", true),
-                State::Verified => ("verified", false),
-                State::Failed => ("failed", true),
-                State::Unverified => ("unverified", true),
-                State::Cancelled => ("cancelled", true),
+            let delivery_observed = claim.evidence_id.is_some();
+            let status = match claim.state {
+                State::Claimed if delivery_observed => "delivery_observed",
+                State::Claimed => "possibly_delivered",
+                State::Verified => "verified",
+                State::Failed => "failed",
+                State::Unverified => "unverified",
+                State::Cancelled => "cancelled",
             };
             serde_json::json!({
                 "run_id": claim.run_id,
                 "node_id": claim.node_id,
                 "status": status,
                 "attempt": claim.attempt,
-                "evidence_recorded": claim.evidence_id.is_some(),
-                "requires_provider_check_before_retry": needs_reconciliation,
+                "evidence_recorded": delivery_observed,
+                "requires_provider_check_before_retry": !delivery_observed,
+                "retry_blocked_by_delivery": delivery_observed,
             })
         })
         .collect::<Vec<_>>();
@@ -70,7 +73,7 @@ fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
         "executed": false,
         "retried": false,
         "provider_checked": false,
-        "note": "A status record is not evidence of delivery. Never retry without an independent provider check and a new approval.",
+        "note": "An acknowledgement confirms receipt, not success. Without an acknowledgement, retry still requires proof of non-delivery and fresh approval.",
     })
 }
 
@@ -87,6 +90,7 @@ fn reconciliation_preview(mut claims: Vec<Claim>) -> serde_json::Value {
                 "run_id": claim.run_id,
                 "node_id": claim.node_id,
                 "status": "requires_reconciliation",
+                "delivery_observed": claim.evidence_id.is_some(),
             })
         })
         .collect::<Vec<_>>();
@@ -95,7 +99,7 @@ fn reconciliation_preview(mut claims: Vec<Claim>) -> serde_json::Value {
         "jobs": jobs,
         "executed": false,
         "retried": false,
-        "note": "Check provider delivery independently before authorizing a new attempt",
+        "note": "An acknowledged job still needs outcome reconciliation. An unknown job requires proof of non-delivery before any retry.",
     })
 }
 
@@ -423,6 +427,8 @@ mod reconciliation_tests {
         assert_eq!(preview["count"], 2);
         assert_eq!(preview["jobs"][0]["node_id"], "a_front");
         assert_eq!(preview["jobs"][1]["node_id"], "z_back");
+        assert_eq!(preview["jobs"][0]["delivery_observed"], false);
+        assert_eq!(preview["jobs"][1]["delivery_observed"], true);
         assert_eq!(preview["executed"], false);
         assert_eq!(preview["retried"], false);
         let rendered = preview.to_string();
@@ -458,9 +464,11 @@ mod reconciliation_tests {
         assert_eq!(report["jobs"][0]["status"], "verified");
         assert_eq!(report["jobs"][1]["status"], "failed");
         assert_eq!(report["jobs"][1]["attempt"], 2);
+        assert_eq!(report["jobs"][1]["evidence_recorded"], true);
+        assert_eq!(report["jobs"][1]["retry_blocked_by_delivery"], true);
         assert_eq!(
             report["jobs"][1]["requires_provider_check_before_retry"],
-            true
+            false
         );
         assert_eq!(report["executed"], false);
         assert_eq!(report["provider_checked"], false);

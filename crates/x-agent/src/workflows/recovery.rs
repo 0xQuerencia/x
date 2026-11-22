@@ -105,37 +105,53 @@ impl Journal {
         })
     }
 
-    /// Call only after a verified provider/event observation; this method
-    /// deliberately does not infer success from a process exit or model prose.
-    pub fn settle(
+    /// Persist structured delivery evidence as soon as the harness reports it.
+    /// Keep the outcome unresolved until the process and result checks finish.
+    pub(super) fn record_delivery(
         &self,
-        run_id: Uuid,
-        node_id: &str,
+        attempt: &Claim,
+        session: &crate::harness::SessionId,
+    ) -> Result<(), String> {
+        self.update(|data| {
+            let claim = active_attempt(data, attempt)?;
+            if let Some(recorded) = &claim.evidence_id {
+                if recorded != session.as_str() {
+                    return Err("A different session already acknowledged this job".into());
+                }
+                return Ok(((), false));
+            }
+            claim.evidence_id = Some(session.as_str().to_owned());
+            Ok(((), true))
+        })
+    }
+
+    /// Settle only the specific in-flight attempt and preserve any earlier
+    /// delivery evidence, even if it failed or was stopped after delivery.
+    pub(super) fn settle(
+        &self,
+        attempt: &Claim,
         outcome: State,
         evidence_id: Option<&str>,
     ) -> Result<Claim, String> {
         if outcome == State::Claimed {
             return Err("An in-flight claim cannot be settled as claimed".into());
         }
-        let evidence_id = match evidence_id {
-            Some(id) if valid_slug(id) => Some(id.to_owned()),
-            Some(_) => return Err("Evidence identifier is invalid".into()),
-            None => None,
-        };
-        if outcome == State::Verified && evidence_id.is_none() {
-            return Err("Verification requires a durable evidence reference".into());
+        if evidence_id.is_some_and(|id| !valid_evidence(id)) {
+            return Err("Evidence identifier is invalid".into());
         }
         self.update(|data| {
-            let claim = data
-                .entries
-                .iter_mut()
-                .find(|entry| entry.run_id == run_id && entry.node_id == node_id)
-                .ok_or("No claimed job matches that run and node")?;
-            if claim.state != State::Claimed {
-                return Err("The job was already settled; do not overwrite its result".into());
+            let claim = active_attempt(data, attempt)?;
+            match (claim.evidence_id.as_deref(), evidence_id) {
+                (Some(recorded), Some(provided)) if recorded != provided => {
+                    return Err("A different session already acknowledged this job".into());
+                }
+                (None, Some(provided)) => claim.evidence_id = Some(provided.to_owned()),
+                (None, None) if outcome == State::Verified => {
+                    return Err("Verification requires a durable evidence reference".into());
+                }
+                _ => {}
             }
             claim.state = outcome;
-            claim.evidence_id = evidence_id;
             Ok((claim.clone(), true))
         })
     }
@@ -167,6 +183,9 @@ impl Journal {
                 State::Failed | State::Unverified | State::Cancelled
             ) {
                 return Err("This job is not eligible for retry".into());
+            }
+            if claim.evidence_id.is_some() {
+                return Err("The harness already acknowledged delivery of this job".into());
             }
             if claim.attempt >= MAX_ATTEMPTS {
                 return Err("Retry budget exhausted".into());
@@ -228,7 +247,7 @@ impl Journal {
                     || claim
                         .evidence_id
                         .as_deref()
-                        .is_some_and(|id| !valid_slug(id))
+                        .is_some_and(|id| !valid_evidence(id))
                     || (claim.state == State::Verified && claim.evidence_id.is_none())
                     || !ids.insert((claim.run_id, claim.node_id.as_str()))
             })
@@ -294,6 +313,26 @@ impl Journal {
     }
 }
 
+fn active_attempt<'a>(data: &'a mut Data, attempt: &Claim) -> Result<&'a mut Claim, String> {
+    let claim = data
+        .entries
+        .iter_mut()
+        .find(|entry| entry.run_id == attempt.run_id && entry.node_id == attempt.node_id)
+        .ok_or("No claimed job matches that run and node")?;
+    if claim.state != State::Claimed
+        || claim.attempt != attempt.attempt
+        || claim.request_fingerprint != attempt.request_fingerprint
+    {
+        return Err("This job attempt is no longer in flight".into());
+    }
+    Ok(claim)
+}
+
+fn valid_evidence(input: &str) -> bool {
+    // Legacy evidence references used the same size limit as node IDs.
+    valid_slug(input) || crate::harness::SessionId::try_from(input.to_owned()).is_ok()
+}
+
 fn validate_key(run: Uuid, node: &str, fingerprint: &str) -> Result<(), String> {
     if run.is_nil() || !valid_slug(node) {
         return Err("Invalid run or node identity".into());
@@ -340,6 +379,13 @@ mod tests {
         (directory, journal, Uuid::new_v4(), "a".repeat(64))
     }
 
+    fn begin(journal: &Journal, run_id: Uuid, node: &str, fingerprint: &str) -> Claim {
+        let Begin::Fresh(claim) = journal.begin(run_id, node, fingerprint).unwrap() else {
+            panic!("expected a fresh claim");
+        };
+        claim
+    }
+
     #[test]
     fn a_crashed_claim_is_never_dispatched_twice() {
         let (directory, journal, run, digest) = fixture();
@@ -357,14 +403,10 @@ mod tests {
     #[test]
     fn finished_jobs_never_get_replayed_without_explicit_reconciliation() {
         let (_directory, journal, run, digest) = fixture();
-        journal.begin(run, "backend", &digest).unwrap();
-        assert!(
-            journal
-                .settle(run, "backend", State::Verified, None)
-                .is_err()
-        );
+        let claim = begin(&journal, run, "backend", &digest);
+        assert!(journal.settle(&claim, State::Verified, None).is_err());
         let finished = journal
-            .settle(run, "backend", State::Verified, Some("harness_event_7"))
+            .settle(&claim, State::Verified, Some("harness_event_7"))
             .unwrap();
         assert_eq!(finished.state, State::Verified);
         assert!(matches!(
@@ -381,10 +423,8 @@ mod tests {
     #[test]
     fn retries_need_fresh_owner_approval_proof_and_budget() {
         let (_directory, journal, run, digest) = fixture();
-        journal.begin(run, "frontend", &digest).unwrap();
-        journal
-            .settle(run, "frontend", State::Failed, None)
-            .unwrap();
+        let first = begin(&journal, run, "frontend", &digest);
+        journal.settle(&first, State::Failed, None).unwrap();
         assert!(
             journal
                 .approve_retry_after_reconciliation(run, "frontend", &digest, false, true)
@@ -396,12 +436,11 @@ mod tests {
                 .is_err()
         );
         for _ in 0..2 {
-            journal
+            let retry = journal
                 .approve_retry_after_reconciliation(run, "frontend", &digest, true, true)
                 .unwrap();
-            journal
-                .settle(run, "frontend", State::Failed, None)
-                .unwrap();
+            assert!(journal.settle(&first, State::Failed, None).is_err());
+            journal.settle(&retry, State::Failed, None).unwrap();
         }
         assert!(
             journal
@@ -409,6 +448,39 @@ mod tests {
                 .is_err()
         );
         assert!(journal.uncertain().unwrap().is_empty());
+    }
+
+    #[test]
+    fn delivery_survives_reopening_the_journal_and_blocks_replay_after_failure() {
+        use crate::harness::SessionId;
+
+        let (directory, journal, run, digest) = fixture();
+        let claim = begin(&journal, run, "backend", &digest);
+        let session = SessionId::try_from(format!("ses_{}", "a".repeat(120))).unwrap();
+        let other = SessionId::try_from(String::from("ses_other")).unwrap();
+        journal.record_delivery(&claim, &session).unwrap();
+        journal.record_delivery(&claim, &session).unwrap();
+        assert!(journal.record_delivery(&claim, &other).is_err());
+
+        let reopened = Journal::new(directory.path().join("state"));
+        let recovered = reopened.uncertain().unwrap();
+        assert_eq!(recovered[0].evidence_id.as_deref(), Some(session.as_str()));
+        assert!(matches!(
+            reopened.begin(run, "backend", &digest).unwrap(),
+            Begin::RequiresReconciliation(_)
+        ));
+        assert!(
+            reopened
+                .settle(&claim, State::Verified, Some(other.as_str()))
+                .is_err()
+        );
+        let failed = reopened.settle(&claim, State::Failed, None).unwrap();
+        assert_eq!(failed.evidence_id.as_deref(), Some(session.as_str()));
+        assert!(
+            reopened
+                .approve_retry_after_reconciliation(run, "backend", &digest, true, true)
+                .is_err()
+        );
     }
 
     #[test]
@@ -425,7 +497,7 @@ mod tests {
     #[test]
     fn snapshot_does_not_replay_or_mutate_claims() {
         let (_dir, journal, run, digest) = fixture();
-        journal.begin(run, "backend", &digest).unwrap();
+        let claim = begin(&journal, run, "backend", &digest);
         let saved = journal.snapshot().unwrap();
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].state, State::Claimed);
@@ -434,7 +506,7 @@ mod tests {
             journal.begin(run, "backend", &digest).unwrap(),
             Begin::RequiresReconciliation(_)
         ));
-        journal.settle(run, "backend", State::Failed, None).unwrap();
+        journal.settle(&claim, State::Failed, None).unwrap();
         let after = journal.snapshot().unwrap();
         assert_eq!(after[0].state, State::Failed);
         assert_eq!(after[0].attempt, 1);

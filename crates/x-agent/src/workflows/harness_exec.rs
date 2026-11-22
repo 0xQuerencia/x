@@ -1,7 +1,7 @@
 //! An approved, worktree-scoped harness executor for the deterministic DAG.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -237,16 +237,30 @@ impl Executor for ApprovedHarnessExecutor {
         {
             return Outcome::Failed;
         }
-        match self
+        let claim = match self
             .journal
             .begin(self.run_id, &node.id, &assignment.fingerprint)
         {
-            Ok(Begin::Fresh(_)) => {}
+            Ok(Begin::Fresh(claim)) => claim,
             Ok(Begin::AlreadyFinished(_) | Begin::RequiresReconciliation(_)) | Err(_) => {
                 return Outcome::Unverified;
             }
-        }
-        let sink: EventSink = Arc::new(|_| {});
+        };
+        let harness_kind = to_kind(*harness);
+        let observed = Arc::new(OnceLock::new());
+        let sink: EventSink = {
+            let journal = Arc::clone(&self.journal);
+            let claim = claim.clone();
+            let observed = Arc::clone(&observed);
+            Arc::new(move |event| {
+                if let Some(session) = event
+                    .accepted_session()
+                    .filter(|session| session.kind() == harness_kind)
+                {
+                    observed.get_or_init(|| journal.record_delivery(&claim, session));
+                }
+            })
+        };
         let request = Request {
             workspace: assignment.worktree.path().to_path_buf(),
             prompt: goal.clone(),
@@ -262,22 +276,25 @@ impl Executor for ApprovedHarnessExecutor {
                 } else {
                     (State::Failed, Outcome::Failed)
                 };
-                let _ = self.journal.settle(self.run_id, &node.id, state, None);
-                return outcome;
+                return match self.journal.settle(&claim, state, None) {
+                    Ok(_) => outcome,
+                    Err(_) => Outcome::Unverified,
+                };
             }
         };
         let result = owned.join();
         let delivery = Verification::harness_delivery(&result, None, unix_now());
-        let id_matches = result
+        let evidence_id = result
             .accepted_session
             .as_ref()
-            .is_some_and(|id| id.kind() == to_kind(*harness));
+            .filter(|session| session.kind() == harness_kind)
+            .map(|session| session.as_str());
         let outcome = if stop.requested() || result.status == RunStatus::Cancelled {
             Outcome::Cancelled
         } else {
             match delivery.outcome {
                 VerifiedOutcome::Failed => Outcome::Failed,
-                VerifiedOutcome::Verified if id_matches => match &assignment.proof {
+                VerifiedOutcome::Verified if evidence_id.is_some() => match &assignment.proof {
                     Proof::DeliveryOnly => Outcome::Verified,
                     Proof::ChangedFile(path) => {
                         match Verification::required_git_change(
@@ -302,17 +319,10 @@ impl Executor for ApprovedHarnessExecutor {
             Outcome::Verified => State::Verified,
             Outcome::Failed => State::Failed,
             Outcome::Cancelled => State::Cancelled,
-            _ => State::Unverified,
+            Outcome::Unverified | Outcome::Skipped => State::Unverified,
         };
-        let evidence_id = if persisted == State::Verified {
-            result.accepted_session.as_ref().map(|id| id.as_str())
-        } else {
-            None
-        };
-        if self
-            .journal
-            .settle(self.run_id, &node.id, persisted, evidence_id)
-            .is_err()
+        if (evidence_id.is_none() && observed.get().is_some_and(Result::is_err))
+            || self.journal.settle(&claim, persisted, evidence_id).is_err()
         {
             return Outcome::Unverified;
         }
@@ -423,10 +433,20 @@ mod tests {
         fn start(
             &self,
             _request: Request,
-            _events: Arc<dyn Fn(Event) + Send + Sync>,
+            events: EventSink,
             _stop: &Cancellation,
         ) -> Result<Box<dyn OwnedRun>, String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail {
+                let mut event = Event::new(crate::harness::EventKind::Text, "job started");
+                event.session = Some(
+                    crate::harness::SessionId::try_from(String::from(
+                        "123e4567-e89b-12d3-a456-426614174000",
+                    ))
+                    .unwrap(),
+                );
+                events(event);
+            }
             let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak.fetch_max(now, Ordering::SeqCst);
             Ok(Box::new(FakeRun {
@@ -720,17 +740,21 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_harness_does_not_verify_its_task() {
+    fn a_failed_harness_preserves_delivery_without_verifying_the_job() {
         let (_directory, graph, runner, _peak, calls) = fixture(true);
         let result = scheduler::run(
             &graph,
             Path::new("/tmp"),
-            runner,
+            runner.clone(),
             &Cancellation::default(),
             2,
         )
         .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let claims = runner.journal.snapshot().unwrap();
+        let failed = claims.iter().find(|claim| claim.node_id == "back").unwrap();
+        assert_eq!(failed.state, State::Failed);
+        assert!(failed.evidence_id.is_some());
         assert!(
             result
                 .nodes

@@ -176,11 +176,12 @@ exit only verifies that preset's process result, not the project as a whole.
 `hex agent workflow claims` displays every locally recorded coding job's run
 ID, node ID, attempt, outcome and whether evidence was stored, **without**
 printing prompts, task fingerprints or provider evidence identifiers. It never
-starts a harness, checks provider delivery, issues grants or retries anything.
-`hex agent workflow uncertain` remains the smaller view of jobs claimed
-before a possible crash. A failed, cancelled or interrupted job is **not**
-safe to replay based on its local status alone; a future recovery action must
-prove non-delivery through the actual provider and request a new approval.
+starts a harness, issues grants, or retries jobs. X records a structured harness
+acknowledgement as it arrives; the claims view shows when that evidence blocks
+retry. Receipt and completion are separate. `hex agent workflow uncertain`
+includes whether delivery was observed for each job that still needs an
+outcome. When delivery is unknown, any retry requires independent proof of
+non-delivery and a new approval. That provider check is still pending.
 
 ### Approved Git fast-forward integration (conservative)
 
@@ -265,8 +266,10 @@ silently sending the same work again. A terminal result is immutable.
 A new attempt needs fresh owner approval plus independent confirmation that
 the previous attempt was never delivered, with a maximum retry budget.
 
-The coding graph executor records claims before launch and settles them from
-structured provider and process evidence.
+The coding graph executor claims jobs before launch and saves the first
+structured acknowledgement while the harness is still running. It preserves
+that evidence through a failure or Stop. Settlement applies only to the
+attempt that produced the result.
 
 ### Proof-based verification (development)
 
