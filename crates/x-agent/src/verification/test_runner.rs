@@ -43,6 +43,18 @@ impl Suite {
         }
     }
 
+    pub fn parse(input: &str) -> std::result::Result<Self, String> {
+        match input {
+            "cargo-workspace" => Ok(Self::CargoWorkspace),
+            "cargo-agent" => Ok(Self::CargoAgent),
+            "npm" => Ok(Self::Npm),
+            "pnpm" => Ok(Self::Pnpm),
+            "pytest" => Ok(Self::Pytest),
+            "go" => Ok(Self::Go),
+            _ => Err("Suite must be cargo-workspace, cargo-agent, npm, pnpm, pytest or go".into()),
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::CargoWorkspace => "cargo_workspace",
@@ -234,6 +246,15 @@ mod tests {
         ) -> std::result::Result<bool, String> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.result.clone()
+        }
+    }
+
+    #[test]
+    fn operator_suite_names_are_strict() {
+        assert_eq!(Suite::parse("cargo-agent").unwrap(), Suite::CargoAgent);
+        assert_eq!(Suite::parse("go").unwrap(), Suite::Go);
+        for unsafe_name in ["", "bash", "npm;rm", "npm run test", "Go", "go\nrm"] {
+            assert!(Suite::parse(unsafe_name).is_err());
         }
     }
 
