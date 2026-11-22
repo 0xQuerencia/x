@@ -1,0 +1,62 @@
+name: X Windows preview install safety
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/x-win-preview-install-check.yml"
+      - ".github/workflows/x-windows-preview.yml"
+      - "scripts/install-win11-preview.ps1"
+      - "scripts/uninstall-win11-preview.ps1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-safety:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Verify isolated install, reinstall, refusal and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'x-preview-safety-local'
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'x-preview-safety-roaming'
+          New-Item -ItemType Directory -Force $env:LOCALAPPDATA, $env:APPDATA | Out-Null
+          $source = Join-Path $env:RUNNER_TEMP 'test-x.exe'
+          Copy-Item "$env:WINDIR/System32/where.exe" $source
+          $sentinel = Join-Path $env:APPDATA 'hex/settings.json'
+          New-Item -ItemType Directory -Force (Split-Path $sentinel) | Out-Null
+          Set-Content -LiteralPath $sentinel 'keep-hex-data'
+          & ./scripts/install-win11-preview.ps1 -Executable $source
+          $target = Join-Path $env:LOCALAPPDATA 'XPreview/x.exe'
+          if (-not (Test-Path -LiteralPath $target)) { throw 'X preview executable missing' }
+          if ((Get-FileHash $source).Hash -ne (Get-FileHash $target).Hash) {
+            throw 'Installed X preview does not match its input'
+          }
+          & ./scripts/install-win11-preview.ps1 -Executable $source
+          if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'XPreview/x.previous.exe'))) {
+            throw 'Previous preview executable was not preserved'
+          }
+          & ./scripts/uninstall-win11-preview.ps1
+          if (Test-Path -LiteralPath $target) { throw 'Uninstall left the X executable' }
+          if ((Get-Content -LiteralPath $sentinel -Raw).Trim() -ne 'keep-hex-data') {
+            throw 'Uninstall touched official Hex data'
+          }
+          $unrelated = Join-Path $env:LOCALAPPDATA 'XPreview/unrelated.txt'
+          New-Item -ItemType Directory -Force (Split-Path $unrelated) | Out-Null
+          Set-Content -LiteralPath $unrelated 'do-not-delete'
+          try {
+            & ./scripts/install-win11-preview.ps1 -Executable $source
+            throw 'Install accepted an unrelated directory'
+          } catch {
+            if ($_.Exception.Message -eq 'Install accepted an unrelated directory') { throw }
+          }
+          if ((Get-Content -LiteralPath $unrelated -Raw).Trim() -ne 'do-not-delete') {
+            throw 'Unowned user data was changed'
+          }
+          Write-Output 'X Windows preview install safety checks passed.'
