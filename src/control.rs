@@ -323,6 +323,10 @@ pub enum AgentAction {
         url: String,
         title: String,
     },
+    /// Owner-selected terminal output only; no PTY inspection or shell run.
+    SendTerminalOutput {
+        text: String,
+    },
     /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
     /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
     Workflow {
