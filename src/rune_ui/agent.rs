@@ -542,44 +542,44 @@ fn workspace_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
 const PROJECT_CHOICES_PER_PAGE: usize = 5;
 
 fn registered_projects_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
-    let mut list = col()
-        .key("agent-registered-projects")
-        .gap(6.0)
-        .child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(text(tr("Registered projects")).font(DESCRIPTION).color(p.text()))
-                .child(button(
-                    p,
-                    "agent-list-projects",
-                    tr("Browse projects"),
-                    ButtonKind::Secondary,
-                    |ui: &mut Ui, _| {
-                        match agent_host::service().list_registered_projects() {
-                            Ok(projects) => {
-                                ui.agent.project_choices = projects
-                                    .into_iter()
-                                    .map(|project| {
-                                        (project.id.to_string(), project.name)
-                                    })
-                                    .collect();
-                                ui.agent.project_page = 0;
-                                ui.agent.project_message = if ui.agent.project_choices.is_empty() {
-                                    Some("No registered projects. Use x agent projects register to add one.".into())
-                                } else {
-                                    None
-                                };
-                            }
-                            Err(error) => {
-                                ui.agent.project_choices.clear();
-                                ui.agent.project_page = 0;
-                                ui.agent.project_message = Some(error);
-                            }
-                        }
-                    },
-                )),
-        );
+    let mut list = col().key("agent-registered-projects").gap(6.0).child(
+        row()
+            .gap(8.0)
+            .center_y()
+            .child(
+                text(tr("Registered projects"))
+                    .font(DESCRIPTION)
+                    .color(p.text()),
+            )
+            .child(button(
+                p,
+                "agent-list-projects",
+                tr("Browse projects"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _| match agent_host::service().list_registered_projects() {
+                    Ok(projects) => {
+                        ui.agent.project_choices = projects
+                            .into_iter()
+                            .map(|project| (project.id.to_string(), project.name))
+                            .collect();
+                        ui.agent.project_page = 0;
+                        ui.agent.project_message = if ui.agent.project_choices.is_empty() {
+                            Some(
+                                "No registered projects. Use x agent projects register to add one."
+                                    .into(),
+                            )
+                        } else {
+                            None
+                        };
+                    }
+                    Err(error) => {
+                        ui.agent.project_choices.clear();
+                        ui.agent.project_page = 0;
+                        ui.agent.project_message = Some(error);
+                    }
+                },
+            )),
+    );
     if let Some(message) = &pane.project_message {
         list = list.child(
             text(message.clone())
@@ -596,34 +596,33 @@ fn registered_projects_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
     for (id, name) in &pane.project_choices[start..end] {
         let project_id = id.clone();
         let shown = name.clone();
-        list = list.child(
-            button(
-                p,
-                &format!("agent-choose-project-{id}"),
-                &format!("Use {name}"),
-                ButtonKind::Secondary,
-                move |ui: &mut Ui, _| {
-                    if ui.agent.is_busy() {
-                        return;
+        list = list.child(button(
+            p,
+            &format!("agent-choose-project-{id}"),
+            &format!("Use {name}"),
+            ButtonKind::Secondary,
+            move |ui: &mut Ui, _| {
+                if ui.agent.is_busy() {
+                    return;
+                }
+                match agent_host::service().select_registered_project(&project_id) {
+                    Ok((project, _)) => {
+                        ui.agent.workspace.text = project.root.display().to_string();
+                        ui.agent.project_message = Some(format!("Selected {}", project.name));
                     }
-                    match agent_host::service().select_registered_project(&project_id) {
-                        Ok((project, _)) => {
-                            ui.agent.workspace.text = project.root.display().to_string();
-                            ui.agent.project_message =
-                                Some(format!("Selected {}", project.name));
-                        }
-                        Err(error) => {
-                            ui.agent.project_message =
-                                Some(format!("Cannot select {shown}: {error}"));
-                        }
+                    Err(error) => {
+                        ui.agent.project_message = Some(format!("Cannot select {shown}: {error}"));
                     }
-                },
-            ),
-        );
+                }
+            },
+        ));
     }
     if pane.project_choices.len() > PROJECT_CHOICES_PER_PAGE {
         let page = pane.project_page;
-        let pages = pane.project_choices.len().div_ceil(PROJECT_CHOICES_PER_PAGE);
+        let pages = pane
+            .project_choices
+            .len()
+            .div_ceil(PROJECT_CHOICES_PER_PAGE);
         list = list.child(
             row()
                 .gap(8.0)
