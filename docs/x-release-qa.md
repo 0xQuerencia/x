@@ -28,6 +28,26 @@ cargo test -p x-agent --test live -- --ignored --test-threads=1
 For Rune UI changes, regenerate and inspect golden screenshots on Linux,
 using the repository's `AGENTS.md` instructions before merging.
 
+## Arch upgrade and rollback
+
+The Arch installer stages its replacement executable under
+`~/.local/opt/x/` and atomically renames it into place. It preserves the
+previous executable as `hex.previous` and refuses to take over an unrelated
+`~/.local/bin/x` command. This protects the binary replacement only, not
+every setting or dependency upgrade.
+
+If the new binary fails to start, use the explicit recovery command from
+the checkout:
+
+```sh
+bash scripts/rollback-arch-x.sh
+```
+
+This restores the saved executable without changing X workflows or settings.
+Recheck `x agent doctor` and live service behavior after rollback. A fresh
+install has no previous executable to restore. The installer and rollback
+still need a real clean-account acceptance run before release.
+
 ## Current X master-plan acceptance gate
 
 These checks are still **not evidence of a successful live run** until an

@@ -51,13 +51,45 @@ if [[ -z "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
   exit 1
 fi
 
+# Refuse to overwrite an unrelated x command or an unexpected install path.
+# The official Hex executable and service are never modified.
+x_dir="$HOME/.local/opt/x"
+x_binary="$x_dir/hex"
+x_backup="$x_dir/hex.previous"
+x_link="$HOME/.local/bin/x"
+if [[ -L "$x_dir" ]]; then
+  echo "Refusing a symlinked X install directory: $x_dir" >&2
+  exit 1
+fi
+for file in "$x_binary" "$x_backup"; do
+  if [[ -L "$file" || ( -e "$file" && ! -f "$file" ) ]]; then
+    echo "Refusing to replace an unexpected X file: $file" >&2
+    exit 1
+  fi
+done
+if [[ -e "$x_link" || -L "$x_link" ]]; then
+  if [[ ! -L "$x_link" || "$(readlink "$x_link")" != "$x_binary" ]]; then
+    echo "An unrelated x command already exists at $x_link; nothing was replaced." >&2
+    exit 1
+  fi
+fi
+
 cd "$root"
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
 X_BUILD=1 HEX_LOCAL_BUILD=1 cargo build --release --locked --bin hex
 
-install -Dm755 target/release/hex "$HOME/.local/opt/x/hex"
-mkdir -p "$HOME/.local/bin"
-ln -sfn "$HOME/.local/opt/x/hex" "$HOME/.local/bin/x"
+mkdir -p "$x_dir" "$HOME/.local/bin"
+# Stage in the destination directory so mv replaces a running executable
+# atomically. Keep the prior X binary for an explicit rollback.
+x_stage="$(mktemp "$x_dir/.hex-new.XXXXXXXX")"
+trap 'rm -f "$x_stage"' EXIT
+install -m755 target/release/hex "$x_stage"
+if [[ -f "$x_binary" ]]; then
+  install -m755 "$x_binary" "$x_backup"
+fi
+mv -f -- "$x_stage" "$x_binary"
+trap - EXIT
+ln -sfn "$x_binary" "$x_link"
 export PATH="$HOME/.local/bin:$PATH"
 
 # Keep a fixed upstream version; npm writes package-lock.json alongside the

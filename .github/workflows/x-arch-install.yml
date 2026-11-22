@@ -1,0 +1,28 @@
+name: X Arch installer safety
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/x-arch-install.yml"
+      - "scripts/install-arch.sh"
+      - "scripts/rollback-arch-x.sh"
+      - "scripts/smoke-x/rollback-test.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  install-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check installer syntax and isolated rollback
+        shell: bash
+        run: |
+          bash -n scripts/install-arch.sh
+          bash -n scripts/rollback-arch-x.sh
+          bash -n scripts/smoke-x/rollback-test.sh
+          bash scripts/smoke-x/rollback-test.sh
