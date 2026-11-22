@@ -19,6 +19,7 @@ on:
       - "resources/**"
       - "assets/**"
       - "scripts/build*"
+      - "scripts/write-preview-manifest.py"
       - "scripts/install-win11-preview.ps1"
       - "scripts/uninstall-win11-preview.ps1"
 
@@ -110,6 +111,13 @@ jobs:
           Compress-Archive -Path dist/x.exe, dist/install-win11-preview.ps1, dist/uninstall-win11-preview.ps1, dist/README-preview.txt -DestinationPath dist/x-win11-preview-x64.zip
           $sha = (Get-FileHash dist/x-win11-preview-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           Add-Content -Encoding ascii dist/SHA256SUMS "$sha  x-win11-preview-x64.zip"
+          $compiler = (& rustc --version) -join ''
+          python scripts/write-preview-manifest.py create --directory dist --source-sha $env:GITHUB_SHA --platform windows --target x86_64-pc-windows-msvc --compiler $compiler --artifact x.exe --artifact x-win11-preview-x64.zip
+          if ($LASTEXITCODE -ne 0) { throw "Provenance creation failed" }
+          $sha = (Get-FileHash dist/BUILD_INFO.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          Add-Content -Encoding ascii dist/SHA256SUMS "$sha  BUILD_INFO.json"
+          python scripts/write-preview-manifest.py verify --directory dist --source-sha $env:GITHUB_SHA --platform windows
+          if ($LASTEXITCODE -ne 0) { throw "Provenance verification failed" }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: x-win11-preview-${{ github.sha }}
@@ -125,6 +133,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: x-win11-preview-${{ github.sha }}
@@ -136,6 +147,8 @@ jobs:
           sha256sum -c SHA256SUMS
           test -s x.exe
           test -s x-win11-preview-x64.zip
+          cd ..
+          python3 scripts/write-preview-manifest.py verify --directory dist --source-sha "$GITHUB_SHA" --platform windows
       - name: Publish experimental prerelease
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,7 +177,7 @@ jobs:
           This is an unsigned portable preview with a separate X-only install/uninstall
           script in the ZIP. It does not install, sign or update official Hex.
           EOF
-          gh release create "$tag" dist/x.exe dist/x-win11-preview-x64.zip dist/SHA256SUMS dist/README-preview.txt \
+          gh release create "$tag" dist/x.exe dist/x-win11-preview-x64.zip dist/SHA256SUMS dist/README-preview.txt dist/BUILD_INFO.json \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "X Windows 11 experimental preview ($short)" \
