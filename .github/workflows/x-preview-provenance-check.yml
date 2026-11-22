@@ -6,6 +6,7 @@ on:
       - ".github/workflows/x-preview-provenance-check.yml"
       - ".github/workflows/x-linux-preview.yml"
       - ".github/workflows/x-windows-preview.yml"
+      - ".github/workflows/x-macos-preview.yml"
       - "scripts/write-preview-manifest.py"
       - "scripts/tests/test_preview_manifest.py"
   workflow_dispatch:
@@ -19,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest]
+        os: [ubuntu-24.04, windows-latest, macos-26]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
