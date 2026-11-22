@@ -434,9 +434,7 @@ mod tests {
             journal.begin(run, "backend", &digest).unwrap(),
             Begin::RequiresReconciliation(_)
         ));
-        journal
-            .settle(run, "backend", State::Failed, None)
-            .unwrap();
+        journal.settle(run, "backend", State::Failed, None).unwrap();
         let after = journal.snapshot().unwrap();
         assert_eq!(after[0].state, State::Failed);
         assert_eq!(after[0].attempt, 1);
