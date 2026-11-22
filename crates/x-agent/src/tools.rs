@@ -1200,6 +1200,42 @@ pub fn wait_for_launched_focus() -> Result<(), String> {
     wait_for_launched_focus_scoped(&Cancellation::default())
 }
 
+/// Windows has no /proc or hyprctl. Require the same newly launched
+/// Win32 process *and* the same window identity to remain foreground across
+/// three samples; otherwise do not type into any window.
+#[cfg(windows)]
+pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), String> {
+    let pid = LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst);
+    if pid == 0 {
+        return Err("No launched process is available to verify".into());
+    }
+    let mut last_id: Option<String> = None;
+    let mut stable = 0;
+    for _ in 0..30 {
+        stop.check()?;
+        let observed = focused().filter(|(id, actual_pid)| {
+            id.starts_with("win:") && *actual_pid == pid
+        });
+        if let Some((id, _)) = observed {
+            if last_id.as_deref() == Some(id.as_str()) {
+                stable += 1;
+            } else {
+                last_id = Some(id);
+                stable = 1;
+            }
+            if stable >= 3 {
+                return stop.check();
+            }
+        } else {
+            last_id = None;
+            stable = 0;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    Err("The new Windows app never held verified foreground focus; nothing was typed".into())
+}
+
+#[cfg(not(windows))]
 pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), String> {
     let pid = LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst);
     if pid == 0 || which("hyprctl").is_none() {
