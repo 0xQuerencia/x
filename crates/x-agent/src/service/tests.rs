@@ -74,8 +74,8 @@ fn wait_for(s: &Service, f: impl Fn(&Snapshot) -> bool) -> Snapshot {
 
 #[test]
 fn isolated_project_tests_wait_for_explicit_owner_approval() {
-    use crate::verification::test_runner::Suite;
     use crate::projects::Registry;
+    use crate::verification::test_runner::Suite;
     use std::process::Command;
 
     let temp = tempfile::tempdir().unwrap();
@@ -108,7 +108,9 @@ fn isolated_project_tests_wait_for_explicit_owner_approval() {
         "fixture",
     ]);
     let registry = Registry::new(support.clone(), home.clone());
-    let (project, _) = registry.register("Demo", project_dir.to_str().unwrap()).unwrap();
+    let (project, _) = registry
+        .register("Demo", project_dir.to_str().unwrap())
+        .unwrap();
     let (service, _, _) = rig();
     service.set_workflow_dirs(support.join("workflows"), home.clone());
     service.set_autonomy_mode(AutonomyMode::Autonomous);
