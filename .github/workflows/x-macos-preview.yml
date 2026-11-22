@@ -76,7 +76,7 @@ jobs:
           mkdir -p dist
           cp target/release/hex dist/x-macos-arm64
           chmod 755 dist/x-macos-arm64
-          file dist/x-macos-arm64 | grep 'Mach-O 64-bit'
+          file dist/x-macos-arm64 | grep -E 'Mach-O 64-bit.*arm64'
           dist/x-macos-arm64 --version
           (cd dist && shasum -a 256 x-macos-arm64 > SHA256SUMS)
           printf '%s\n' \
@@ -119,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           (cd dist && sha256sum --check SHA256SUMS)
-          file dist/x-macos-arm64 | grep 'Mach-O 64-bit'
+          file dist/x-macos-arm64 | grep -E 'Mach-O 64-bit.*arm64'
           test -s dist/x-macos-arm64
           python3 scripts/write-preview-manifest.py verify \
             --directory dist --source-sha "$GITHUB_SHA" --platform macos
