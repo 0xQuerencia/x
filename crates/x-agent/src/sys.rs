@@ -95,7 +95,14 @@ pub fn capabilities(runner: &dyn Runner) -> Vec<Capability> {
             Vec::new()
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        let _ = runner;
+        // Fixed Win32 media track keys are available without shell utilities.
+        // Play/pause and audio/brightness readback remain unsupported.
+        vec![Capability::Media]
+    }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     {
         let mut found = Vec::new();
         if runner.exists("wpctl") || runner.exists("pactl") {
@@ -347,6 +354,11 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
         }
         Op::SetVolume(_) | Op::SetBrightness(_) => Err("Percent must be 0-100".into()),
         Op::Play | Op::Pause | Op::Next | Op::Previous => {
+            #[cfg(windows)]
+            {
+                return crate::windows_input::media_step(op);
+            }
+            #[cfg(not(windows))]
             let command = match op {
                 Op::Play => "play",
                 Op::Pause => "pause",
@@ -354,6 +366,8 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
                 Op::Previous => "previous",
                 _ => unreachable!(),
             };
+            #[cfg(not(windows))]
+            {
             runner.run("playerctl", &[command])?;
             if matches!(op, Op::Play | Op::Pause) {
                 let status = runner.run("playerctl", &["status"])?;
@@ -366,6 +380,7 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
             Ok(format!(
                 "Media {command} sent; track transition not verified"
             ))
+            }
         }
     }
 }
@@ -522,17 +537,22 @@ mod tests {
     #[test]
     fn readback_and_capability_probe() {
         let p = Probe;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(not(target_os = "macos"), not(windows)))]
         assert_eq!(
             capabilities(&p),
             vec![Capability::Audio, Capability::Brightness, Capability::Media]
         );
+        #[cfg(windows)]
+        assert_eq!(capabilities(&p), vec![Capability::Media]);
         #[cfg(target_os = "macos")]
         assert_eq!(capabilities(&p), vec![Capability::Audio]);
         assert_eq!(volume(&p).unwrap(), (30, true));
         assert_eq!(brightness(&p).unwrap(), 30);
-        assert!(execute(Op::SetVolume(30), &p).is_ok());
-        assert!(execute(Op::Pause, &p).unwrap().contains("verified"));
+        #[cfg(not(windows))]
+        {
+            assert!(execute(Op::SetVolume(30), &p).is_ok());
+            assert!(execute(Op::Pause, &p).unwrap().contains("verified"));
+        }
         assert!(execute(Op::SetVolume(120), &p).is_err());
     }
 
