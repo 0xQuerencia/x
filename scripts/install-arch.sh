@@ -11,6 +11,14 @@ fi
 # Homebrew-on-Linux or user-local installs as well as the system package manager.
 required=(git cargo rustc cc pkg-config node npm systemctl wtype grim xdg-open curl)
 optional=(slurp wl-copy opencode)
+# KDE Plasma 6 uses kdotool over the graphical user's D-Bus session.
+# It remains opt-in and is not a dependency on Hyprland or Sway.
+if [[ "${XDG_CURRENT_DESKTOP:-}" == *KDE* || "${XDG_CURRENT_DESKTOP:-}" == *kde* ]]; then
+  optional+=(kdotool)
+  if [[ "${X_ENABLE_EXPERIMENTAL_KDE:-}" != "1" ]]; then
+    echo 'KDE window control is experimental. To opt in for this session, export X_ENABLE_EXPERIMENTAL_KDE=1 before running x start/restart.' >&2
+  fi
+fi
 missing=()
 for cmd in "${required[@]}"; do
   command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
