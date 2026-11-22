@@ -78,18 +78,9 @@ cd "$root"
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
 X_BUILD=1 HEX_LOCAL_BUILD=1 cargo build --release --locked --bin hex
 
-mkdir -p "$x_dir" "$HOME/.local/bin"
-# Stage in the destination directory so mv replaces a running executable
-# atomically. Keep the prior X binary for an explicit rollback.
-x_stage="$(mktemp "$x_dir/.hex-new.XXXXXXXX")"
-trap 'rm -f "$x_stage"' EXIT
-install -m755 target/release/hex "$x_stage"
-if [[ -f "$x_binary" ]]; then
-  install -m755 "$x_binary" "$x_backup"
-fi
-mv -f -- "$x_stage" "$x_binary"
-trap - EXIT
-ln -sfn "$x_binary" "$x_link"
+# Recheck ownership after the build and stage both binary and rollback copy
+# atomically. This helper is also exercised in an isolated CI smoke test.
+bash "$root/scripts/activate-arch-x.sh" target/release/hex
 export PATH="$HOME/.local/bin:$PATH"
 
 # Keep a fixed upstream version; npm writes package-lock.json alongside the
