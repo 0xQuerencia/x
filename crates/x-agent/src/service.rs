@@ -736,9 +736,9 @@ impl Service {
             selected
         };
         if output.len() > 1_200
-            || output.chars().any(|ch| {
-                ch.is_control() && ch != '\n' && ch != '\r' && ch != '\t'
-            })
+            || output
+                .chars()
+                .any(|ch| ch.is_control() && ch != '\n' && ch != '\r' && ch != '\t')
         {
             return Err("Choose at most 1200 bytes of plain terminal text".into());
         }
