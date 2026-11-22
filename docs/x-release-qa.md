@@ -28,6 +28,26 @@ cargo test -p x-agent --test live -- --ignored --test-threads=1
 For Rune UI changes, regenerate and inspect golden screenshots on Linux,
 using the repository's `AGENTS.md` instructions before merging.
 
+## Preview artifact provenance
+
+Unsigned Linux and Windows previews include `BUILD_INFO.json` and SHA256
+checksums in `SHA256SUMS`. The manifest records the exact source commit,
+build platform, compiler, target, artifact byte sizes and hashes. CI checks it
+on the builder and again after downloading the artifact for prerelease
+publication. To check an extracted preview alongside a copy of the source:
+
+```sh
+python3 scripts/write-preview-manifest.py verify --directory dist \
+  --source-sha <40-character-source-commit> --platform linux
+```
+
+Use `--platform windows` when verifying a Windows bundle. All manifest
+records and hashes must match. **These unsigned checksums are not a signature
+or proof that a downloaded artifact originated with a trusted publisher.**
+Validate the release destination and trusted source SHA independently.
+A manifest is not a substitute for fresh-install acceptance, real-device QA,
+Windows signing or published software provenance attestations.
+
 ## Arch upgrade and rollback
 
 The Arch installer stages its replacement executable under
