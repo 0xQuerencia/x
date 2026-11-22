@@ -98,6 +98,17 @@ distribution and deployment approvals remain separate release requirements.
 The Python CI tests only verify the schema and fail-closed gate logic, not
 any physical X functionality.
 
+## X helper installation ownership
+
+The Arch source installer also checks the optional local `agent-desktop`
+helper directory and the `~/.local/bin/agent-desktop` command before running
+npm. It refuses symlinked or unowned helper directories, unrecognized manifests
+or an existing unrelated command. A preexisting user-owned helper is accepted
+only when its manifest matches the pinned X helper dependency; the installer
+never silently takes over another tool. The isolated ownership tests run in
+`x-arch-install.yml`. This remains **installer CI evidence**, not a fresh
+physical clean-account installation.
+
 ## Current X master-plan acceptance gate
 
 These checks are still **not evidence of a successful live run** until an
