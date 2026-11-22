@@ -1,0 +1,27 @@
+name: X physical acceptance record safety
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/x-qa-record-check.yml"
+      - "scripts/x-qa-gate.py"
+      - "scripts/tests/test_qa_gate.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qa-schema:
+    name: QA gate (no physical tests)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Verify acceptance schema and refusal cases
+        run: python -m unittest discover -s scripts/tests -p test_qa_gate.py

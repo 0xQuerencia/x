@@ -68,6 +68,36 @@ Recheck `x agent doctor` and live service behavior after rollback. A fresh
 install has no previous executable to restore. The installer and rollback
 still need a real clean-account acceptance run before release.
 
+## Private local physical-acceptance record
+
+A release gate cannot infer live microphone, UI, window identity or installer
+correctness from GitHub Actions. The portable `scripts/x-qa-gate.py` tool keeps
+an **operator-reported checklist** per target platform and exact source SHA.
+It never records usernames, private window titles, transcriptions, API keys,
+screenshots or arbitrary free-form notes.
+
+For example, on an actual Windows 11 test machine:
+
+```powershell
+python scripts/x-qa-gate.py init --file x-windows-qa.json --platform windows11 --source-sha <40-character-commit>
+python scripts/x-qa-gate.py record --file x-windows-qa.json --case microphone --result pass
+python scripts/x-qa-gate.py record --file x-windows-qa.json --case hotkey --result pass
+python scripts/x-qa-gate.py check --file x-windows-qa.json
+```
+
+Use `hyprland`, `kde`, `windows11`, or `macos` as the platform; all
+available case names are listed in `scripts/x-qa-gate.py`. Record `fail` or
+`unsupported` instead of `pass` when appropriate. The check exits nonzero
+for **any** missing, failed or unsupported required case. It never tags or
+releases anything. Records are private local files, with owner-only file
+permissions on Unix; keep them out of public issue logs.
+
+An all-pass record is **not independent verification**: someone must actually
+perform each test and inspect the exact release artifact. Build signing,
+distribution and deployment approvals remain separate release requirements.
+The Python CI tests only verify the schema and fail-closed gate logic, not
+any physical X functionality.
+
 ## Current X master-plan acceptance gate
 
 These checks are still **not evidence of a successful live run** until an
