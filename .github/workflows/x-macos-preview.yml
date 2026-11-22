@@ -1,0 +1,140 @@
+name: X macOS arm64 preview (unsigned)
+
+# Experimental X-only CLI executable. Not upstream Hex's signed release,
+# a notarized .app, a DMG or a stable macOS distribution.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/x-macos-preview.yml"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain*"
+      - "build.rs"
+      - "crates/**"
+      - "src/**"
+      - "resources/**"
+      - "assets/**"
+      - "scripts/build*"
+      - "scripts/write-preview-manifest.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x-macos-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-arm64:
+    name: macOS arm64 X executable
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      X_BUILD: "1"
+      HEX_LOCAL_BUILD: "1"
+      HEX_TEST_BUILD: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+      - name: Require native Apple Silicon and Metal
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          xcrun --sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
+      - name: Validate X agent and compile unsigned preview
+        run: |
+          set -euo pipefail
+          cargo fmt --all --check
+          cargo clippy --locked -p x-agent --all-targets -- -D warnings
+          cargo test --locked -p x-agent --all-targets
+          cargo build --locked --release --bin hex
+          mkdir -p dist
+          cp target/release/hex dist/x-macos-arm64
+          chmod 755 dist/x-macos-arm64
+          file dist/x-macos-arm64 | grep 'Mach-O 64-bit'
+          dist/x-macos-arm64 --version
+          (cd dist && shasum -a 256 x-macos-arm64 > SHA256SUMS)
+          printf '%s\n' \
+            'Experimental unsigned X command-line preview for macOS arm64.' \
+            'No .app bundle, notarization, installer, updater or signed release.' \
+            'The upstream Hex app and release infrastructure are unchanged.' \
+            'Real macOS microphone, accessibility, input and window tests are pending.' \
+            'Run only in a disposable account and verify SHA256SUMS.' \
+            > dist/README-preview.txt
+          python3 scripts/write-preview-manifest.py create \
+            --directory dist --source-sha "$GITHUB_SHA" --platform macos \
+            --target aarch64-apple-darwin --compiler "$(rustc --version)" \
+            --artifact x-macos-arm64
+          (cd dist && shasum -a 256 BUILD_INFO.json >> SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+          python3 scripts/write-preview-manifest.py verify \
+            --directory dist --source-sha "$GITHUB_SHA" --platform macos
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: x-macos-preview-${{ github.sha }}
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  prerelease:
+    name: Publish unsigned macOS preview
+    if: github.ref == 'refs/heads/main'
+    needs: macos-arm64
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: x-macos-preview-${{ github.sha }}
+          path: dist
+      - name: Verify downloaded provenance, checksum and binary identity
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS)
+          file dist/x-macos-arm64 | grep 'Mach-O 64-bit'
+          test -s dist/x-macos-arm64
+          python3 scripts/write-preview-manifest.py verify \
+            --directory dist --source-sha "$GITHUB_SHA" --platform macos
+      - name: Publish clearly labeled experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          short=${GITHUB_SHA:0:12}
+          tag="x-macos-preview-$short"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::Preview already exists"
+            exit 0
+          fi
+          cat > notes.md <<EOF
+          **Experimental X macOS arm64 command-line preview. Not stable.**
+
+          Built from X commit $GITHUB_SHA with an unsigned binary and verified
+          SHA256SUMS plus BUILD_INFO.json. No Apple Developer ID signing,
+          notarization, .app bundle, DMG, installer, updater or automatic
+          accessibility permissions are included. This preview may lack
+          runtime dependencies and is not a verified desktop build.
+
+          Real Apple Silicon microphone, keyboard shortcut, input, accessibility
+          and workflow acceptance have not been recorded. This does not use
+          or modify the official Hex release pipeline. See docs/x-release-qa.md.
+          EOF
+          gh release create "$tag" \
+            dist/x-macos-arm64 dist/SHA256SUMS dist/README-preview.txt dist/BUILD_INFO.json \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "X macOS arm64 experimental preview ($short)" \
+            --prerelease --notes-file notes.md
