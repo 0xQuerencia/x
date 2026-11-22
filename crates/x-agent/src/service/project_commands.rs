@@ -60,6 +60,12 @@ impl Service {
             .ok_or_else(|| "Project storage is not configured".into())
     }
 
+    /// The UI may list registered project identities without starting a
+    /// task or mutating the registry. Selection still rechecks the saved root.
+    pub fn list_registered_projects(&self) -> Result<Vec<Project>, String> {
+        self.project_registry()?.list()
+    }
+
     pub fn select_registered_project(&self, query: &str) -> Result<(Project, bool), String> {
         let registry = self.project_registry()?;
         let mut state = self.lock();
