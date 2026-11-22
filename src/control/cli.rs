@@ -591,12 +591,12 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
-    /// Locally capture a Wayland screen, focused window or selected region.
+    /// Save a local screenshot using the platform's supported capture modes.
     /// Captures are never uploaded. Existing output files are never overwritten.
     Screenshot {
         #[arg(default_value = "screen", value_parser = ["screen", "window", "region"])]
         mode: String,
-        /// Optional destination PNG path (default: a new file in Pictures).
+        /// Optional platform-native PNG or BMP path (default: a new file in Pictures).
         #[arg(long)]
         output: Option<std::path::PathBuf>,
     },

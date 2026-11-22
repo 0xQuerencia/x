@@ -1,6 +1,7 @@
-//! On-demand Wayland screenshot capture. Private vision captures stay in memory;
+//! Explicit desktop screenshot capture. Private Hyprland vision stays in memory;
 //! CLI-requested captures are written only to a user-selected or Pictures path.
-//! On Windows, explicit full-screen captures are BMP; window/region are refused.
+//! Windows screen captures are BMP; macOS uses a private temporary PNG.
+//! Both refuse unsupported window/region requests rather than broadening scope.
 //! No hooks, polling, uploads or persistent screenshot history.
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,9 @@ const MAX_PNG: usize = 4 * 1024 * 1024;
 
 #[cfg(windows)]
 mod win;
+
+#[cfg(target_os = "macos")]
+mod macos;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
@@ -310,49 +314,56 @@ fn region_geometry() -> Result<String, String> {
 
 /// Explicitly save a user-requested screenshot, never a model's private image.
 pub fn save(mode: Mode, output: Option<&Path>) -> Result<PathBuf, String> {
-    #[cfg(windows)]
-    if output.is_some_and(|path| {
-        !path
-            .extension()
-            .and_then(std::ffi::OsStr::to_str)
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("bmp"))
-    }) {
-        return Err("Windows screenshots must be saved with a .bmp extension".into());
-    }
-    let png = capture(mode)?;
-    let path = if let Some(path) = output {
-        path.to_path_buf()
-    } else {
-        let extension = if cfg!(windows) { "bmp" } else { "png" };
-        let name = format!(
-            "X-screenshot-{}.{extension}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| "System clock is not set")?
-                .as_millis()
-        );
-        dirs::picture_dir()
-            .or_else(dirs::home_dir)
-            .ok_or("Cannot find Pictures directory")?
-            .join(name)
-    };
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
+        macos::save(mode, output)
     }
-    use std::io::Write;
-    let mut file = opts
-        .open(&path)
-        .map_err(|e| format!("Cannot create screenshot {}: {e}", path.display()))?;
-    if let Err(error) = file.write_all(&png) {
-        drop(file);
-        let _ = std::fs::remove_file(&path);
-        return Err(format!("Cannot save screenshot: {error}"));
+    #[cfg(not(target_os = "macos"))]
+    {
+        #[cfg(windows)]
+        if output.is_some_and(|path| {
+            !path
+                .extension()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("bmp"))
+        }) {
+            return Err("Windows screenshots must be saved with a .bmp extension".into());
+        }
+        let png = capture(mode)?;
+        let path = if let Some(path) = output {
+            path.to_path_buf()
+        } else {
+            let extension = if cfg!(windows) { "bmp" } else { "png" };
+            let name = format!(
+                "X-screenshot-{}.{extension}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| "System clock is not set")?
+                    .as_millis()
+            );
+            dirs::picture_dir()
+                .or_else(dirs::home_dir)
+                .ok_or("Cannot find Pictures directory")?
+                .join(name)
+        };
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        use std::io::Write;
+        let mut file = opts
+            .open(&path)
+            .map_err(|e| format!("Cannot create screenshot {}: {e}", path.display()))?;
+        if let Err(error) = file.write_all(&png) {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+            return Err(format!("Cannot save screenshot: {error}"));
+        }
+        Ok(path)
     }
-    Ok(path)
 }
 
 /// No dependency, clipboard access, temp file or external process for encoding.
