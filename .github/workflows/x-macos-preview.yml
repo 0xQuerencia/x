@@ -1,7 +1,7 @@
 name: X macOS arm64 preview (unsigned)
 
-# Experimental X-only CLI executable. Not upstream Hex's signed release,
-# a notarized .app, a DMG or a stable macOS distribution.
+# Experimental X-only executable and unsigned .app ZIP.
+# Not upstream Hex's signed release, notarized or a stable distribution.
 on:
   workflow_dispatch:
   pull_request:
@@ -17,6 +17,7 @@ on:
       - "resources/**"
       - "assets/**"
       - "scripts/build*"
+      - "scripts/package-macos-preview.sh"
       - "scripts/write-preview-manifest.py"
   push:
     branches: [main]
@@ -32,6 +33,7 @@ on:
       - "resources/**"
       - "assets/**"
       - "scripts/build*"
+      - "scripts/package-macos-preview.sh"
       - "scripts/write-preview-manifest.py"
 
 permissions:
@@ -78,10 +80,16 @@ jobs:
           chmod 755 dist/x-macos-arm64
           file dist/x-macos-arm64 | grep -E 'Mach-O 64-bit.*arm64'
           dist/x-macos-arm64 --version
-          (cd dist && shasum -a 256 x-macos-arm64 > SHA256SUMS)
+          bash scripts/package-macos-preview.sh dist/x-macos-arm64 dist/x-macos-preview-arm64.zip
+          stage=$(mktemp -d)
+          trap 'rm -rf -- "$stage"' EXIT
+          ditto -x -k dist/x-macos-preview-arm64.zip "$stage"
+          plutil -lint "$stage/X Preview.app/Contents/Info.plist"
+          cmp dist/x-macos-arm64 "$stage/X Preview.app/Contents/MacOS/x"
+          (cd dist && shasum -a 256 x-macos-arm64 x-macos-preview-arm64.zip > SHA256SUMS)
           printf '%s\n' \
-            'Experimental unsigned X command-line preview for macOS arm64.' \
-            'No .app bundle, notarization, installer, updater or signed release.' \
+            'Experimental unsigned X CLI and .app ZIP for macOS arm64.' \
+            'The X Preview.app is not notarized, Developer ID signed or a stable installer.' \
             'The upstream Hex app and release infrastructure are unchanged.' \
             'Real macOS microphone, accessibility, input and window tests are pending.' \
             'Run only in a disposable account and verify SHA256SUMS.' \
@@ -89,7 +97,7 @@ jobs:
           python3 scripts/write-preview-manifest.py create \
             --directory dist --source-sha "$GITHUB_SHA" --platform macos \
             --target aarch64-apple-darwin --compiler "$(rustc --version)" \
-            --artifact x-macos-arm64
+            --artifact x-macos-arm64 --artifact x-macos-preview-arm64.zip
           (cd dist && shasum -a 256 BUILD_INFO.json >> SHA256SUMS && shasum -a 256 -c SHA256SUMS)
           python3 scripts/write-preview-manifest.py verify \
             --directory dist --source-sha "$GITHUB_SHA" --platform macos
@@ -121,6 +129,7 @@ jobs:
           (cd dist && sha256sum --check SHA256SUMS)
           file dist/x-macos-arm64 | grep -E 'Mach-O 64-bit.*arm64'
           test -s dist/x-macos-arm64
+          unzip -p dist/x-macos-preview-arm64.zip 'X Preview.app/Contents/MacOS/x' | cmp - dist/x-macos-arm64
           python3 scripts/write-preview-manifest.py verify \
             --directory dist --source-sha "$GITHUB_SHA" --platform macos
       - name: Publish clearly labeled experimental prerelease
@@ -135,20 +144,20 @@ jobs:
             exit 0
           fi
           cat > notes.md <<EOF
-          **Experimental X macOS arm64 command-line preview. Not stable.**
+          **Experimental X macOS arm64 CLI and unsigned .app preview. Not stable.**
 
           Built from X commit $GITHUB_SHA with an unsigned binary and verified
           SHA256SUMS plus BUILD_INFO.json. No Apple Developer ID signing,
-          notarization, .app bundle, DMG, installer, updater or automatic
-          accessibility permissions are included. This preview may lack
-          runtime dependencies and is not a verified desktop build.
+          notarization, DMG, updater or automatic accessibility permissions
+          are included. The bundled X Preview.app is not a verified desktop
+          release and must be tested in a disposable user account.
 
           Real Apple Silicon microphone, keyboard shortcut, input, accessibility
           and workflow acceptance have not been recorded. This does not use
           or modify the official Hex release pipeline. See docs/x-release-qa.md.
           EOF
           gh release create "$tag" \
-            dist/x-macos-arm64 dist/SHA256SUMS dist/README-preview.txt dist/BUILD_INFO.json \
+            dist/x-macos-arm64 dist/x-macos-preview-arm64.zip dist/SHA256SUMS dist/README-preview.txt dist/BUILD_INFO.json \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "X macOS arm64 experimental preview ($short)" \
             --prerelease --notes-file notes.md
