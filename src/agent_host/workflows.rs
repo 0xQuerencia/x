@@ -131,7 +131,9 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         "test-project" => {
             let args: Vec<_> = value.split_whitespace().collect();
             if args.len() != 2 {
-                need("exactly a project id and suite (cargo-workspace, cargo-agent, npm, pnpm, pytest, go)")
+                need(
+                    "exactly a project id and suite (cargo-workspace, cargo-agent, npm, pnpm, pytest, go)",
+                )
             } else {
                 match x_agent::verification::test_runner::Suite::parse(args[1])
                     .and_then(|suite| svc.plan_worktree_tests(args[0], suite).map(|_| ()))
@@ -140,7 +142,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
                     Err(error) => refuse(error),
                 }
             }
-        },
+        }
         "run-graph" if value.is_empty() => need("a workflow id"),
         "run-graph" => match svc.plan_graph_workflow(value) {
             Ok(_) => super::snapshot(0),
