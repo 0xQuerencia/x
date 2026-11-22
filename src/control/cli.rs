@@ -950,10 +950,9 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Heard { .. } => unreachable!("heard handled locally"),
                 AgentCommand::Key { .. } => unreachable!("key handled locally"),
                 AgentCommand::Context { output } => (AgentAction::Context, output),
-                AgentCommand::SendBrowserPage { url, title, output } => (
-                    AgentAction::SendBrowserPage { url, title },
-                    output,
-                ),
+                AgentCommand::SendBrowserPage { url, title, output } => {
+                    (AgentAction::SendBrowserPage { url, title }, output)
+                }
                 AgentCommand::SendProjectFile {
                     path,
                     line,
