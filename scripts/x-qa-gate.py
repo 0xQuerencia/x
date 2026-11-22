@@ -25,7 +25,8 @@ SCENARIOS = {
     ),
     "macos": (
         "clean_install", "doctor", "microphone", "hotkey", "window_list",
-        "focus", "clipboard", "typing", "workflow", "stop", "privacy",
+        "focus", "clipboard", "typing", "screenshot", "screen_permission",
+        "workflow", "stop", "privacy",
     ),
 }
 RESULTS = ("pass", "fail", "unsupported")

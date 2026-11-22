@@ -22,6 +22,22 @@ class QaAcceptanceTests(unittest.TestCase):
             "cases": {},
         }
 
+    def test_macos_screen_permission_and_capture_are_required(self):
+        value = {
+            "version": 1,
+            "platform": "macos",
+            "source_sha": "a" * 40,
+            "cases": {name: "pass" for name in qa.SCENARIOS["macos"]},
+        }
+        self.assertTrue(qa.gate(qa.validate(value))["ready"])
+        value["cases"].pop("screen_permission")
+        self.assertFalse(qa.gate(qa.validate(value))["ready"])
+        value["cases"]["screen_permission"] = "unsupported"
+        self.assertFalse(qa.gate(qa.validate(value))["ready"])
+        value["cases"]["screen_permission"] = "pass"
+        value["cases"]["screenshot"] = "fail"
+        self.assertFalse(qa.gate(qa.validate(value))["ready"])
+
     def test_missing_and_unsupported_never_mark_release_ready(self):
         qa.save(self.path, self.source, creating=True)
         result = qa.gate(qa.read(self.path))
