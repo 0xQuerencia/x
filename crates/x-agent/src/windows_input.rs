@@ -135,6 +135,33 @@ pub(crate) fn browser_hotkey(
     Ok(())
 }
 
+fn media_key(op: crate::sys::Op) -> Result<u16, String> {
+    match op {
+        crate::sys::Op::Next => Ok(0xB0),     // VK_MEDIA_NEXT_TRACK
+        crate::sys::Op::Previous => Ok(0xB1), // VK_MEDIA_PREV_TRACK
+        crate::sys::Op::Play | crate::sys::Op::Pause => Err(
+            "Windows exposes play/pause as a toggle; X will not guess the player's state".into(),
+        ),
+        _ => Err("This is not a Windows media-track command".into()),
+    }
+}
+
+/// Media next/previous are fixed virtual keys; no model-selected shortcut or
+/// shell command is involved. A successful injection is not playback readback.
+pub(crate) fn media_step(op: crate::sys::Op) -> Result<String, String> {
+    let key = media_key(op)?;
+    let inputs = [virtual_key(key, false), virtual_key(key, true)];
+    if !send_complete(&inputs, send_input) {
+        return Err("Windows refused the media-track key".into());
+    }
+    Ok(match op {
+        crate::sys::Op::Next => "Next-track key sent; playback was not verified",
+        crate::sys::Op::Previous => "Previous-track key sent; playback was not verified",
+        _ => unreachable!(),
+    }
+    .into())
+}
+
 fn stroke(unit: u16, key_up: bool) -> Input {
     Input {
         kind: INPUT_KEYBOARD,
@@ -233,6 +260,16 @@ mod tests {
             }));
             assert_eq!(*released.borrow(), expected);
         }
+    }
+
+    #[test]
+    fn only_fixed_media_track_keys_are_supported() {
+        use crate::sys::Op;
+        assert_eq!(media_key(Op::Next).unwrap(), 0xB0);
+        assert_eq!(media_key(Op::Previous).unwrap(), 0xB1);
+        assert!(media_key(Op::Play).is_err());
+        assert!(media_key(Op::Pause).is_err());
+        assert!(media_key(Op::SetVolume(20)).is_err());
     }
 
     #[test]
