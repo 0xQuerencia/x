@@ -178,6 +178,13 @@ impl Journal {
         })
     }
 
+    /// Read every persisted claim for a local operator status view.
+    /// Callers must redact fingerprints and provider evidence before display.
+    /// Reading never takes a write lock, settles, replays or retries a job.
+    pub fn snapshot(&self) -> Result<Vec<Claim>, String> {
+        Ok(self.read()?.entries)
+    }
+
     /// After a restart, in-flight claims are *unknown*, never silently
     /// replayed or marked successful.
     pub fn uncertain(&self) -> Result<Vec<Claim>, String> {
@@ -413,6 +420,25 @@ mod tests {
         fs::write(&path, existing).unwrap();
         assert!(journal.begin(run, "backend", &digest).is_err());
         assert_eq!(fs::read(&path).unwrap(), existing);
+    }
+
+    #[test]
+    fn snapshot_does_not_replay_or_mutate_claims() {
+        let (_dir, journal, run, digest) = fixture();
+        journal.begin(run, "backend", &digest).unwrap();
+        let saved = journal.snapshot().unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].state, State::Claimed);
+        assert_eq!(saved[0].attempt, 1);
+        assert!(matches!(
+            journal.begin(run, "backend", &digest).unwrap(),
+            Begin::RequiresReconciliation(_)
+        ));
+        journal.settle(run, "backend", State::Failed, None).unwrap();
+        let after = journal.snapshot().unwrap();
+        assert_eq!(after[0].state, State::Failed);
+        assert_eq!(after[0].attempt, 1);
+        assert!(journal.uncertain().unwrap().is_empty());
     }
 
     #[test]

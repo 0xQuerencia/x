@@ -171,6 +171,17 @@ a stale project or changed commit is refused. The resulting worktree is left
 for inspection; it is **not merged or deleted automatically**. A green test
 exit only verifies that preset's process result, not the project as a whole.
 
+### Read-only recovery claim history
+
+`hex agent workflow claims` displays every locally recorded coding job's run
+ID, node ID, attempt, outcome and whether evidence was stored, **without**
+printing prompts, task fingerprints or provider evidence identifiers. It never
+starts a harness, checks provider delivery, issues grants or retries anything.
+`hex agent workflow uncertain` remains the smaller view of jobs claimed
+before a possible crash. A failed, cancelled or interrupted job is **not**
+safe to replay based on its local status alone; a future recovery action must
+prove non-delivery through the actual provider and request a new approval.
+
 ### Approved Git fast-forward integration (conservative)
 
 After inspecting an **X-owned Git worktree** and committing its changes, the
