@@ -408,7 +408,16 @@ fn redact(text: &str) -> (String, bool) {
             let sensitive = private_key
                 || [
                     "authorization:",
+                    "bearer ",
                     "x-api-key:",
+                    "openrouter_api_key=",
+                    "openrouter_api_key:",
+                    "openai_api_key=",
+                    "anthropic_api_key=",
+                    "perplexity_api_key=",
+                    "aws_secret_access_key=",
+                    "github_token=",
+                    "hf_token=",
                     "cookie:",
                     "set-cookie:",
                     "api_key=",
@@ -573,6 +582,25 @@ mod tests {
                 .push_text(Source::TerminalOutput, Scope::BrowserTab, "cargo test", 99)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn terminal_log_redacts_provider_keys_without_exposing_values() {
+        let mut bundle = Bundle::default();
+        bundle
+            .push_text(
+                Source::TerminalOutput,
+                Scope::Project,
+                "OPENROUTER_API_KEY=router-secret\nAWS_SECRET_ACCESS_KEY=aws-secret\nBearer token-secret\nTest output: 2 failed",
+                25,
+            )
+            .unwrap();
+        let serialized = bundle.render_untrusted().unwrap();
+        for secret in ["router-secret", "aws-secret", "token-secret"] {
+            assert!(!serialized.contains(secret));
+        }
+        assert!(serialized.contains("Test output: 2 failed"));
+        assert_eq!(bundle.items[0].redaction, Redaction::Applied);
     }
 
     #[test]
