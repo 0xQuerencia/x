@@ -318,6 +318,11 @@ pub enum AgentAction {
         start_line: u32,
         line_count: u32,
     },
+    /// Owner-entered browser URL metadata, not a live tab capture.
+    SendBrowserPage {
+        url: String,
+        title: String,
+    },
     /// Saved workflows: `list`, `show <id>`, `run <id>`, `last <id>`, `delete <id>`,
     /// `duplicate <id>`, `import <file>`, `undo`, `dir`.
     Workflow {

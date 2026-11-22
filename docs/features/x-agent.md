@@ -146,8 +146,13 @@ after explicitly selecting a project and an OpenCode session. X reads only the
 chosen 1–20 UTF-8 lines, refuses hidden/out-of-project paths, redacts common
 credential lines, and caps the excerpt to 900 bytes. The handoff uses the normal
 **Work approval** and selection-only harness mode; it does not grant file edits
-or scan surrounding files. Other browser and screen capture paths remain
-unwired until their own permissions and user-facing controls are implemented.
+or scan surrounding files. To share **manually entered** browser metadata, use
+`hex agent send-browser-page https://example.org/docs?token=private --title "Docs"`
+after selecting a project and session. X strips query/fragment, redacts known
+credential patterns in the path and title and asks for Work approval. This is
+**not an automated browser-tab connection**: it never reads the current browser,
+fetches the page or forwards page contents. Direct tab and screen capture
+still require separately permissioned adapters.
 
 ### Owner-approved isolated project tests
 
