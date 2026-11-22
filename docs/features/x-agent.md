@@ -171,6 +171,25 @@ a stale project or changed commit is refused. The resulting worktree is left
 for inspection; it is **not merged or deleted automatically**. A green test
 exit only verifies that preset's process result, not the project as a whole.
 
+### Approved Git fast-forward integration (conservative)
+
+After inspecting an **X-owned Git worktree** and committing its changes, the
+owner can request a merge preview with
+`hex agent integrate-fast-forward <registered-project-id> <run-uuid> <task-id> <start-commit>`.
+The IDs and original 40/64-character commit must identify an existing worktree
+created by X. X verifies the registered Git identity, owner-generated worktree
+path, uncommitted state, branch ancestry, exact primary and task commits and
+changed-file list before offering **Approve and run** in Rune (or `hex agent
+approve <id>`). The approval is one-use and scoped to the reviewed commits.
+
+Only **clean, conflict-free Git fast-forwards** are supported; diverged branches,
+dirty checkouts, stale approvals, unsafe worktree identity and truncated change
+lists are refused without edits. X uses `git merge --ff-only`, never push,
+force, reset, checkout arbitrary model paths, resolve conflicts or delete the
+task checkout. Once Git actually starts, Stop cannot safely interrupt a branch
+update; Stop can cancel the pending approval or stop before the Git call.
+Inspect the primary checkout manually if Git reports an incomplete operation.
+
 ### Read-only workflow graph preview
 
 Run `hex agent workflow preview <id>` to validate a saved workflow or v2
