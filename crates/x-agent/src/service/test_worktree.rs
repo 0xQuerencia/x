@@ -49,7 +49,10 @@ impl Service {
         let (program, args) = suite.command();
         let command = format!("{program} {}", args.join(" "));
         let label = format!("Test {} at {}: {command}", project.name, commit);
-        let steps = vec![step(&label, "runs project code in an isolated worktree; requires approval")];
+        let steps = vec![step(
+            &label,
+            "runs project scripts with user permissions; not sandboxed; approval required",
+        )];
         let mut state = self.lock();
         if state.phase.is_busy() {
             return Err(busy(state.phase));
