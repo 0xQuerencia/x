@@ -30,6 +30,8 @@ pub(super) struct AgentPane {
     quick_file_preview: Option<String>,
     pending_process: Option<::x_agent::quick::processes::ProcessInfo>,
     workspace: TextEdit,
+    test_project: TextEdit,
+    test_suite_index: usize,
     mode: Mode,
     snapshot: Option<Snapshot>,
     /// Serialized form of the last snapshot, so polling redraws only on change.
@@ -54,6 +56,8 @@ impl Default for AgentPane {
             quick_file_preview: None,
             pending_process: None,
             workspace: TextEdit::default(),
+            test_project: TextEdit::default(),
+            test_suite_index: 0,
             mode: Mode::Actions,
             snapshot: None,
             shown: String::new(),
@@ -399,6 +403,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     body = body.child(access_row(p, snapshot));
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
+        body = body.child(project_tests_row(p, pane, busy));
     }
     if let Some(task) = &snapshot.task {
         body = body.child(task_card(p, snapshot, task));
@@ -522,6 +527,71 @@ fn workspace_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
                 }
             },
         ))
+}
+
+const TEST_SUITES: [(&str, ::x_agent::verification::test_runner::Suite); 6] = [
+    ("Cargo workspace", ::x_agent::verification::test_runner::Suite::CargoWorkspace),
+    ("Cargo x-agent", ::x_agent::verification::test_runner::Suite::CargoAgent),
+    ("npm test", ::x_agent::verification::test_runner::Suite::Npm),
+    ("pnpm test", ::x_agent::verification::test_runner::Suite::Pnpm),
+    ("pytest", ::x_agent::verification::test_runner::Suite::Pytest),
+    ("go test", ::x_agent::verification::test_runner::Suite::Go),
+];
+
+fn project_tests_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
+    let field = TextInput::new(&pane.test_project)
+        .placeholder(tr("Registered project name or ID"))
+        .width(None)
+        .on_edit(|ui: &mut Ui| &mut ui.agent.test_project)
+        .build(p.k)
+        .key("agent-test-project");
+    let selected_suite = pane.test_suite_index % TEST_SUITES.len();
+    col()
+        .key("agent-project-tests")
+        .gap(6.0)
+        .child(text(tr("Isolated project tests")).font(DESCRIPTION).color(p.text()))
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(field)
+                .child(button(
+                    p,
+                    "agent-test-suite",
+                    TEST_SUITES[selected_suite].0,
+                    ButtonKind::Secondary,
+                    move |ui: &mut Ui, _| {
+                        if !ui.agent.is_busy() {
+                            ui.agent.test_suite_index =
+                                (ui.agent.test_suite_index + 1) % TEST_SUITES.len();
+                        }
+                    },
+                ))
+                .child(button(
+                    p,
+                    "agent-test-review",
+                    tr("Review test run"),
+                    if busy {
+                        ButtonKind::Secondary
+                    } else {
+                        ButtonKind::Primary
+                    },
+                    |ui: &mut Ui, _| {
+                        let project_id = ui.agent.test_project.text.trim().to_string();
+                        let suite = TEST_SUITES[ui.agent.test_suite_index % TEST_SUITES.len()].1;
+                        if let Err(error) =
+                            agent_host::service().plan_worktree_tests(&project_id, suite)
+                        {
+                            agent_host::service().emit("error", &error);
+                        }
+                    },
+                )),
+        )
+        .child(
+            text(tr("Test scripts run with your user permissions, not in a security sandbox. X requires a separate approval and retains the isolated checkout."))
+                .font(DESCRIPTION)
+                .color(p.warning()),
+        )
 }
 
 fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> El {
