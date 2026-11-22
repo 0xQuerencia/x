@@ -73,6 +73,59 @@ fn wait_for(s: &Service, f: impl Fn(&Snapshot) -> bool) -> Snapshot {
 }
 
 #[test]
+fn isolated_project_tests_wait_for_explicit_owner_approval() {
+    use crate::verification::test_runner::Suite;
+    use crate::projects::Registry;
+    use std::process::Command;
+
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let project_dir = home.join("demo");
+    let support = home.join("support");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let git = |args: &[&str]| {
+        assert!(
+            Command::new("git")
+                .current_dir(&project_dir)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    git(&["init", "-q"]);
+    git(&[
+        "-c",
+        "user.name=X",
+        "-c",
+        "user.email=x@invalid.example",
+        "-c",
+        "core.hooksPath=",
+        "commit",
+        "--allow-empty",
+        "-q",
+        "-m",
+        "fixture",
+    ]);
+    let registry = Registry::new(support.clone(), home.clone());
+    let (project, _) = registry.register("Demo", project_dir.to_str().unwrap()).unwrap();
+    let (service, _, _) = rig();
+    service.set_workflow_dirs(support.join("workflows"), home.clone());
+    service.set_autonomy_mode(AutonomyMode::Autonomous);
+
+    let planned = service
+        .plan_worktree_tests(&project.id.to_string(), Suite::Npm)
+        .unwrap();
+    assert_eq!(planned.phase, Phase::AwaitingApproval);
+    assert_eq!(service.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(service.approve(planned.id + 1).is_err());
+    assert!(!home.join("X Worktrees").exists());
+    service.cancel();
+    assert!(service.approve(planned.id).is_err());
+    assert!(!home.join("X Worktrees").exists());
+}
+
+#[test]
 fn nothing_runs_without_approval() {
     let (s, _, l) = rig();
     let t = s
