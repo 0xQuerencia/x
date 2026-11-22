@@ -201,6 +201,32 @@ task checkout. Once Git actually starts, Stop cannot safely interrupt a branch
 update; Stop can cancel the pending approval or stop before the Git call.
 Inspect the primary checkout manually if Git reports an incomplete operation.
 
+### Owner-selected terminal output handoff
+
+X can attach a **bounded excerpt the user deliberately supplies** from a
+terminal to the currently selected OpenCode session. For example, after
+selecting a project and an existing OpenCode session:
+
+```sh
+hex agent send-terminal-output "cargo test: 1 failed; 98 passed"
+cargo test 2>&1 | hex agent send-terminal-output --stdin
+```
+
+The second command runs `cargo test` **in your shell**, not inside X. X
+reads at most 1201 bytes from standard input, refuses excerpts above 1200
+bytes, redacts common credential-like lines and labels the content as
+`terminal_output`, untrusted project evidence. Output with raw escape
+control characters is refused. It never watches a PTY, grabs terminal
+scrollback, runs a shell or adds execution privileges. Sending the excerpt
+to a selected OpenCode session still requires the normal **explicit Work
+approval**, including in Autonomous mode, and uses selection-only
+tools-disabled access. If the CLI is waiting for terminal input, finish the
+pipe or cancel it; X only reads stdin when `--stdin` was requested.
+
+Do not pipe secrets or full build logs blindly. Pattern redaction is best
+effort and is **not** a general data-loss prevention system; inspect the
+selected excerpt before approving it.
+
 ### Read-only workflow graph preview
 
 Run `hex agent workflow preview <id>` to validate a saved workflow or v2
