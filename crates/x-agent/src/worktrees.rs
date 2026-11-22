@@ -224,13 +224,10 @@ impl Manager {
         if verified.trim() != start_commit {
             return Err("The recorded starting commit no longer exists".into());
         }
-        let (ancestor, _) = git(
+        git(
             owned.path(),
             &["merge-base", "--is-ancestor", start_commit, "HEAD"],
         )?;
-        if !ancestor {
-            return Err("The recorded starting commit is not an ancestor of this worktree".into());
-        }
         Ok(owned)
     }
 
