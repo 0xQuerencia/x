@@ -135,14 +135,13 @@ pub(crate) fn browser_hotkey(
     Ok(())
 }
 
-
 fn media_key(op: crate::sys::Op) -> Result<u16, String> {
     match op {
-        crate::sys::Op::Next => Ok(0xB0), // VK_MEDIA_NEXT_TRACK
+        crate::sys::Op::Next => Ok(0xB0),     // VK_MEDIA_NEXT_TRACK
         crate::sys::Op::Previous => Ok(0xB1), // VK_MEDIA_PREV_TRACK
-        crate::sys::Op::Play | crate::sys::Op::Pause => {
-            Err("Windows exposes play/pause as a toggle; X will not guess the player's state".into())
-        }
+        crate::sys::Op::Play | crate::sys::Op::Pause => Err(
+            "Windows exposes play/pause as a toggle; X will not guess the player's state".into(),
+        ),
         _ => Err("This is not a Windows media-track command".into()),
     }
 }
