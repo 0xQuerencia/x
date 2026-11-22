@@ -75,7 +75,10 @@ pub fn copy(text: &str) -> Result<String, String> {
         if let Ok((true, bytes)) = capture(&mut cmd, Duration::from_secs(2))
             && bytes == text.as_bytes()
         {
-            return Ok(format!("Copied {} characters (verified)", text.chars().count()));
+            return Ok(format!(
+                "Copied {} characters (verified)",
+                text.chars().count()
+            ));
         }
         std::thread::sleep(Duration::from_millis(40));
     }
