@@ -6,6 +6,8 @@ on:
       - ".github/workflows/x-arch-install.yml"
       - "scripts/install-arch.sh"
       - "scripts/activate-arch-x.sh"
+      - "scripts/check-arch-helper.sh"
+      - "scripts/smoke-x/helper-ownership-test.sh"
       - "scripts/rollback-arch-x.sh"
       - "scripts/smoke-x/rollback-test.sh"
       - "scripts/smoke-x/activation-test.sh"
@@ -26,8 +28,11 @@ jobs:
         run: |
           bash -n scripts/install-arch.sh
           bash -n scripts/activate-arch-x.sh
+          bash -n scripts/check-arch-helper.sh
+          bash -n scripts/smoke-x/helper-ownership-test.sh
           bash -n scripts/rollback-arch-x.sh
           bash -n scripts/smoke-x/rollback-test.sh
           bash -n scripts/smoke-x/activation-test.sh
           bash scripts/smoke-x/rollback-test.sh
           bash scripts/smoke-x/activation-test.sh
+          bash scripts/smoke-x/helper-ownership-test.sh
