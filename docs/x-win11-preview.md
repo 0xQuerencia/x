@@ -55,7 +55,7 @@ Windows assurance. `X_BUILD=1`, `HEX_LOCAL_BUILD=1`, and
 
 **Do not share this as a completed Windows release.** Before publishing a
 versioned release, complete the real-machine tests in `docs/x-win11.md`,
-including microphone, focus, app selection, clipboard, screenshots,
+including microphone, focus, app selection, clipboard, local BMP screenshots,
 accessibility, workflows, Stop and undo. Unsupported actions must remain
 explicitly unsupported.
 

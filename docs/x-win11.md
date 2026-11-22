@@ -21,7 +21,8 @@ not PowerShell, shell commands or text from speech.
 | Explicit Unicode typing and clipboard copy | Native SendInput / CF_UNICODETEXT implementations; physical smoke needed |
 | Browser tab shortcuts (new/close/reopen) | Native fixed-key shortcuts after verifying browser focus; physical smoke needed |
 | Next/previous media track | Fixed Windows media keys (unverified delivery); Play/Pause refuse toggle ambiguity |
-| Screenshots, system volume/mute/brightness, process management, wake listener | **Not at Linux parity** |
+| Explicit full-screen screenshot | Bounded GDI capture to a local BMP, no automatic capture, uploads or window/region fallback; Windows physical QA pending |
+| Window/region screenshots, system volume/mute/brightness, process management, wake listener | **Not at Linux parity** |
 
 ## Developer build on a Windows 11 machine
 
@@ -79,3 +80,7 @@ character**, rather than trusting only the prior focus wait. An app that delegat
 to a different process, a stolen focus, unavailable window enumeration, or a
 slow startup fails closed: X refuses to type rather than guessing which window
 should receive the text. This is not yet evidence of live Windows 11 typing QA.
+
+## Windows screenshot smoke test
+
+Run the explicit `hex agent screenshot screen` command (or speak the exact screenshot phrase) from a disposable Windows 11 user account. Confirm the resulting `X-screenshot-*.bmp` opens correctly, represents the real virtual desktop and is saved only in the user Pictures directory. Window and region screenshot requests must refuse instead of broadening to the entire display. Test locked/protected desktops and multi-monitor sizing without bypassing security surfaces. The screenshot is never automatically forwarded to a model or coding harness. Physical results still need to be recorded.
