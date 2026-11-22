@@ -297,7 +297,9 @@ impl Engine {
             }
         }
         let (field, selection) = match (&window, read_selection) {
-            (Some(win), true) => self.read_focus(win.value.window.pid, &mut notes, true),
+            (Some(win), true) => {
+                self.read_focus(self.a11y.focus(win.value.window.pid), &mut notes, true)
+            }
             (_, false) => (None, not_read()),
             (None, true) => (None, unavailable("no window has focus")),
         };
@@ -323,7 +325,8 @@ impl Engine {
             .window_ref()
             .ok_or("No application window has focus")?;
         authorize(window)?;
-        let (field, selection) = self.read_focus(window.pid, &mut context.notes, false);
+        let focus = self.a11y.focus_active_window(window.pid);
+        let (field, selection) = self.read_focus(focus, &mut context.notes, false);
         context.field = field;
         context.selection = selection;
         self.recheck(&context, true)
@@ -333,11 +336,11 @@ impl Engine {
 
     fn read_focus(
         &self,
-        pid: u32,
+        focus: Result<Focus, String>,
         notes: &mut Vec<String>,
         allow_primary: bool,
     ) -> (Option<Sourced<FieldCtx>>, Sourced<Selection>) {
-        let focus = match self.a11y.focus(pid) {
+        let focus = match focus {
             Ok(f) => f,
             Err(why) => {
                 notes.push(format!("Accessibility: {why}"));

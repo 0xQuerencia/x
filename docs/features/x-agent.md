@@ -176,8 +176,9 @@ exit only verifies that preset's process result, not the project as a whole.
 With a project and an OpenCode session selected, use a desktop keybinding for
 `hex agent send-browser-selection` while the browser has focus and text is
 selected. X requires a grant for that browser and `hex agent computer remote on`
-before reading through accessibility. It rejects missing or oversized
-selections and leaves the clipboard alone.
+before reading through accessibility. It reads only from the application's
+active accessibility window and refuses when that window is ambiguous. It
+rejects missing or oversized selections and leaves the clipboard alone.
 
 Review the redacted excerpt and selected session in the Work preview.
 Approval rechecks the browser grant and window identity before handing the
