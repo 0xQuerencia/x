@@ -1213,9 +1213,8 @@ pub(crate) fn wait_for_launched_focus_scoped(stop: &Cancellation) -> Result<(), 
     let mut stable = 0;
     for _ in 0..30 {
         stop.check()?;
-        let observed = focused().filter(|(id, actual_pid)| {
-            id.starts_with("win:") && *actual_pid == pid
-        });
+        let observed =
+            focused().filter(|(id, actual_pid)| id.starts_with("win:") && *actual_pid == pid);
         if let Some((id, _)) = observed {
             if last_id.as_deref() == Some(id.as_str()) {
                 stable += 1;
