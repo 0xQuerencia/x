@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 use crate::grants::Permission;
 use crate::projects::{Project, Registry};
-use crate::verification::test_runner::{Suite, scope_for_suite, verify_approved};
 use crate::verification::Outcome;
+use crate::verification::test_runner::{Suite, scope_for_suite, verify_approved};
 use crate::worktrees::Manager;
 
 use super::edit::{step, task};
@@ -107,7 +107,10 @@ impl Service {
                 &pending.commit,
                 true,
             )?;
-            self.emit("workflow", &format!("Isolated test checkout: {}", tree.path().display()));
+            self.emit(
+                "workflow",
+                &format!("Isolated test checkout: {}", tree.path().display()),
+            );
             stop.check()?;
             let grants = self.scoped_grants();
             let receipt = grants.issue(
@@ -138,7 +141,9 @@ impl Service {
                 self.finish(
                     Phase::Completed,
                     None,
-                    Some(format!("Test process passed; inspect isolated checkout at {path}")),
+                    Some(format!(
+                        "Test process passed; inspect isolated checkout at {path}"
+                    )),
                     None,
                 );
             }
