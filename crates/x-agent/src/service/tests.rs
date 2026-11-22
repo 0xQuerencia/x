@@ -2141,6 +2141,7 @@ fn claude_login_refusal_does_not_start_work() {
 #[test]
 fn terminal_output_stays_redacted_and_waits_for_work_approval() {
     let (service, _dir, project) = work_rig("touch unapproved-terminal-run");
+    let service = service.with_session_verifier(|_| Ok(()));
     let session = harness::Session {
         id: harness::SessionId::try_from("ses_terminal_fixture".to_owned()).unwrap(),
         title: "Selected session".into(),
