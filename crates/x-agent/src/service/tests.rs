@@ -2150,7 +2150,8 @@ touch ran-spoken-task"#,
     let task = service.plan_spoken(transcript, Mode::Actions).unwrap();
     assert_eq!(task.text, "Inspect the backend tests");
     assert_eq!(task.work_harness, Some(harness::Kind::OpenCode));
-    assert_eq!(task.workspace.as_deref(), project.to_str());
+    let canonical_project = project.canonicalize().unwrap();
+    assert_eq!(task.workspace.as_deref(), canonical_project.to_str());
     assert_eq!(service.snapshot(0).phase, Phase::AwaitingApproval);
     assert!(!project.join("ran-spoken-task").exists());
     service.approve(task.id).unwrap();

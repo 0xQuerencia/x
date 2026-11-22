@@ -224,6 +224,17 @@ fn browser_plus_search_is_one_launch() {
     let actions = plan_rules("open Firefox and search YouTube for Mars rover").unwrap();
     assert_eq!(actions.len(), 1);
     let argv = actions[0].argv(&fake_path).unwrap();
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        argv,
+        [
+            "/usr/bin/open",
+            "-a",
+            "/Applications/Firefox.app",
+            "https://www.youtube.com/results?search_query=Mars%20rover"
+        ]
+    );
+    #[cfg(not(target_os = "macos"))]
     assert_eq!(
         argv,
         [

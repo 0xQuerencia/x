@@ -85,14 +85,14 @@ def main() -> None:
     build = commands.add_parser("create")
     build.add_argument("--directory", required=True)
     build.add_argument("--source-sha", required=True)
-    build.add_argument("--platform", choices=["linux", "windows"], required=True)
+    build.add_argument("--platform", choices=["linux", "windows", "macos"], required=True)
     build.add_argument("--target", required=True)
     build.add_argument("--compiler", required=True)
     build.add_argument("--artifact", action="append", required=True)
     check = commands.add_parser("verify")
     check.add_argument("--directory", required=True)
     check.add_argument("--source-sha", required=True)
-    check.add_argument("--platform", choices=["linux", "windows"], required=True)
+    check.add_argument("--platform", choices=["linux", "windows", "macos"], required=True)
     args = parser.parse_args()
     try:
         if args.command == "create":

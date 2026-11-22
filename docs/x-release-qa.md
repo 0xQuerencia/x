@@ -28,6 +28,18 @@ cargo test -p x-agent --test live -- --ignored --test-threads=1
 For Rune UI changes, regenerate and inspect golden screenshots on Linux,
 using the repository's `AGENTS.md` instructions before merging.
 
+## macOS source preview (unsigned)
+
+`x-macos-preview-<commit>` prereleases, when a macOS arm64 runner
+successfully compiles and tests X, contain a **bare executable**
+(`x-macos-arm64`), `BUILD_INFO.json`, `SHA256SUMS` and notes. The source
+build sets X-specific branding and uses **no upstream Hex signing or
+release service**. The binary is **not** a `.app`, DMG, installer,
+notarized application or stable distribution. Real macOS microphone,
+shortcut, accessibility, window-control, quarantine, app-bundle and
+process lifecycle behavior remain unverified. An unsigned CI binary
+must never be described as a ready-to-install macOS application.
+
 ## Preview artifact provenance
 
 Unsigned Linux and Windows previews include `BUILD_INFO.json` and SHA256

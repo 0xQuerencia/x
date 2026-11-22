@@ -31,7 +31,26 @@ pub fn validate_workspace(path: &Path) -> Result<PathBuf, String> {
         return Err("Workspace is not a directory".into());
     }
     let home = dirs::home_dir().and_then(|h| h.canonicalize().ok());
-    let too_broad = resolved.components().count() <= 2
+    // macOS aliases /etc -> /private/etc and /var -> /private/var.
+    // Reject canonical system roots too; path component counts alone
+    // would otherwise silently authorize a symlinked broad directory.
+    let protected_root = [
+        "/etc",
+        "/usr",
+        "/var",
+        "/tmp",
+        "/private",
+        "/System",
+        "/Library",
+        "/Applications",
+        "/opt",
+        "/home",
+    ]
+    .iter()
+    .filter_map(|name| Path::new(name).canonicalize().ok())
+    .any(|root| root == resolved);
+    let too_broad = protected_root
+        || resolved.components().count() <= 2
         || home.as_deref().is_some_and(|h| h.starts_with(&resolved))
         || home.as_deref().is_some_and(|h| {
             resolved.strip_prefix(h).ok().is_some_and(|rel| {
