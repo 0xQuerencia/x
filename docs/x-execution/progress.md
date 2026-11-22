@@ -1,7 +1,9 @@
 # X roadmap progress
 
 Integration snapshot: 2026-11-22. PRs #82, #93–#132, #140, #141, #144
-and #149 are merged. Individual PR descriptions retain historical CI results.
+and #149 are merged, along with #153–#163. Individual PR descriptions
+retain their CI evidence and the post-merge preview workflow runs. Windows
+media controls in #165 are pending CI; do not count them as merged before checks pass.
 **Merged source is not real-device acceptance.** Linux, macOS, and Windows
 CI cannot verify microphone, accessibility, install, signing or release parity.
 
@@ -29,18 +31,32 @@ CI cannot verify microphone, accessibility, install, signing or release parity.
 | P3.2 | Merged source | [#117](https://github.com/0xQuerencia/x/pull/117) | Linux, macOS and Windows x64 CI passed. Covers aliases, ambiguity, restart and stale paths. |
 | P3.3 | Merged source | [#118](https://github.com/0xQuerencia/x/pull/118) | Linux, macOS and Windows x64 CI passed. Session links are unverified after restart until an applicable provider lookup. |
 | P3.4 | Merged foundation; acceptance partial | [#119](https://github.com/0xQuerencia/x/pull/119) | Linux, macOS and Windows x64 CI passed for the CLI project-selection and alias commands. Dedicated project voice routing is pending. |
-| P3.5 | Merged foundation; acceptance partial | [#120](https://github.com/0xQuerencia/x/pull/120) | Linux, macOS and Windows x64 CI passed for context bundles and the spoken selection flow. File, browser and screen collection paths remain pending. |
+| P3.5 | Merged explicit handoffs; acceptance partial | [#120](https://github.com/0xQuerencia/x/pull/120), [#154](https://github.com/0xQuerencia/x/pull/154), [#158](https://github.com/0xQuerencia/x/pull/158), [#159](https://github.com/0xQuerencia/x/pull/159) | Typed project-file lines and owner-supplied browser URL/title metadata reach only a selected coding session after Work approval, with bounded redaction. Automatic browser-tab and screenshot content capture is still unwired. | |
 | P4.1 | Merged source | [#121](https://github.com/0xQuerencia/x/pull/121) | Linux, macOS and Windows x64 CI passed for graph validation and legacy workflow migration. |
 | P4.2 | Merged source | [#122](https://github.com/0xQuerencia/x/pull/122) | Linux, macOS and Windows x64 CI passed for bounded scheduling, dependency gating and Stop. |
 | P4.3 | Merged source | [#123](https://github.com/0xQuerencia/x/pull/123) | Linux, macOS and Windows x64 CI passed. Local Git fixtures preserve dirty primary checkouts. |
 | P4.4 | Merged foundation; acceptance partial | [#124](https://github.com/0xQuerencia/x/pull/124) | Linux, macOS and Windows x64 CI passed for the journal and retries gated by reconciliation. A live restart/reconnect workflow remains to be exercised. |
 | P4.5 | Merged foundation; acceptance partial | [#126](https://github.com/0xQuerencia/x/pull/126), [#127](https://github.com/0xQuerencia/x/pull/127) | Linux, macOS and Windows x64 CI passed. Parallel isolated work and dependency failure are covered with two fixture adapters and real Git worktrees. [#140](https://github.com/0xQuerencia/x/pull/140) also ran installed OpenCode and Claude Code with local providers and verified delivery of the dependent job after both predecessors. |
-| P4.6 | Merged foundation; acceptance partial | [#128](https://github.com/0xQuerencia/x/pull/128) | Linux, macOS and Windows x64 CI passed for the read-only Git integration preview. Applying an approved integration remains pending. |
+| P4.6 | Merged source; live QA pending | [#128](https://github.com/0xQuerencia/x/pull/128), [#161](https://github.com/0xQuerencia/x/pull/161) | Exact worktree reattachment and one-use owner approval now permit only a clean Git fast-forward after review. Linux, macOS and Windows x64 CI passed; live merge-back and recovery testing remain. |
 | P5.1–P5.2 | Merged via #132/#140; operator QA pending | [#132](https://github.com/0xQuerencia/x/pull/132), [#133–#139](https://github.com/0xQuerencia/x/pull/139) | Scoped receipts, revocation, status and a permission preview are open. The intermediate heads failed Linux formatting and macOS/Windows Clippy. [#140](https://github.com/0xQuerencia/x/pull/140) wires native approval to the executor. Linux, macOS and Windows x64 CI passed on that head. With #101 applied, the local suite passed 501 tests with 9 ignored. An initial local build hit a linker bus error and the full local core suite passed on retry using a temporary target. |
 | P5.3 | Merged source | [#125](https://github.com/0xQuerencia/x/pull/125) | Linux, macOS and Windows x64 CI passed for typed delivery and Git evidence results. |
-| P5.4 | Merged foundation; acceptance partial | [#130](https://github.com/0xQuerencia/x/pull/130) | Linux, macOS and Windows x64 CI passed for the typed test runner. The branch has no operator approval entry point yet. |
+| P5.4 | Merged test execution; live QA pending | [#130](https://github.com/0xQuerencia/x/pull/130), [#156](https://github.com/0xQuerencia/x/pull/156), [#160](https://github.com/0xQuerencia/x/pull/160) | Fixed test suites now enter native explicit owner approval, run under bounded worktree grants and expose a Rune Work-pane review control. Isolated Git worktrees do **not** sandbox repository code against the user's OS and network. | |
 | P5.5 | Merged foundation; acceptance partial | [#129](https://github.com/0xQuerencia/x/pull/129) | Linux, macOS and Windows x64 CI passed for stale context refusal. Live window, accessibility and optional-screen verification remain pending. |
 | P5.6 | Merged foundation; acceptance partial | [#140](https://github.com/0xQuerencia/x/pull/140) | Coding graphs enter the normal approval flow and consume one-use job grants. Tests cover Stop and stale approval. The approved test runner, operator-facing retries and restart reconciliation remain pending. |
+
+## Additional merged source and release safety (22 November 2026)
+
+| Area | Merged PRs | Verified behavior | Remaining gate |
+| --- | --- | --- | --- |
+| Arch installation and rollback | [#153](https://github.com/0xQuerencia/x/pull/153), [#155](https://github.com/0xQuerencia/x/pull/155) | Checked ownership, atomically staged active binary and prior rollback copy; isolated fresh-install/upgrade smoke | Real user clean-install, active process upgrade and rollback |
+| Privacy of coding context | [#154](https://github.com/0xQuerencia/x/pull/154), [#158](https://github.com/0xQuerencia/x/pull/158), [#159](https://github.com/0xQuerencia/x/pull/159) | Bounded project-file excerpts and manually supplied browser metadata, redaction and selected-session Work approval | Real permissioned browser-tab and screen capture, privacy review |
+| Bounded project tests | [#156](https://github.com/0xQuerencia/x/pull/156), [#160](https://github.com/0xQuerencia/x/pull/160) | Fixed suites, exact grants, Stop, retained isolated Git worktrees, Rune review | Real operator execution and verification evidence |
+| Windows unsigned preview packaging and focus | [#157](https://github.com/0xQuerencia/x/pull/157), [#163](https://github.com/0xQuerencia/x/pull/163) | Isolated X-only install/uninstall in Windows CI; Win32 launch-to-type rechecks foreground HWND and PID. Cross-platform CI passed. | Real Windows 11 setup, microphone, accessibility, process handoff and input QA |
+| Build provenance | [#162](https://github.com/0xQuerencia/x/pull/162) | SHA256, compiler, target and exact commit in Linux/Windows `BUILD_INFO.json` and tests against tampering | Signing, trusted-source validation and physical release QA |
+
+All merged CI checks are **source/build evidence**, not live-desktop evidence.
+The preview tool has not passed the full cross-platform acceptance matrix.
+No signed or stable X release is justified yet.
 
 ## Unfinished work across the full P0–P8 roadmap
 
@@ -51,12 +67,12 @@ Until these are verified on the actual target systems, do not label X stable.
 | --- | --- |
 | P0–P1 | Clean-host Doctor, real microphone, 20 spoken commands, real provider failure and Stop tests |
 | P2 | Physical KDE, macOS and Windows 11 acceptance; Windows desktops, screenshots, media and process parity |
-| P3 | Permissioned browser, file and screen context attachments with provenance and redaction |
-| P4 | Owner-approved Git merge-back; provider-confirmed restart recovery and explicit retries |
-| P5 | Native operator approval for bounded worktree tests and live readback verification |
+| P3 | Live permissioned browser-tab and screen context, project voice selection, metadata provenance and privacy acceptance |
+| P4 | Live approved Git merge-back; provider-confirmed restart recovery and explicit operator retries |
+| P5 | Live approved worktree tests and actual desktop/accessibility result readback |
 | P6 | Rune operator UX completion, keyboard accessibility and screenshot acceptance |
 | P7 | Browser/terminal context handoff and remaining spoken interaction/monitoring capabilities |
-| P8 | Install/upgrade/rollback, artifact provenance, signing, privacy and live multi-platform release gate |
+| P8 | Real install/upgrade/rollback, signatures, privacy audit and live multi-platform release acceptance |
 
 See [release acceptance](../x-release-qa.md). A preview executable is not
 a verified release, and a code-only test does not substitute for a physical
