@@ -119,6 +119,65 @@ pub fn preview(
     })
 }
 
+/// Refuse diverged histories. An approved integration may advance only the
+/// owner's clean checked-out branch by a Git fast-forward. No force-push,
+/// conflict resolution, reset, arbitrary file copies or implicit merge commit.
+pub fn eligible_fast_forward(project: &Project, proposed: &Preview) -> Result<bool, String> {
+    if !proposed.clean
+        || proposed.primary_dirty
+        || proposed.primary_head == proposed.task_head
+        || proposed.changed_files.is_empty()
+        || proposed.change_list_truncated
+    {
+        return Ok(false);
+    }
+    let (ancestor, _) = git(
+        &project.root,
+        &[
+            "merge-base",
+            "--is-ancestor",
+            &proposed.primary_head,
+            &proposed.task_head,
+        ],
+    )?;
+    Ok(ancestor)
+}
+
+/// The external approval gate must have captured `expected` from a
+/// deterministic preview immediately before owner approval.
+pub fn apply_fast_forward(
+    manager: &Manager,
+    project: &Project,
+    worktree: &OwnedWorktree,
+    expected: &Preview,
+    owner_approved: bool,
+) -> Result<Preview, String> {
+    if !owner_approved {
+        return Err("Only the owner can approve merging a task worktree".into());
+    }
+    let latest = preview(manager, project, worktree)?;
+    if latest != *expected {
+        return Err("Project or task changes since approval; review a new merge preview".into());
+    }
+    if !eligible_fast_forward(project, &latest)? {
+        return Err("Only a clean, conflict-free fast-forward can be applied by X".into());
+    }
+    // Git itself checks clean index, worktree and branch reference while
+    // updating. Never fall back to --force, reset or automatic conflict fixes.
+    let (success, _) = git(
+        &project.root,
+        &["merge", "--ff-only", "--no-edit", "--", &latest.task_head],
+    )?;
+    if !success {
+        return Err("Git refused the fast-forward; inspect the primary checkout".into());
+    }
+    let actual = commit(&project.root)?;
+    if actual != latest.task_head {
+        return Err("Git merge returned without the approved commit; verify manually".into());
+    }
+    Ok(latest)
+}
+
 fn commit(directory: &Path) -> Result<String, String> {
     let (success, output) = git(directory, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let value = output.trim();
@@ -224,6 +283,61 @@ mod tests {
                 "-m",
                 message,
             ],
+        );
+    }
+
+    #[test]
+    fn explicit_fast_forward_advances_only_a_clean_primary_checkout() {
+        let (_dir, project, manager, task) = fixture();
+        fs::write(task.path().join("feature.txt"), "added by X\n").unwrap();
+        commit_worktree(task.path(), "feature");
+        let review = preview(&manager, &project, &task).unwrap();
+        assert!(eligible_fast_forward(&project, &review).unwrap());
+        let original = commit(&project.root).unwrap();
+        assert!(apply_fast_forward(&manager, &project, &task, &review, false).is_err());
+        assert_eq!(commit(&project.root).unwrap(), original);
+        apply_fast_forward(&manager, &project, &task, &review, true).unwrap();
+        assert_eq!(commit(&project.root).unwrap(), review.task_head);
+        assert_eq!(
+            fs::read_to_string(project.root.join("feature.txt")).unwrap(),
+            "added by X\n"
+        );
+    }
+
+    #[test]
+    fn stale_or_dirty_merge_plans_never_modify_the_primary_checkout() {
+        let (_dir, project, manager, task) = fixture();
+        fs::write(task.path().join("feature.txt"), "worktree commit\n").unwrap();
+        commit_worktree(task.path(), "feature");
+        let review = preview(&manager, &project, &task).unwrap();
+        let original = commit(&project.root).unwrap();
+        fs::write(project.root.join("owner-notes.txt"), "unsaved notes\n").unwrap();
+        assert!(apply_fast_forward(&manager, &project, &task, &review, true).is_err());
+        assert_eq!(commit(&project.root).unwrap(), original);
+        assert!(project.root.join("owner-notes.txt").exists());
+        fs::remove_file(project.root.join("owner-notes.txt")).unwrap();
+        fs::write(task.path().join("feature.txt"), "changed task\n").unwrap();
+        commit_worktree(task.path(), "changed");
+        assert!(apply_fast_forward(&manager, &project, &task, &review, true).is_err());
+        assert_eq!(commit(&project.root).unwrap(), original);
+    }
+
+    #[test]
+    fn diverged_primary_is_never_automatically_merged() {
+        let (_dir, project, manager, task) = fixture();
+        fs::write(task.path().join("task.txt"), "task\n").unwrap();
+        commit_worktree(task.path(), "task");
+        fs::write(project.root.join("owner.txt"), "owner\n").unwrap();
+        commit_worktree(&project.root, "owner");
+        let before = commit(&project.root).unwrap();
+        let review = preview(&manager, &project, &task).unwrap();
+        assert!(review.clean);
+        assert!(!eligible_fast_forward(&project, &review).unwrap());
+        assert!(apply_fast_forward(&manager, &project, &task, &review, true).is_err());
+        assert_eq!(commit(&project.root).unwrap(), before);
+        assert_eq!(
+            fs::read_to_string(project.root.join("owner.txt")).unwrap(),
+            "owner\n"
         );
     }
 

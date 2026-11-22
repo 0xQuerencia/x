@@ -23,6 +23,7 @@ use crate::tools::{self, Action, Risk};
 
 mod edit;
 mod harness_workflow;
+mod integration;
 mod ledger;
 mod policy;
 mod project_commands;
@@ -298,6 +299,7 @@ struct State {
     workflow: Option<crate::workflows::Workflow>,
     graph_workflow: Option<harness_workflow::PendingGraph>,
     pending_tests: Option<test_worktree::PendingTests>,
+    pending_integration: Option<integration::PendingIntegration>,
     project_command: Option<project_commands::Pending>,
     create_workspace: bool,
     /// How to put back the last workflow run's changes.
@@ -397,6 +399,7 @@ impl Service {
             workflow: None,
             graph_workflow: None,
             pending_tests: None,
+            pending_integration: None,
             project_command: None,
             create_workspace: false,
             undo: vec![],
@@ -1383,7 +1386,7 @@ impl Service {
     }
 
     fn approve_from(&self, task_id: u64, approval: Approval) -> Result<(), String> {
-        let (task, actions, is_edit, is_workflow, graph, tests, project_command, stop) = {
+        let (task, actions, is_edit, is_workflow, graph, tests, integration, project_command, stop) = {
             let mut s = self.lock();
             let matches_task = s.task.as_ref().is_some_and(|t| t.id == task_id);
             if !matches_task || s.phase != Phase::AwaitingApproval {
@@ -1421,6 +1424,7 @@ impl Service {
                 s.workflow.is_some(),
                 s.graph_workflow.take(),
                 s.pending_tests.take(),
+                s.pending_integration.take(),
                 s.project_command.take(),
                 s.stop.clone(),
             )
@@ -1432,6 +1436,9 @@ impl Service {
             }
             if let Some(tests) = tests {
                 return me.run_worktree_tests(tests, &stop);
+            }
+            if let Some(integration) = integration {
+                return me.run_fast_forward(integration, &stop);
             }
             if let Some(command) = project_command {
                 return me.run_project_command(command, &stop);
@@ -1949,6 +1956,7 @@ impl Service {
         s.workflow = None;
         s.graph_workflow = None;
         s.pending_tests = None;
+        s.pending_integration = None;
         s.project_command = None;
         set_phase(&mut s, phase);
         audit_best_effort(&mut s, AuditKind::Finished, None);
@@ -1987,6 +1995,7 @@ impl Service {
                 s.workflow = None;
                 s.graph_workflow = None;
                 s.pending_tests = None;
+                s.pending_integration = None;
                 s.project_command = None;
                 s.actions.clear();
                 s.guard = None;
