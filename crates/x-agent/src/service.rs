@@ -312,7 +312,7 @@ struct PlanOptions {
     source: InputSource,
     guard: Option<Guard>,
     allow_command: Option<String>,
-    private_context: bool,
+    require_review: bool,
     new_workspace: Option<PathBuf>,
     session: Option<harness::Session>,
     work_access: harness::WorkAccess,
@@ -927,7 +927,7 @@ impl Service {
                     ctx,
                     strict_focus: false,
                 }),
-                private_context,
+                require_review: private_context,
                 ..PlanOptions::default()
             },
         )?;
@@ -1035,6 +1035,40 @@ impl Service {
     /// Ambient audio after the wake word is never treated like push-to-talk.
     pub fn plan_hands_free(&self, text: &str, mode: Mode) -> Result<Task, String> {
         self.plan_with(text, mode, false, InputSource::HandsFree)
+    }
+
+    /// Wake-free audio can propose one local desktop action for owner review.
+    /// It cannot use model routing, workflow triggers, or automatic approval.
+    pub fn preview_ambient_command(&self, text: &str) -> Result<Option<Task>, String> {
+        let Some(actions) = tools::plan_rules(text) else {
+            return Ok(None);
+        };
+        if !matches!(
+            actions.as_slice(),
+            [Action::App { .. }
+                | Action::Window {
+                    op: crate::wm::Op::Focus
+                        | crate::wm::Op::Back
+                        | crate::wm::Op::Workspace
+                        | crate::wm::Op::Maximize
+                        | crate::wm::Op::Minimize,
+                    ..
+                }]
+        ) {
+            return Ok(None);
+        }
+        self.plan_task(
+            text,
+            Mode::Actions,
+            Some(actions),
+            PlanOptions {
+                origin: Origin::Rules,
+                source: InputSource::HandsFree,
+                require_review: true,
+                ..PlanOptions::default()
+            },
+        )
+        .map(Some)
     }
 
     /// Like `plan`, but the model also decides whether the speech was a command at all;
@@ -1323,7 +1357,7 @@ impl Service {
         };
         s.serial = id;
         s.review = if mode == Mode::Actions
-            && !options.private_context
+            && !options.require_review
             && actions
                 .iter()
                 .all(|request| request.metadata.risk.is_low_risk())

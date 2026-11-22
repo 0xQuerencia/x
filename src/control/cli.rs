@@ -445,11 +445,10 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
-    /// Hands-free wake word, off by default: `on` keeps the microphone open and runs any
-    /// speech that starts with a wake word ("Friday, start coding") as an X command. Other
-    /// speech is dropped, never typed, stored or sent. `off` closes the microphone again.
+    /// Linux hands-free listening. `on` requires a wake word. `smart` previews local
+    /// desktop commands without one. `off` releases the microphone.
     Listen {
-        #[arg(value_parser = ["on", "off", "status"])]
+        #[arg(value_parser = ["on", "smart", "off", "status"])]
         mode: String,
         #[command(flatten)]
         output: Output,

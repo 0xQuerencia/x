@@ -540,6 +540,43 @@ fn the_model_only_plans_what_the_rules_do_not_understand() {
 }
 
 #[test]
+fn wake_free_speech_only_previews_local_commands_even_in_autonomous_mode() {
+    let (service, _, launcher) = rig();
+    service.set_autonomy_mode(AutonomyMode::Autonomous);
+    service.set_planner(Some(Arc::new(FakePlanner(Err(
+        "must not call planner".into()
+    )))));
+    for ignored in [
+        "I opened Firefox this morning",
+        "close Firefox",
+        "take a screenshot",
+        "open github.com",
+        "search YouTube for birds",
+        "open firefox and open a terminal",
+        "ask OpenCode to write tests",
+        "stop the task",
+    ] {
+        assert!(
+            service.preview_ambient_command(ignored).unwrap().is_none(),
+            "{ignored}"
+        );
+    }
+    assert!(service.snapshot(0).task.is_none());
+
+    let preview = service
+        .preview_ambient_command("Open Firefox.")
+        .unwrap()
+        .unwrap();
+    assert_eq!(preview.phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
+    assert!(service.preview_ambient_command("open firefox").is_err());
+    assert_eq!(service.snapshot(0).task.unwrap().id, preview.id);
+    service.approve(preview.id).unwrap();
+    wait_for(&service, |snapshot| snapshot.phase == Phase::Completed);
+    assert_eq!(launcher.launched.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn dictation_is_not_a_command_and_plans_nothing() {
     let (s, _, l) = rig();
     s.set_planner(Some(Arc::new(FakePlanner(Ok(tools::Reply::Dictation)))));
