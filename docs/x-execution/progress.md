@@ -1,9 +1,9 @@
 # X roadmap progress
 
 Integration snapshot: 2026-11-22. PRs #82, #93–#132, #140, #141, #144
-and #149 are merged, along with #153–#163. Individual PR descriptions
-retain their CI evidence and the post-merge preview workflow runs. Windows
-media controls in #165 are pending CI; do not count them as merged before checks pass.
+and #149 are merged, along with #153–#170 (except #171, which remains
+under review), and #172. Individual PRs retain historical CI evidence.
+This is source integration progress, not physical-platform acceptance.
 **Merged source is not real-device acceptance.** Linux, macOS, and Windows
 CI cannot verify microphone, accessibility, install, signing or release parity.
 
@@ -52,6 +52,10 @@ CI cannot verify microphone, accessibility, install, signing or release parity.
 | Privacy of coding context | [#154](https://github.com/0xQuerencia/x/pull/154), [#158](https://github.com/0xQuerencia/x/pull/158), [#159](https://github.com/0xQuerencia/x/pull/159) | Bounded project-file excerpts and manually supplied browser metadata, redaction and selected-session Work approval | Real permissioned browser-tab and screen capture, privacy review |
 | Bounded project tests | [#156](https://github.com/0xQuerencia/x/pull/156), [#160](https://github.com/0xQuerencia/x/pull/160) | Fixed suites, exact grants, Stop, retained isolated Git worktrees, Rune review | Real operator execution and verification evidence |
 | Windows unsigned preview packaging and focus | [#157](https://github.com/0xQuerencia/x/pull/157), [#163](https://github.com/0xQuerencia/x/pull/163) | Isolated X-only install/uninstall in Windows CI; Win32 launch-to-type rechecks foreground HWND and PID. Cross-platform CI passed. | Real Windows 11 setup, microphone, accessibility, process handoff and input QA |
+| KDE correctness and service startup | [#168](https://github.com/0xQuerencia/x/pull/168), [#169](https://github.com/0xQuerencia/x/pull/169) | Refuses unsupported KWin desktop numbers; carries the explicit opt-in flag into the graphical X user service. Cross-platform CI passed. | Real Plasma 6 with kdotool, microphone, windows and undo |
+| Windows local desktop actions | [#165](https://github.com/0xQuerencia/x/pull/165), [#166](https://github.com/0xQuerencia/x/pull/166) | Native bounded next/previous media keys; explicit GDI full-screen BMP captures. All three OS CI suites passed. | Windows 11 physical test of media, screenshot privacy and OS permissions |
+| Coding recovery and Rune inspection | [#167](https://github.com/0xQuerencia/x/pull/167), [#170](https://github.com/0xQuerencia/x/pull/170) | Read-only persisted claim status plus a Rune Work-pane summary, without automatic retries or private provider IDs. Cross-platform CI passed. | Provider-confirmed restart/reconciliation and user-facing retry approval |
+| Physical release acceptance gate | [#172](https://github.com/0xQuerencia/x/pull/172) | Privacy-minimal, exact-commit, per-platform operator checklist that refuses any missing, failed or unsupported case. Linux/Windows schema tests passed. | Actually perform the test matrix on real machines and sign/distribute stable artifacts |
 | Build provenance | [#162](https://github.com/0xQuerencia/x/pull/162) | SHA256, compiler, target and exact commit in Linux/Windows `BUILD_INFO.json` and tests against tampering | Signing, trusted-source validation and physical release QA |
 
 All merged CI checks are **source/build evidence**, not live-desktop evidence.
@@ -66,13 +70,13 @@ Until these are verified on the actual target systems, do not label X stable.
 | Phase | Outstanding delivery and acceptance |
 | --- | --- |
 | P0–P1 | Clean-host Doctor, real microphone, 20 spoken commands, real provider failure and Stop tests |
-| P2 | Physical KDE, macOS and Windows 11 acceptance; Windows desktops, screenshots, media and process parity |
+| P2 | Physical KDE, macOS and Windows 11 acceptance; Windows virtual desktops, window/region screenshots, verified media state, native process controls and macOS window parity |
 | P3 | Live permissioned browser-tab and screen context, project voice selection, metadata provenance and privacy acceptance |
-| P4 | Live approved Git merge-back; provider-confirmed restart recovery and explicit operator retries |
+| P4 | Live Git merge-back; provider-confirmed restart recovery and explicit operator retries (read-only claims now wired) |
 | P5 | Live approved worktree tests and actual desktop/accessibility result readback |
-| P6 | Rune operator UX completion, keyboard accessibility and screenshot acceptance |
+| P6 | Remaining Rune operator UX and keyboard-accessibility/screenshot acceptance (recovery status and tests are now surfaced) |
 | P7 | Browser/terminal context handoff and remaining spoken interaction/monitoring capabilities |
-| P8 | Real install/upgrade/rollback, signatures, privacy audit and live multi-platform release acceptance |
+| P8 | Real installation/upgrade/rollback, signed/macOS packages, privacy audit and physical multi-platform release acceptance; macOS experimental preview, local screenshot permissions and Arch helper hardening are under review |
 
 See [release acceptance](../x-release-qa.md). A preview executable is not
 a verified release, and a code-only test does not substitute for a physical
