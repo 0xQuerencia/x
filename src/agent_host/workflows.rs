@@ -85,6 +85,11 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(graph) => ControlReply::done(permission_preview(&graph).to_string()),
             Err(error) => refuse(error),
         },
+        "claims" if !value.is_empty() => refuse("workflow claims takes no arguments".into()),
+        "claims" => match svc.coding_claims_summary() {
+            Ok(report) => ControlReply::done(report.to_string()),
+            Err(error) => refuse(error),
+        },
         "uncertain" if !value.is_empty() => refuse("workflow uncertain takes no arguments".into()),
         "uncertain" => match svc.uncertain_coding_jobs() {
             Ok(report) => ControlReply::done(report.to_string()),
@@ -174,7 +179,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, claims, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }
