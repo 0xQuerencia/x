@@ -545,6 +545,16 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Plan a clean fast-forward of a task branch into its primary checkout.
+    /// Requires project/run/task/start commit and separate owner approval.
+    IntegrateFastForward {
+        project: String,
+        run_id: String,
+        task_id: String,
+        start_commit: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// What X can see right now: the focused window and whether text is selected. The
     /// selected text itself is never printed.
     Context {
@@ -953,6 +963,21 @@ pub fn run(command: ControlCli) -> u8 {
                 AgentCommand::Heard { .. } => unreachable!("heard handled locally"),
                 AgentCommand::Key { .. } => unreachable!("key handled locally"),
                 AgentCommand::Context { output } => (AgentAction::Context, output),
+                AgentCommand::IntegrateFastForward {
+                    project,
+                    run_id,
+                    task_id,
+                    start_commit,
+                    output,
+                } => (
+                    AgentAction::IntegrateFastForward {
+                        project,
+                        run_id,
+                        task_id,
+                        start_commit,
+                    },
+                    output,
+                ),
                 AgentCommand::SendBrowserPage { url, title, output } => {
                     (AgentAction::SendBrowserPage { url, title }, output)
                 }
