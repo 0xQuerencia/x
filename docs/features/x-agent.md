@@ -182,7 +182,8 @@ rejects missing or oversized selections and leaves the clipboard alone.
 
 Review the redacted excerpt and selected session in the Work preview.
 Approval rechecks the browser grant and window identity before handing the
-excerpt to OpenCode with tools disabled. Focus can move to X for review.
+excerpt to OpenCode under the selection-only execution policy. Focus can
+move to X for review.
 This command shares selected text only. It leaves tabs, console logs, and
 screenshots untouched.
 
