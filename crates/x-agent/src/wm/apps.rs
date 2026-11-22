@@ -614,7 +614,7 @@ mod tests {
         let entry = scan_macos_paths(&[apps]).pop().unwrap();
         assert_eq!(entry.names, ["visual studio code"]);
         assert_eq!(
-            installed_in("Visual Studio Code", &[entry.clone()]),
+            installed_in("Visual Studio Code", std::slice::from_ref(&entry)),
             Some(entry.clone())
         );
         assert_eq!(
