@@ -1215,10 +1215,9 @@ mod tests {
 
     #[test]
     fn kde_opt_in_survives_systemd_session_environment() {
-        let body = session_environment(|key| {
-            (key == "X_ENABLE_EXPERIMENTAL_KDE").then(|| "1".to_owned())
-        })
-        .unwrap();
+        let body =
+            session_environment(|key| (key == "X_ENABLE_EXPERIMENTAL_KDE").then(|| "1".to_owned()))
+                .unwrap();
         assert!(body.contains("X_ENABLE_EXPERIMENTAL_KDE=\"1\"\n"));
         assert!(body.contains("XDG_CURRENT_DESKTOP=\"\"\n"));
         assert!(environment_line("X_ENABLE_EXPERIMENTAL_KDE", "1\nEVIL=1").is_err());
