@@ -356,7 +356,7 @@ pub fn execute(op: Op, runner: &dyn Runner) -> Result<String, String> {
         Op::Play | Op::Pause | Op::Next | Op::Previous => {
             #[cfg(windows)]
             {
-                return crate::windows_input::media_step(op);
+                crate::windows_input::media_step(op)
             }
             #[cfg(not(windows))]
             let command = match op {
