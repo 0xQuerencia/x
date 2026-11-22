@@ -458,16 +458,14 @@ mod reconciliation_tests {
         assert_eq!(report["jobs"][0]["status"], "verified");
         assert_eq!(report["jobs"][1]["status"], "failed");
         assert_eq!(report["jobs"][1]["attempt"], 2);
-        assert_eq!(report["jobs"][1]["requires_provider_check_before_retry"], true);
+        assert_eq!(
+            report["jobs"][1]["requires_provider_check_before_retry"],
+            true
+        );
         assert_eq!(report["executed"], false);
         assert_eq!(report["provider_checked"], false);
         let text = report.to_string();
-        for private in [
-            "fingerprint",
-            "private",
-            "provider_secret",
-            "ses_private",
-        ] {
+        for private in ["fingerprint", "private", "provider_secret", "ses_private"] {
             assert!(!text.contains(private));
         }
     }
