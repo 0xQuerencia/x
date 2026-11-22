@@ -11,7 +11,7 @@ use std::time::Duration;
 
 #[cfg(not(windows))]
 use crate::desktop::capture;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use crate::tools::which;
 
 pub const MAX_COPY: usize = 8000;
@@ -33,7 +33,59 @@ pub fn copy(text: &str) -> Result<String, String> {
     crate::windows_clipboard::copy(text)
 }
 
-#[cfg(not(windows))]
+/// Explicit native macOS clipboard write and immediate readback. Neither
+/// action is offered as an implicit clipboard-monitoring capability.
+#[cfg(target_os = "macos")]
+pub fn copy(text: &str) -> Result<String, String> {
+    validate(text)?;
+    let mut child = Command::new("/usr/bin/pbcopy")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "macOS pbcopy is unavailable")?;
+    {
+        let mut stdin = child.stdin.take().ok_or("Cannot write to pbcopy")?;
+        if let Err(error) = stdin.write_all(text.as_bytes()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("macOS clipboard write failed: {error}"));
+        }
+    }
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => return Err("macOS clipboard refused this text".into()),
+            Ok(None) if start.elapsed() >= Duration::from_secs(2) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("macOS clipboard timed out".into());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(15)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("macOS clipboard status unavailable".into());
+            }
+        }
+    }
+    for _ in 0..5 {
+        let mut cmd = Command::new("/usr/bin/pbpaste");
+        if let Ok((true, bytes)) = capture(&mut cmd, Duration::from_secs(2))
+            && bytes == text.as_bytes()
+        {
+            return Ok(format!(
+                "Copied {} characters (verified)",
+                text.chars().count()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    Err("macOS clipboard readback did not match; no success was reported".into())
+}
+
+#[cfg(target_os = "linux")]
 pub fn copy(text: &str) -> Result<String, String> {
     validate(text)?;
     let copier = which("wl-copy").ok_or("wl-copy not found (install wl-clipboard)")?;
@@ -65,4 +117,26 @@ pub fn copy(text: &str) -> Result<String, String> {
         std::thread::sleep(Duration::from_millis(60));
     }
     Err("The clipboard did not take the text".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_copy_refuses_empty_and_nul_containing_text() {
+        assert!(validate("").is_err());
+        assert!(validate(" \n").is_err());
+        assert!(validate("hello\0world").is_err());
+        assert!(validate("test").is_ok());
+        assert!(validate(&"a".repeat(MAX_COPY + 1)).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_clipboard_requires_explicit_local_request() {
+        // This unit suite does not read or write the user's actual clipboard.
+        // A real macOS smoke run is required for pbcopy/pbpaste permissions.
+        assert!(validate("hello macOS").is_ok());
+    }
 }
