@@ -176,7 +176,9 @@ impl Bundle {
         let hostname = public.split('/').next().unwrap_or("");
         if hostname.is_empty()
             || hostname.contains('@')
-            || public.chars().any(|c| c.is_control() || c.is_whitespace() || c == '\\')
+            || public
+                .chars()
+                .any(|c| c.is_control() || c.is_whitespace() || c == '\\')
         {
             return Err("A browser URL cannot contain credentials or invalid hostnames".into());
         }
@@ -459,12 +461,16 @@ mod tests {
         assert!(!item.text.contains("secret-title"));
         assert!(!item.text.contains("hidden"));
         assert!(!bundle.render_untrusted().unwrap().contains("secret-title"));
-        assert!(bundle
-            .push_browser_page("https://example.com/path\\malicious", "Title", 7)
-            .is_err());
-        assert!(bundle
-            .push_browser_page("https://example.com/path\ninjected", "Title", 7)
-            .is_err());
+        assert!(
+            bundle
+                .push_browser_page("https://example.com/path\\malicious", "Title", 7)
+                .is_err()
+        );
+        assert!(
+            bundle
+                .push_browser_page("https://example.com/path\ninjected", "Title", 7)
+                .is_err()
+        );
     }
 
     #[test]
