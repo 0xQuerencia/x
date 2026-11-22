@@ -59,6 +59,35 @@ class PreviewManifestTests(unittest.TestCase):
         )
         self.assertNotEqual(bad_source.returncode, 0)
 
+    def test_macos_preview_round_trip_and_platform_mismatch(self):
+        source = self.root / "x-macos-arm64"
+        source.write_bytes(b"mock Mach-O bytes")
+        create = subprocess.run(
+            [
+                sys.executable, str(SCRIPT), "create",
+                "--directory", str(self.root),
+                "--source-sha", SHA, "--platform", "macos",
+                "--target", "aarch64-apple-darwin",
+                "--compiler", "rustc 1.100.0",
+                "--artifact", "x-macos-arm64",
+            ],
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(create.returncode, 0, create.stderr)
+        report = json.loads((self.root / "BUILD_INFO.json").read_text())
+        self.assertEqual(report["platform"], "macos")
+        self.assertFalse(report["signed"])
+        verify = subprocess.run(
+            [
+                sys.executable, str(SCRIPT), "verify",
+                "--directory", str(self.root), "--source-sha", SHA,
+                "--platform", "macos",
+            ],
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(verify.returncode, 0, verify.stderr)
+        self.assertNotEqual(self.call("verify").returncode, 0)
+
     def test_manifest_does_not_follow_path_traversal(self):
         self.make()
         manifest = self.root / "BUILD_INFO.json"
