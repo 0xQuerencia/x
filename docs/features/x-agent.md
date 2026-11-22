@@ -171,6 +171,20 @@ a stale project or changed commit is refused. The resulting worktree is left
 for inspection; it is **not merged or deleted automatically**. A green test
 exit only verifies that preset's process result, not the project as a whole.
 
+### Registered projects in Rune Work
+
+In Rune’s Agent → Work pane, **Browse projects** lists saved names from X's
+existing project registry, five per page. Selecting one uses the same
+validated registered-root selection as `hex agent projects use`; a stale,
+ambiguous or moved project is refused. The selection updates the shown
+workspace for future Work tasks, but does not run code, grant a coding agent
+access, or bypass normal approval. Project paths are shown only to the
+local user, never sent to a model by browsing.
+
+Project registration and alias editing remain in the existing CLI. Work
+must be idle before a project can be switched. A physical Rune smoke
+test is still needed to verify keyboard focus, layout and pagination.
+
 ### Read-only recovery claim history
 
 `hex agent workflow claims` displays every locally recorded coding job's run
