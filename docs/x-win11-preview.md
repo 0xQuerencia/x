@@ -1,3 +1,29 @@
+## Optional X-only installation from the preview ZIP
+
+Download `x-win11-preview-x64.zip`, verify its SHA256 in the attached
+`SHA256SUMS`, and extract all files to a local folder. On Windows 11,
+open PowerShell in that folder and run:
+
+```powershell
+.\install-win11-preview.ps1 -Executable .\x.exe
+```
+
+This copies the unsigned preview to `%LOCALAPPDATA%\XPreview\x.exe`
+and creates a separate **X Preview** Start Menu shortcut. It does not
+replace the official Hex executable, installer or data. It supports a
+same-user reinstall and saves the prior executable as `x.previous.exe`.
+To remove only the X preview executable and shortcut:
+
+```powershell
+.\uninstall-win11-preview.ps1
+```
+
+PowerShell may refuse unsigned scripts under your execution policy.
+Review the scripts and use a local permitted policy instead of disabling
+system protections. This install flow is exercised in Windows CI, but
+the real Windows microphone, shortcut and accessibility matrix is
+**not yet validated**. It is not a signed stable installer or updater.
+
 # X Windows 11 preview builds
 
 X's current Windows 11 port is **experimental**, not a tested release.
