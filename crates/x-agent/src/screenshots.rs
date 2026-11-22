@@ -316,7 +316,7 @@ fn region_geometry() -> Result<String, String> {
 pub fn save(mode: Mode, output: Option<&Path>) -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
     {
-        return macos::save(mode, output);
+        macos::save(mode, output)
     }
     #[cfg(not(target_os = "macos"))]
     {
