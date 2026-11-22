@@ -176,9 +176,7 @@ impl Bundle {
         let hostname = public.split('/').next().unwrap_or("");
         if hostname.is_empty()
             || hostname.contains('@')
-            || hostname
-                .chars()
-                .any(|c| c.is_control() || c.is_whitespace())
+            || public.chars().any(|c| c.is_control() || c.is_whitespace() || c == '\\')
         {
             return Err("A browser URL cannot contain credentials or invalid hostnames".into());
         }
@@ -189,8 +187,11 @@ impl Bundle {
         };
         let title = title.replace(['\r', '\n'], " ");
         let label = format!("{scheme}://{public}\nTitle: {title}");
+        // The title and even URL path can carry credentials. Treat both like
+        // other untrusted excerpts before placing them in a harness prompt.
+        let (safe_label, redacted) = redact(&label);
         let (text, truncated) = truncate_utf8(
-            &label,
+            &safe_label,
             MAX_TEXT_BYTES.min(MAX_TOTAL_BYTES.saturating_sub(self.text_bytes())),
         );
         if text.is_empty() {
@@ -201,7 +202,11 @@ impl Bundle {
             captured_at,
             scope: Scope::BrowserTab,
             sensitivity: Sensitivity::Untrusted,
-            redaction: Redaction::NotRequired,
+            redaction: if redacted {
+                Redaction::Applied
+            } else {
+                Redaction::NotRequired
+            },
             text,
             truncated,
         });
@@ -294,12 +299,24 @@ fn redact(text: &str) -> (String, bool) {
             }
             let sensitive = private_key
                 || [
-                    "authorization: bearer ",
+                    "authorization:",
+                    "x-api-key:",
+                    "cookie:",
+                    "set-cookie:",
                     "api_key=",
+                    "api_key:",
                     "api-key:",
                     "password=",
+                    "password:",
+                    "passwd=",
                     "secret_key=",
+                    "secret_key:",
+                    "client_secret=",
+                    "client_secret:",
                     "access_token=",
+                    "access_token:",
+                    "refresh_token=",
+                    "refresh_token:",
                     "github_pat_",
                     "ghp_",
                     "sk_live_",
@@ -424,6 +441,44 @@ mod tests {
                 .push_browser_page("file:///etc/shadow", "", 0)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn browser_page_redacts_sensitive_titles_and_paths() {
+        let mut bundle = Bundle::default();
+        bundle
+            .push_browser_page(
+                "https://example.com/oauth/access_token=do-not-share?code=hidden",
+                "password=secret-title",
+                7,
+            )
+            .unwrap();
+        let item = &bundle.items[0];
+        assert_eq!(item.redaction, Redaction::Applied);
+        assert!(!item.text.contains("do-not-share"));
+        assert!(!item.text.contains("secret-title"));
+        assert!(!item.text.contains("hidden"));
+        assert!(!bundle.render_untrusted().unwrap().contains("secret-title"));
+        assert!(bundle
+            .push_browser_page("https://example.com/path\\malicious", "Title", 7)
+            .is_err());
+        assert!(bundle
+            .push_browser_page("https://example.com/path\ninjected", "Title", 7)
+            .is_err());
+    }
+
+    #[test]
+    fn browser_page_redacts_token_headers_in_titles() {
+        let mut bundle = Bundle::default();
+        bundle
+            .push_browser_page(
+                "https://example.com/docs",
+                "Documentation — Authorization: Bearer dont-share-me",
+                9,
+            )
+            .unwrap();
+        assert_eq!(bundle.items[0].redaction, Redaction::Applied);
+        assert!(!bundle.render_untrusted().unwrap().contains("dont-share-me"));
     }
 
     #[test]
