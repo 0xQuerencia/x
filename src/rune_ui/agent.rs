@@ -606,7 +606,11 @@ fn session_picker_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
     let mut list = col()
         .key("agent-opencode-sessions")
         .gap(6.0)
-        .child(text(tr("OpenCode sessions")).font(DESCRIPTION).color(p.text()))
+        .child(
+            text(tr("OpenCode sessions"))
+                .font(DESCRIPTION)
+                .color(p.text()),
+        )
         .child(button(
             p,
             "agent-find-opencode-sessions",
@@ -623,7 +627,8 @@ fn session_picker_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
                             .into_iter()
                             .take(6)
                             .map(|session| {
-                                let label = session.title
+                                let label = session
+                                    .title
                                     .chars()
                                     .filter(|ch| !ch.is_control())
                                     .take(80)
@@ -632,7 +637,9 @@ fn session_picker_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
                             })
                             .collect();
                         ui.agent.session_message = if total > 6 {
-                            Some(format!("Showing 6 of {total}; use the CLI for the full list"))
+                            Some(format!(
+                                "Showing 6 of {total}; use the CLI for the full list"
+                            ))
                         } else if total == 0 {
                             Some("No OpenCode sessions in the selected project".into())
                         } else {
