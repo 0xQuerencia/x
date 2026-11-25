@@ -75,6 +75,53 @@ impl Host for SystemHost {
         wm::close_exact(&w.id, w.pid, &w.class).map_err(text)
     }
 
+    fn focus_scoped(
+        &self,
+        window: &WinInfo,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<(), String> {
+        wm::run_exact_scoped(wm::Op::Focus, window, None, stop).map_err(text)
+    }
+
+    fn move_window_scoped(
+        &self,
+        window: &WinInfo,
+        to: i64,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<(), String> {
+        wm::run_exact_scoped(wm::Op::Move, window, Some(to), stop).map_err(text)
+    }
+
+    fn close_window_scoped(
+        &self,
+        window: &WinInfo,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<(), String> {
+        wm::run_exact_scoped(wm::Op::Close, window, None, stop).map_err(text)
+    }
+
+    fn switch_workspace_scoped(
+        &self,
+        workspace: i64,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<(), String> {
+        let workspace = u8::try_from(workspace)
+            .ok()
+            .filter(|workspace| (1..=10).contains(workspace))
+            .ok_or("Workspace must be 1-10")?;
+        wm::run_with_target_scoped(
+            &wm::Request {
+                op: wm::Op::Workspace,
+                target: wm::Target::default(),
+                ws: Some(wm::Ws::N(workspace)),
+            },
+            None,
+            stop,
+        )
+        .map(drop)
+        .map_err(text)
+    }
+
     fn permit(&self, _action: &crate::workflows::StepAction) -> bool {
         // Only the command line and live tests use this host, and both are explicit runs.
         true

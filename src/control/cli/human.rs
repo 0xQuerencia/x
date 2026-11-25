@@ -139,6 +139,9 @@ pub(super) fn human_agent(snapshot: &Value) -> String {
             && !snapshot
                 .get("computer_question")
                 .is_some_and(Value::is_object)
+            && !snapshot
+                .get("window_question")
+                .is_some_and(Value::is_object)
         {
             out.push_str(&format!("Approve with: hex agent approve {id}\n"));
             if snapshot
@@ -184,6 +187,50 @@ pub(super) fn human_agent(snapshot: &Value) -> String {
             ));
         }
         out.push_str("Stop this task: hex agent stop --foreground\n");
+    }
+    if let Some(question) = snapshot.get("window_question").filter(|q| q.is_object()) {
+        let id = question
+            .get("task_id")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let token = text(question, "question_id");
+        let selected = question.get("selected").and_then(Value::as_u64);
+        out.push_str(&format!(
+            "Window question: {}\n",
+            text(question, "operation")
+        ));
+        for choice in question
+            .get("choices")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let number = choice
+                .get("number")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let label = choice
+                .pointer("/context/value/title")
+                .and_then(Value::as_str)
+                .unwrap_or("Unnamed window");
+            out.push_str(&format!(
+                "  {number}. {label}{}\n",
+                if selected == Some(number) {
+                    " [selected]"
+                } else {
+                    ""
+                }
+            ));
+        }
+        out.push_str(&format!(
+            "Select or correct: hex agent answer-window {id} --question {token} \"second\"\n"
+        ));
+        if selected.is_some() {
+            out.push_str(&format!("Approve this exact choice: hex agent approve-window-answer {id} --question {token}\n"));
+        }
+        out.push_str(&format!(
+            "Cancel this choice: hex agent cancel-window-question {id} --question {token}\n"
+        ));
     }
     for run in snapshot
         .get("background_runs")

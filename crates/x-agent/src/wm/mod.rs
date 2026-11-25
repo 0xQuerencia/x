@@ -14,6 +14,10 @@ pub mod keys;
 pub mod parse;
 mod report;
 mod speech;
+mod targets;
+pub(crate) use targets::{
+    prepare_window, prepare_window_choice, run_exact_scoped, run_with_target_scoped,
+};
 #[cfg(windows)]
 mod win11;
 #[cfg(windows)]
@@ -236,19 +240,36 @@ pub struct Request {
 pub struct TargetIdentity {
     backend: &'static str,
     window: WinInfo,
+    expires: Instant,
 }
 
 #[derive(Clone, Debug)]
-pub enum CloseTarget {
+pub enum WindowTarget {
     Exact(TargetIdentity),
     Choose(Vec<Choice>),
 }
 
-impl CloseTarget {
+/// Compatibility name for callers that previously prepared only close actions.
+pub type CloseTarget = WindowTarget;
+
+impl WindowTarget {
     pub(crate) fn label(&self) -> Option<String> {
         match self {
             Self::Exact(target) => Some(label(&target.window)),
             Self::Choose(_) => None,
+        }
+    }
+
+    pub(crate) fn identity(&self) -> Option<crate::context::WindowRef> {
+        match self {
+            Self::Exact(target) => Some((&target.window).into()),
+            Self::Choose(_) => None,
+        }
+    }
+
+    pub(crate) fn bound_until(&mut self, expires: Instant) {
+        if let Self::Exact(target) = self {
+            target.expires = target.expires.min(expires);
         }
     }
 }
@@ -304,6 +325,7 @@ pub struct Controller {
     pending: Option<PendingChoice>,
     seen: Option<WinInfo>,
     previous: Option<WinInfo>,
+    operation_scope: Option<targets::OperationScope>,
 }
 
 impl Controller {
@@ -316,6 +338,7 @@ impl Controller {
             pending: None,
             seen: None,
             previous: None,
+            operation_scope: None,
         }
     }
 
@@ -396,6 +419,7 @@ impl Controller {
             Ok(window) => Ok(CloseTarget::Exact(TargetIdentity {
                 backend: self.backend.name(),
                 window,
+                expires: Instant::now() + CHOICE_TTL,
             })),
             Err(WmError::Ambiguous(choices)) => Ok(CloseTarget::Choose(choices)),
             Err(error) => Err(error),
@@ -406,7 +430,7 @@ impl Controller {
         self.run_with_target(req, None)
     }
 
-    fn run_with_target(
+    pub(crate) fn run_with_target(
         &mut self,
         req: &Request,
         prepared: Option<&CloseTarget>,
@@ -415,8 +439,10 @@ impl Controller {
         // Keep all fallible matching inside the closure: a `?` in a match
         // arm must not return before we record an ambiguity for follow-up.
         let result = (|| {
+            self.check_operation_scope()?;
             let all = self.backend.windows()?;
             let focused = self.focused_in(&all)?;
+            self.check_operation_scope()?;
             self.note_focus(focused.as_ref());
             match req.op {
                 Op::List => Ok(list(&all)),
@@ -431,46 +457,59 @@ impl Controller {
                     self.switch(ws)
                 }
                 Op::Back => {
-                    let prev = self.fresh(self.previous.clone(), &all, "No previous window")?;
+                    let prev = match prepared {
+                        Some(target) => {
+                            self.prepared_window(target, &all, focused.as_ref(), false)?
+                        }
+                        None => self.fresh(self.previous.clone(), &all, "No previous window")?,
+                    };
                     self.focus(&prev, focused)
                 }
                 Op::Focus => {
-                    let win = self.resolve(&req.target, &all, focused.as_ref(), true)?;
+                    let win = match prepared {
+                        Some(target) => {
+                            self.prepared_window(target, &all, focused.as_ref(), false)?
+                        }
+                        None => self.resolve(&req.target, &all, focused.as_ref(), true)?,
+                    };
                     self.focus(&win, focused)
                 }
                 Op::Move => {
-                    let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
+                    let win = match prepared {
+                        Some(target) => {
+                            self.prepared_window(target, &all, focused.as_ref(), false)?
+                        }
+                        None => self.resolve(&req.target, &all, focused.as_ref(), false)?,
+                    };
                     let ws = self.target_ws(req.ws.as_ref())?;
                     self.move_to(&win, ws)
                 }
                 Op::Maximize => {
-                    let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
+                    let win = match prepared {
+                        Some(target) => {
+                            self.prepared_window(target, &all, focused.as_ref(), false)?
+                        }
+                        None => self.resolve(&req.target, &all, focused.as_ref(), false)?,
+                    };
                     self.maximize(&win)
                 }
                 Op::Minimize => {
-                    let win = self.resolve(&req.target, &all, focused.as_ref(), false)?;
+                    let win = match prepared {
+                        Some(target) => {
+                            self.prepared_window(target, &all, focused.as_ref(), false)?
+                        }
+                        None => self.resolve(&req.target, &all, focused.as_ref(), false)?,
+                    };
                     self.minimize(&win)
                 }
                 Op::Close => {
                     let win = match prepared {
-                        Some(CloseTarget::Exact(prepared)) => {
-                            let found = if req.target.app.is_empty() {
-                                focused
-                                    .as_ref()
-                                    .filter(|w| w.same_identity(&prepared.window))
-                            } else {
-                                all.iter().find(|w| w.same_identity(&prepared.window))
-                            };
-                            found
-                                .filter(|_| prepared.backend == self.backend.name())
-                                .cloned()
-                                .ok_or_else(|| {
-                                    WmError::NotFound("The approved window changed".into())
-                                })?
-                        }
-                        Some(CloseTarget::Choose(choices)) => {
-                            return Err(WmError::Ambiguous(choices.clone()));
-                        }
+                        Some(target) => self.prepared_window(
+                            target,
+                            &all,
+                            focused.as_ref(),
+                            req.target.app.is_empty(),
+                        )?,
                         None => self.resolve(&req.target, &all, focused.as_ref(), false)?,
                     };
                     let mut out = self.close(&win)?;
@@ -662,8 +701,10 @@ impl Controller {
     /// "ok" from the compositor proves nothing about the window.
     fn apply(&self, cmd: &Cmd, what: &str, check: impl Fn(&Self) -> bool) -> Result<(), WmError> {
         self.require(cmd)?;
+        self.check_operation_scope()?;
         self.backend.run(cmd)?;
         for _ in 0..VERIFY_TRIES {
+            self.check_operation_scope()?;
             if check(self) {
                 return Ok(());
             }
@@ -710,9 +751,11 @@ impl Controller {
             if let Ok(ws) = self.backend.workspace() {
                 restore.place = Place::N(ws);
             }
+            self.check_operation_scope()?;
             self.backend.restore_minimized(&restore)?;
             let mut restored = false;
             for _ in 0..VERIFY_TRIES {
+                self.check_operation_scope()?;
                 if self
                     .window(win)
                     .is_ok_and(|w| w.is_some_and(|w| !w.minimized))
@@ -792,8 +835,10 @@ impl Controller {
     fn close(&mut self, win: &WinInfo) -> Result<Outcome, WmError> {
         let id = win.id.clone();
         self.require(&Cmd::Close(id.clone()))?;
+        self.check_operation_scope()?;
         self.backend.run(&Cmd::Close(id.clone()))?;
         for _ in 0..VERIFY_TRIES {
+            self.check_operation_scope()?;
             if self.window(win)?.is_none() {
                 return Ok(done(format!("Closed {}", label(win)), false));
             }
@@ -970,7 +1015,7 @@ fn with_controller<T>(f: impl FnOnce(&mut Controller) -> Result<T, WmError>) -> 
 }
 
 pub fn run(req: &Request) -> Result<Outcome, WmError> {
-    with_controller(|c| c.run(req))
+    run_with_target(req, None)
 }
 
 pub(crate) fn prepare_close(target: &Target) -> Result<CloseTarget, WmError> {

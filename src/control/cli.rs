@@ -1470,6 +1470,38 @@ mod tests {
     use crate::dictation::vocabulary::VocabularyEntry;
 
     #[test]
+    fn agent_stop_keeps_an_exact_task_target_and_rejects_conflicting_scopes() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Args {
+            #[command(subcommand)]
+            command: ControlCli,
+        }
+
+        let parsed = Args::try_parse_from(["hex", "agent", "stop", "--task", "42"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            ControlCli::Agent {
+                command: AgentCommand::Stop {
+                    foreground: false,
+                    run: None,
+                    task: Some(42),
+                    ..
+                }
+            }
+        ));
+        for options in [
+            vec!["--task", "42", "--foreground"],
+            vec!["--task", "42", "--run", "9"],
+            vec!["--foreground", "--run", "9"],
+        ] {
+            let args = ["hex", "agent", "stop"].into_iter().chain(options);
+            assert!(Args::try_parse_from(args).is_err());
+        }
+    }
+
+    #[test]
     fn interrupted_workflow_status_has_a_separate_read_only_cli_command() {
         use clap::Parser;
 

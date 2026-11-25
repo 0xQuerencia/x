@@ -2,6 +2,9 @@
 
 use super::*;
 
+mod roadmap;
+pub use roadmap::RoadmapCommand;
+
 #[derive(Subcommand, Debug)]
 pub enum AgentKeyCommand {
     /// Read one OpenRouter key from stdin; use a pipe to avoid argv and shell history.
@@ -12,6 +15,11 @@ pub enum AgentKeyCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum AgentCommand {
+    /// Inspect local structured Markdown or prepare up to three reviewed changes.
+    Roadmap {
+        #[command(subcommand)]
+        command: RoadmapCommand,
+    },
     /// Linux task popups contain task numbers and outcomes only; details stay in X.
     Notifications {
         #[arg(value_parser = ["on", "off", "status"], default_value = "status")]
@@ -90,7 +98,33 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
-    /// Choose one of the numbered windows X listed in the last 30 seconds.
+    /// Answer the exact displayed window question without executing it.
+    AnswerWindow {
+        id: u64,
+        #[arg(long)]
+        question: String,
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Approve the exact window selection and unchanged operation after review.
+    ApproveWindowAnswer {
+        id: u64,
+        #[arg(long)]
+        question: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Cancel only the exact pending window question, preserving other work.
+    CancelWindowQuestion {
+        id: u64,
+        #[arg(long)]
+        question: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Select a numbered window from the current task list, then review its new token.
     Choose {
         index: u8,
         #[command(flatten)]
@@ -101,12 +135,15 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
-    /// Stop all owned tasks, or only the selected foreground/background run.
+    /// Stop all owned tasks, the foreground, or an exact foreground/background task.
     Stop {
-        #[arg(long, conflicts_with = "run")]
+        #[arg(long, conflicts_with_all = ["run", "task"])]
         foreground: bool,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "task")]
         run: Option<u64>,
+        /// Stop only this foreground task ID; stale IDs never stop replacements.
+        #[arg(long)]
+        task: Option<u64>,
         #[command(flatten)]
         output: Output,
     },
@@ -396,6 +433,10 @@ pub(super) fn run(command: AgentCommand) -> u8 {
         };
     }
     let (action, output) = match command {
+        AgentCommand::Roadmap { command } => match roadmap::route(command) {
+            Ok(route) => route,
+            Err(error) => return fail(&error),
+        },
         AgentCommand::Notifications { mode, output } => {
             (AgentAction::Notifications { mode }, output)
         }
@@ -439,17 +480,43 @@ pub(super) fn run(command: AgentCommand) -> u8 {
             question,
             output,
         } => (AgentAction::ApproveComputerAnswer { id, question }, output),
+        AgentCommand::AnswerWindow {
+            id,
+            question,
+            text,
+            output,
+        } => (
+            AgentAction::AnswerWindow {
+                id,
+                question,
+                text: text.join(" "),
+            },
+            output,
+        ),
+        AgentCommand::ApproveWindowAnswer {
+            id,
+            question,
+            output,
+        } => (AgentAction::ApproveWindowAnswer { id, question }, output),
+        AgentCommand::CancelWindowQuestion {
+            id,
+            question,
+            output,
+        } => (AgentAction::CancelWindowQuestion { id, question }, output),
         AgentCommand::Choose { index, output } => (AgentAction::Choose { index }, output),
         AgentCommand::Undo { output } => (AgentAction::Undo, output),
         AgentCommand::Stop {
             foreground,
             run,
+            task,
             output,
         } => (
             if foreground {
                 AgentAction::StopForeground
             } else if let Some(id) = run {
                 AgentAction::StopRun { id }
+            } else if let Some(id) = task {
+                AgentAction::StopTask { id }
             } else {
                 AgentAction::Stop
             },

@@ -10,6 +10,7 @@ pub mod integration;
 pub mod model;
 pub mod paths;
 pub mod recovery;
+pub mod roadmap;
 pub mod scheduler;
 mod steps;
 pub mod store;

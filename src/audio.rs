@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 pub(crate) mod browser_media;
 mod call_input;
+mod capture_stream;
 pub(crate) mod clock_deadline;
 #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
 pub(crate) mod hex_microphone;
@@ -17,7 +18,9 @@ pub(crate) mod recording_environment;
 pub(crate) mod voice_filter;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError};
+#[cfg(test)]
+use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -191,7 +194,9 @@ pub fn watch_input_devices() {
 
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use cpal::traits::{DeviceTrait, HostTrait};
-use cpal::{Device, SizedSample, Stream, StreamConfig};
+use cpal::{Device, Stream};
+
+use capture_stream::build_stream;
 
 #[cfg(all(test, target_os = "macos"))]
 use instant::scale_mach_ticks;
@@ -1460,13 +1465,6 @@ fn transport(device: &Device) -> Transport {
     }
 }
 
-fn mono<T>(samples: &[T], channels: usize, convert: impl Fn(&T) -> f32) -> Vec<f32> {
-    samples
-        .chunks(channels)
-        .map(|frame| frame.iter().map(&convert).sum::<f32>() / channels as f32)
-        .collect()
-}
-
 /// Where a stream reports errors to the audio owner.
 #[derive(Clone)]
 struct StreamErrorReporter {
@@ -1515,41 +1513,6 @@ fn report_stream_error(sender: &SyncSender<String>, error: cpal::Error) {
     }
     tracing::error!(%error, "microphone stream failed");
     let _ = sender.try_send(error.to_string());
-}
-
-fn build_stream<T: SizedSample>(
-    device: &Device,
-    config: &StreamConfig,
-    channels: usize,
-    sender: Sender<(Vec<f32>, CaptureInstant)>,
-    reporter: StreamErrorReporter,
-    mut feed: crate::audio::hex_microphone::CaptureFeed,
-    convert: impl Fn(T) -> f32 + Send + 'static,
-) -> Result<Stream> {
-    let sample_rate = config.sample_rate;
-    device
-        .build_input_stream(
-            *config,
-            move |data: &[T], info| {
-                let captured_through = captured_through(info, data.len() / channels, sample_rate);
-                let mono_samples = mono(data, channels, |sample| convert(*sample));
-                feed.push(&mono_samples);
-                let _ = sender.send((mono_samples, captured_through));
-            },
-            move |error| reporter.report(error),
-            None,
-        )
-        .wrap_err_with(|| format!("could not open {} microphone stream", T::FORMAT))
-}
-
-fn captured_through(
-    info: &cpal::InputCallbackInfo,
-    frames: usize,
-    sample_rate: u32,
-) -> CaptureInstant {
-    let captured_at = CaptureInstant::from_stream(info.timestamp().capture);
-    let duration = duration_for_frames(frames, sample_rate);
-    captured_at.checked_add(duration).unwrap_or(captured_at)
 }
 
 #[cfg(test)]

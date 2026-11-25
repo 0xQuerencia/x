@@ -13,6 +13,9 @@ use super::model::{Problem, Workflow, normalize};
 const MAX_FILE: u64 = 64 * 1024;
 const MAX_WORKFLOWS: usize = 100;
 
+mod roadmap;
+pub(crate) use roadmap::InventoryTask;
+
 /// A workflow as found on disk: valid, or with the reasons it is not runnable.
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -392,13 +395,47 @@ impl Store {
             Self::read(source).map_err(|e| format!("Could not read {}: {e}", source.display()))?;
         let graph: super::dag::Graph =
             serde_json::from_str(&text).map_err(|e| format!("Invalid workflow graph: {e}"))?;
+        if graph.roadmap.is_some() {
+            return Err("Roadmap source provenance must be created from an explicitly selected Markdown file; use roadmap inspect and plan".into());
+        }
+        self.save_graph(&graph)?;
+        Ok(graph)
+    }
+
+    /// Persist a typed proposal atomically; this never enters the execution queue.
+    pub(crate) fn save_graph(&self, graph: &super::dag::Graph) -> Result<(), String> {
         graph.validate_with_home(&self.home)?;
+        let text = serde_json::to_vec_pretty(graph).map_err(|e| e.to_string())?;
+        if text.len() as u64 > MAX_FILE {
+            return Err("Workflow graph exceeds 64 KiB".into());
+        }
+        let _inventory_lock = if graph.roadmap.is_some() {
+            Some(self.lock_roadmap_inventory()?)
+        } else {
+            None
+        };
+        if let Some(source) = &graph.roadmap {
+            let inventory = self.roadmap_inventory()?;
+            if self.list().len() + self.list_graphs().len() >= MAX_WORKFLOWS {
+                return Err("At most 100 saved workflows; remove a rejected draft before importing more tasks".into());
+            }
+            if source.tasks.iter().any(|task| {
+                inventory.iter().any(|saved| {
+                    saved.matches(
+                        source.project_id,
+                        &source.roadmap_id,
+                        &task.task_id,
+                        &task.goal_sha256,
+                    )
+                })
+            }) {
+                return Err("A saved roadmap proposal already contains a selected task; review or delete that proposal first".into());
+            }
+        }
         let path = self.file(&graph.id)?;
         self.ensure_private_dir()?;
         let mut staged = tempfile::NamedTempFile::new_in(&self.dir).map_err(|e| e.to_string())?;
-        staged
-            .write_all(text.as_bytes())
-            .map_err(|e| e.to_string())?;
+        staged.write_all(&text).map_err(|e| e.to_string())?;
         staged.as_file().sync_all().map_err(|e| e.to_string())?;
         staged.persist_noclobber(&path).map_err(|e| {
             if e.error.kind() == std::io::ErrorKind::AlreadyExists {
@@ -407,7 +444,7 @@ impl Store {
                 format!("Could not save {}: {}", path.display(), e.error)
             }
         })?;
-        Ok(graph)
+        Ok(())
     }
 
     /// Which workflow, if any, this spoken or typed phrase asks for. Matches a trigger

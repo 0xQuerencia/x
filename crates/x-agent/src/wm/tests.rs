@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use super::*;
 
 pub(super) mod contract;
+mod targets;
 
 #[derive(Default)]
 struct World {

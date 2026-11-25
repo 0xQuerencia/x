@@ -1,5 +1,9 @@
 # X feature inventory
 
+**Historical inventory.** The current source and acceptance inventory is
+[X master-plan status](master-plan-status.md). The findings and proof below
+remain tied to the original audit date and revision.
+
 Audited on 2026-11-21 against [`0xQuerencia/x:main` at `864571fa4cae`](https://github.com/0xQuerencia/x/tree/864571fa4cae9a9ca0cb68ad117c79666668a86b). The local checkout was clean and 43 commits behind. The audit used a separate worktree at the fetched commit. Commands use the source binary name `hex`. The Arch installer and Windows preview provide `x` and `x.exe`, respectively. Follow the [X fork contribution policy](../../AGENTS.md#x-fork-policy--0xquerenciax-overrides-upstream-branchpr-text) and find existing entry points in the [X feature map](../features/x-agent.md).
 
 **Implemented on main** means the named path is wired in source. **Partial** means part of the roadmap contract exists. **Open PR** identifies changes outside main. **Missing** means the named contract is absent from the inspected entry points. **Unknown** means the required evidence was unavailable. The owner column identifies the source component responsible for the feature.

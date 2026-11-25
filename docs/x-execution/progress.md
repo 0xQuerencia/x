@@ -1,5 +1,9 @@
 # X roadmap progress
 
+**Historical record.** For the current 92-package source, permission and acceptance
+audit, read [X master-plan status](master-plan-status.md). The dated integration
+states and evidence below remain unchanged.
+
 Integration snapshot: 2026-11-23. PRs #82, #93–#132, #140, #141,
 #144, #149, #153–#174 and #177 are merged. New #178–#183 are open
 development work and must not be counted until their checks pass and they

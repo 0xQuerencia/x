@@ -134,6 +134,40 @@ pub trait Host: Send + Sync {
     fn move_window(&self, window: &WinInfo, to: i64) -> Result<(), String>;
     /// Close only an exact previously observed id+pid+class, with verification.
     fn close_window(&self, window: &WinInfo) -> Result<(), String>;
+    /// Carry the owning task or node Stop through additional platform reads.
+    fn focus_scoped(
+        &self,
+        window: &WinInfo,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<(), String> {
+        stop.check()?;
+        self.focus(window)
+    }
+    fn switch_workspace_scoped(
+        &self,
+        n: i64,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<(), String> {
+        stop.check()?;
+        self.switch_workspace(n)
+    }
+    fn move_window_scoped(
+        &self,
+        window: &WinInfo,
+        to: i64,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<(), String> {
+        stop.check()?;
+        self.move_window(window, to)
+    }
+    fn close_window_scoped(
+        &self,
+        window: &WinInfo,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<(), String> {
+        stop.check()?;
+        self.close_window(window)
+    }
     fn opencode_ready(&self) -> Result<(), String>;
     fn opencode(&self, goal: &str, dir: &Path) -> Result<String, String>;
     /// Whether this step may run. The person approved the workflow as a whole; this is the

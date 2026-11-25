@@ -27,7 +27,10 @@ Hex                                      // macOS release
 [Dictation](dictation.md), [Meetings](meetings.md), and [Recovery](recovery.md)
 have detailed maps.
 The X fork's opt-in assistant is documented in [X agent](x-agent.md),
-[native Work composer](work-composer.md), and [task coordination](task-coordination.md).
+[native Work composer](work-composer.md), [Markdown roadmap proposals](roadmap-import.md),
+and [task coordination](task-coordination.md).
+The [task window reference contract](task-references.md) covers exact displayed
+choices, corrections and expiring native identities.
 These maps distinguish implemented behavior and automated checks from physical
 desktop, microphone and release acceptance.
 Agents can [read retained transcripts](transcript-cli.md) and

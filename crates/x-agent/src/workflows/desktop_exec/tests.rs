@@ -11,6 +11,7 @@ fn graph() -> Graph {
         id: "desktop-scope".into(),
         name: "Desktop scope".into(),
         triggers: vec![],
+        roadmap: None,
         nodes: vec![Node {
             id: "page".into(),
             after: vec![],
@@ -116,6 +117,116 @@ fn a_finished_desktop_claim_never_replays_when_a_runner_is_reconstructed() {
         );
     }
     assert_eq!(host.launches.load(Ordering::SeqCst), 1);
+}
+
+struct StopDuringNativeRead(WinInfo);
+impl Host for StopDuringNativeRead {
+    fn windows(&self) -> Result<Vec<WinInfo>, String> {
+        Ok(vec![self.0.clone()])
+    }
+    fn focused(&self) -> Result<Option<WinInfo>, String> {
+        Ok(None)
+    }
+    fn workspace(&self) -> Result<i64, String> {
+        Ok(1)
+    }
+    fn launch(&self, _: &Action) -> Result<String, String> {
+        panic!("not an opener")
+    }
+    fn installed(&self, _: &Action) -> Result<(), String> {
+        Ok(())
+    }
+    fn can(&self, _: Cap) -> bool {
+        true
+    }
+    fn focus(&self, _: &WinInfo) -> Result<(), String> {
+        panic!("node Stop must reach the scoped native adapter")
+    }
+    fn focus_scoped(&self, _: &WinInfo, stop: &Cancellation) -> Result<(), String> {
+        // Represents Stop arriving during the final native identity lookup.
+        stop.request();
+        stop.check()
+    }
+    fn switch_workspace(&self, _: i64) -> Result<(), String> {
+        unreachable!()
+    }
+    fn move_window(&self, _: &WinInfo, _: i64) -> Result<(), String> {
+        unreachable!()
+    }
+    fn close_window(&self, _: &WinInfo) -> Result<(), String> {
+        unreachable!()
+    }
+    fn opencode_ready(&self) -> Result<(), String> {
+        unreachable!()
+    }
+    fn opencode(&self, _: &str, _: &Path) -> Result<String, String> {
+        unreachable!()
+    }
+    fn permit(&self, _: &StepAction) -> bool {
+        true
+    }
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn desktop_node_passes_its_own_stop_through_the_final_native_adapter() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut graph = graph();
+    graph.nodes[0].job = Job::Desktop {
+        action: StepAction::FocusWindow {
+            app: "firefox".into(),
+            pick: None,
+        },
+    };
+    let host = Arc::new(StopDuringNativeRead(WinInfo {
+        id: "window".into(),
+        pid: 42,
+        class: "firefox".into(),
+        title: "Docs".into(),
+        workspace: 1,
+        place: crate::wm::Place::N(1),
+        minimized: false,
+        maximized: false,
+        recent: 0,
+    }));
+    let cfg = Config {
+        home: directory.path().into(),
+        poll: Duration::from_millis(1),
+    };
+    let plan = prepare(&graph, host.as_ref(), &cfg).unwrap().pop().unwrap();
+    let run = Uuid::new_v4();
+    let grants = Arc::new(Grants::default());
+    let receipt = grants
+        .issue(
+            Permission::QueueDesktop,
+            plan.scope(run, None).unwrap(),
+            Duration::from_secs(120),
+            1,
+            true,
+        )
+        .unwrap();
+    let executor = DesktopExecutor::new(
+        run,
+        vec![(plan, receipt)],
+        host,
+        cfg,
+        Arc::new(|_| Ok(Box::new(()))),
+        grants,
+        Arc::new(Journal::new(directory.path().join("journal"))),
+    )
+    .unwrap();
+    let root = Cancellation::default();
+    let child = root.child();
+    let independent = root.child();
+    assert_eq!(
+        executor.execute(graph.nodes[0].clone(), child.clone()),
+        Outcome::Cancelled
+    );
+    assert!(child.requested());
+    assert!(!independent.requested());
+    assert!(!root.requested());
 }
 
 fn node(id: &str, action: StepAction, requires_verified: &[&str]) -> Node {

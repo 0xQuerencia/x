@@ -934,6 +934,28 @@ fn cancelling_while_listening_discards_the_recording() {
     assert_eq!(stt.cancels.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn stale_task_stop_preserves_replacement_preview_and_a_new_recording() {
+    let (service, stt, launcher) = rig();
+    let old = service.plan("open firefox", Mode::Actions).unwrap();
+    service.cancel_foreground_task(old.id).unwrap();
+    let current = service.plan("open terminal", Mode::Actions).unwrap();
+    assert!(service.cancel_foreground_task(old.id).is_err());
+    let snapshot = service.snapshot(0);
+    assert_eq!(snapshot.phase, Phase::AwaitingApproval);
+    assert_eq!(snapshot.task.unwrap().id, current.id);
+    service.approve(current.id).unwrap();
+    wait_for(&service, |snapshot| snapshot.phase == Phase::Completed);
+    assert_eq!(launcher.launched.lock().unwrap().len(), 1);
+
+    service.voice_start(Mode::Actions).unwrap();
+    assert!(service.cancel_foreground_task(current.id).is_err());
+    assert_eq!(service.snapshot(0).phase, Phase::Listening);
+    assert_eq!(stt.cancels.load(Ordering::SeqCst), 0);
+    service.cancel_foreground();
+    assert_eq!(stt.cancels.load(Ordering::SeqCst), 1);
+}
+
 fn fake_opencode(dir: &std::path::Path, body: &str) -> PathBuf {
     let p = dir.join("opencode");
     std::fs::write(
@@ -2676,6 +2698,7 @@ echo '{"type":"step_finish","sessionID":"ses_graph_fixture","part":{"type":"step
         id: "coding-graph".into(),
         name: "Coding graph".into(),
         triggers: vec![],
+        roadmap: None,
         nodes: vec![
             make_node("inspect", HarnessKind::OpenCode, vec![]),
             make_node("review", HarnessKind::ClaudeCode, vec!["inspect".into()]),

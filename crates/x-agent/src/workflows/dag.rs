@@ -98,6 +98,9 @@ pub struct Graph {
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<String>,
+    /// Optional owner-local source data. It never grants execution or completion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roadmap: Option<super::roadmap::Source>,
     pub nodes: Vec<Node>,
 }
 
@@ -139,6 +142,7 @@ impl Graph {
             id: legacy.id,
             name: legacy.name,
             triggers: legacy.triggers,
+            roadmap: None,
             nodes,
         };
         graph.validate_with_home(home)?;
@@ -149,6 +153,9 @@ impl Graph {
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(self.version, VERSION | PROOF_VERSION | ARTIFACT_VERSION) {
             return Err("Unsupported workflow graph version".into());
+        }
+        if let Some(source) = &self.roadmap {
+            source.validate(self)?;
         }
         if !slug(&self.id) || self.name.trim().is_empty() || self.name.chars().count() > 80 {
             return Err("Invalid graph ID or name".into());

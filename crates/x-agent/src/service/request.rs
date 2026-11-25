@@ -24,6 +24,7 @@ pub(super) struct ActionRequest {
     pub(super) metadata: RequestMetadata,
     pub(super) action: Action,
     pub(super) close_target: Option<CloseTarget>,
+    pub(super) reference_expires: Option<std::time::Instant>,
 }
 
 impl ActionRequest {
@@ -44,13 +45,26 @@ impl ActionRequest {
         Self {
             metadata,
             action,
+            reference_expires: close_target.as_ref().map(|_| {
+                std::time::Instant::now() + crate::context::references::WINDOW_REFERENCE_TTL
+            }),
             close_target,
         }
     }
 
     pub(super) fn title(&self) -> String {
         if let Some(label) = self.close_target.as_ref().and_then(CloseTarget::label) {
-            format!("Close {label}")
+            if matches!(
+                self.action,
+                Action::Window {
+                    op: crate::wm::Op::Close,
+                    ..
+                }
+            ) {
+                format!("Close {label}")
+            } else {
+                format!("{} · exact window: {label}", self.action.describe())
+            }
         } else {
             self.action.describe()
         }

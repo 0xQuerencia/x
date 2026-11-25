@@ -159,6 +159,7 @@ fn fixture(
         id: "chamber-review".into(),
         name: "Chamber review".into(),
         triggers: vec![],
+        roadmap: None,
         nodes: [
             ("front", HarnessKind::OpenCode),
             ("back", HarnessKind::ClaudeCode),

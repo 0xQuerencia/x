@@ -79,7 +79,26 @@ impl Service {
 
     /// Stop only the foreground plan, recording or owned runner.
     pub fn cancel_foreground(&self) {
+        let _ = self.cancel_foreground_matching(None);
+    }
+
+    /// Stop only the displayed foreground task. A stale card or CLI response
+    /// cannot revoke a replacement task's approvals or cancel a new recording.
+    pub fn cancel_foreground_task(&self, task_id: u64) -> Result<(), String> {
+        self.cancel_foreground_matching(Some(task_id))
+    }
+
+    fn cancel_foreground_matching(&self, task_id: Option<u64>) -> Result<(), String> {
         let mut s = self.lock();
+        if let Some(id) = task_id
+            && (s.task.as_ref().is_none_or(|task| task.id != id)
+                || !matches!(
+                    s.phase,
+                    Phase::AwaitingApproval | Phase::WaitingForInput | Phase::Running
+                ))
+        {
+            return Err("That task is no longer the active foreground task".into());
+        }
         if let Err(error) = self.scoped_grants().revoke_all() {
             emit(
                 &mut s,
@@ -97,6 +116,7 @@ impl Service {
                 set_phase(&mut s, Phase::Cancelled);
                 s.edit = None;
                 s.computer_dialogue = None;
+                s.window_dialogue = None;
                 s.workflow = None;
                 s.graph_workflow = None;
                 s.active_graph_stops = None;
@@ -126,6 +146,7 @@ impl Service {
             }
             _ => {}
         }
+        Ok(())
     }
 
     // ---- voice -------------------------------------------------------------------------
@@ -236,6 +257,7 @@ fn finish_locked(
     }
     s.edit = None;
     s.computer_dialogue = None;
+    s.window_dialogue = None;
     s.workflow = None;
     s.graph_workflow = None;
     s.active_graph_stops = None;

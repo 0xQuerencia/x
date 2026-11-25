@@ -29,7 +29,10 @@ pub(super) struct Bridge {
 }
 
 impl Bridge {
-    fn desktop<T>(&self, action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    fn desktop<T>(
+        &self,
+        action: impl FnOnce(&Cancellation) -> Result<T, String>,
+    ) -> Result<T, String> {
         let (id, stop) = {
             let state = self.svc.lock();
             (
@@ -41,7 +44,7 @@ impl Bridge {
             .svc
             .acquire_desktop(id, &stop, std::time::Duration::from_secs(15))?;
         stop.check()?;
-        action()
+        action(&stop)
     }
 }
 
@@ -56,11 +59,17 @@ impl Host for Bridge {
         self.inner.workspace()
     }
     fn launch(&self, action: &Action) -> Result<String, String> {
-        self.desktop(|| self.inner.launch(action))
+        self.desktop(|stop| {
+            let result = self.inner.execute_action_scoped(action, stop)?;
+            if result.state == crate::tools::EffectState::Failed {
+                Err(result.message)
+            } else {
+                Ok(result.message)
+            }
+        })
     }
     fn execute_action(&self, action: &Action) -> Result<crate::tools::ExecutionOutcome, String> {
-        let stop = self.svc.lock().stop.clone();
-        self.desktop(|| self.inner.execute_action_scoped(action, &stop))
+        self.desktop(|stop| self.inner.execute_action_scoped(action, stop))
     }
     fn installed(&self, action: &Action) -> Result<(), String> {
         self.inner.installed(action)
@@ -69,16 +78,16 @@ impl Host for Bridge {
         self.inner.can(cap)
     }
     fn focus(&self, w: &WinInfo) -> Result<(), String> {
-        self.desktop(|| self.inner.focus(w))
+        self.desktop(|stop| self.inner.focus_scoped(w, stop))
     }
     fn switch_workspace(&self, n: i64) -> Result<(), String> {
-        self.desktop(|| self.inner.switch_workspace(n))
+        self.desktop(|stop| self.inner.switch_workspace_scoped(n, stop))
     }
     fn move_window(&self, w: &WinInfo, to: i64) -> Result<(), String> {
-        self.desktop(|| self.inner.move_window(w, to))
+        self.desktop(|stop| self.inner.move_window_scoped(w, to, stop))
     }
     fn close_window(&self, w: &WinInfo) -> Result<(), String> {
-        self.desktop(|| self.inner.close_window(w))
+        self.desktop(|stop| self.inner.close_window_scoped(w, stop))
     }
     /// The per-step gate. The person approved a snapshot of the workflow; a step runs only
     /// if the task is still approved and running, Stop was not pressed, and the step is one
