@@ -94,16 +94,15 @@ fn repository_ok(repo: &str) -> bool {
         && (1..=100).contains(&name.len())
         && !matches!(name, "." | "..")
         && !name.starts_with('-')
-        && name.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-        })
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn display(text: &str, limit: usize) -> String {
     text.chars()
         .filter(|ch| {
-            !ch.is_control()
-                && !matches!(*ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            !ch.is_control() && !matches!(*ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
         })
         .take(limit)
         .collect()
@@ -153,7 +152,12 @@ fn account(reader: &dyn Reader, expected: &str) -> Result<String, String> {
 }
 
 fn check(value: &Value) -> Check {
-    let field = |key: &str| display(value.get(key).and_then(Value::as_str).unwrap_or("unknown"), 180);
+    let field = |key: &str| {
+        display(
+            value.get(key).and_then(Value::as_str).unwrap_or("unknown"),
+            180,
+        )
+    };
     let kind = field("__typename");
     match kind.as_str() {
         "CheckRun" => Check {
@@ -193,7 +197,15 @@ fn inspect_with(
     let observed_account = account(reader, expected_account)?;
     let target = format!("github.com/{repository}");
     let number_arg = number.to_string();
-    let bytes = reader.run(&["pr", "view", &number_arg, "--repo", &target, "--json", FIELDS])?;
+    let bytes = reader.run(&[
+        "pr",
+        "view",
+        &number_arg,
+        "--repo",
+        &target,
+        "--json",
+        FIELDS,
+    ])?;
     let pr: Pull = serde_json::from_slice(&bytes)
         .map_err(|_| "GitHub returned incomplete or invalid PR metadata")?;
     let expected_url = format!("https://github.com/{repository}/pull/{number}");
@@ -202,7 +214,10 @@ fn inspect_with(
         || pr.head_ref_oid.len() != 40
         || !crate::worktrees::valid_commit(&pr.head_ref_oid)
         || !matches!(pr.state.as_str(), "OPEN" | "CLOSED" | "MERGED")
-        || !matches!(pr.mergeable.as_str(), "MERGEABLE" | "CONFLICTING" | "UNKNOWN")
+        || !matches!(
+            pr.mergeable.as_str(),
+            "MERGEABLE" | "CONFLICTING" | "UNKNOWN"
+        )
     {
         return Err("GitHub returned a changed or unsupported PR identity".into());
     }
@@ -212,8 +227,8 @@ fn inspect_with(
         return Err("GitHub account changed during inspection".into());
     }
     let reported_checks = pr.status_check_rollup.len();
-    let file_details_complete = pr.files.len() == pr.changed_files as usize
-        && pr.files.len() <= MAX_FILES;
+    let file_details_complete =
+        pr.files.len() == pr.changed_files as usize && pr.files.len() <= MAX_FILES;
     Ok(Report {
         account: observed_account,
         repository: repository.into(),
@@ -226,18 +241,30 @@ fn inspect_with(
         base: display(&pr.base_ref_name, 200),
         mergeability: pr.mergeable,
         review_decision: display(&pr.review_decision, 80),
-        checks: pr.status_check_rollup.iter().take(MAX_CHECKS).map(check).collect(),
+        checks: pr
+            .status_check_rollup
+            .iter()
+            .take(MAX_CHECKS)
+            .map(check)
+            .collect(),
         reported_checks,
         checks_truncated: reported_checks > MAX_CHECKS,
-        files: pr.files.into_iter().take(MAX_FILES).map(|mut file| {
-            file.path = display(&file.path, 400);
-            file
-        }).collect(),
+        files: pr
+            .files
+            .into_iter()
+            .take(MAX_FILES)
+            .map(|mut file| {
+                file.path = display(&file.path, 400);
+                file
+            })
+            .collect(),
         changed_files: pr.changed_files,
         file_details_complete,
         additions: pr.additions,
         deletions: pr.deletions,
-        observed_at: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |time| time.as_secs()),
+        observed_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |time| time.as_secs()),
         read_only: true,
         note: "Observed CLI metadata only; checks may be incomplete or stale. This is not proof of code correctness, merge readiness, or permission to write.",
     })
@@ -246,9 +273,9 @@ fn inspect_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::cell::RefCell;
     use std::collections::VecDeque;
-    use serde_json::json;
 
     struct Fake {
         responses: RefCell<VecDeque<Value>>,
@@ -257,8 +284,14 @@ mod tests {
 
     impl Reader for Fake {
         fn run(&self, args: &[&str]) -> Result<Vec<u8>, String> {
-            self.calls.borrow_mut().push(args.iter().map(|arg| (*arg).into()).collect());
-            let response = self.responses.borrow_mut().pop_front().ok_or("Unexpected request")?;
+            self.calls
+                .borrow_mut()
+                .push(args.iter().map(|arg| (*arg).into()).collect());
+            let response = self
+                .responses
+                .borrow_mut()
+                .pop_front()
+                .ok_or("Unexpected request")?;
             serde_json::to_vec(&response).map_err(|error| error.to_string())
         }
     }
@@ -287,7 +320,11 @@ mod tests {
 
     #[test]
     fn exact_read_uses_fixed_commands_and_distinguishes_partial_metadata() {
-        let reader = fake(vec![json!({"login":"owner"}), pr(), json!({"login":"owner"})]);
+        let reader = fake(vec![
+            json!({"login":"owner"}),
+            pr(),
+            json!({"login":"owner"}),
+        ]);
         let result = inspect_with("example/repo", 7, "owner", &reader).unwrap();
         assert_eq!(result.head_commit, "a".repeat(40));
         assert_eq!(result.checks.len(), 2);
@@ -297,8 +334,14 @@ mod tests {
         assert_eq!(result.mergeability, "UNKNOWN");
         assert!(result.read_only);
         let calls = reader.calls.borrow();
-        assert_eq!(calls[0], ["api", "--hostname", "github.com", "--method", "GET", "user"]);
-        assert_eq!(calls[1][..5], ["pr", "view", "7", "--repo", "github.com/example/repo"]);
+        assert_eq!(
+            calls[0],
+            ["api", "--hostname", "github.com", "--method", "GET", "user"]
+        );
+        assert_eq!(
+            calls[1][..5],
+            ["pr", "view", "7", "--repo", "github.com/example/repo"]
+        );
         assert_eq!(calls[2], calls[0]);
     }
 
@@ -308,7 +351,12 @@ mod tests {
         assert!(inspect_with("example/repo", 7, "owner", &reader).is_err());
         assert_eq!(reader.calls.borrow().len(), 1);
         let reader = fake(vec![]);
-        for repo in ["-x/repo", "https://github.com/example/repo", "owner/../repo", "owner/repo?x=1"] {
+        for repo in [
+            "-x/repo",
+            "https://github.com/example/repo",
+            "owner/../repo",
+            "owner/repo?x=1",
+        ] {
             assert!(inspect_with(repo, 7, "owner", &reader).is_err());
         }
         assert!(reader.calls.borrow().is_empty());
@@ -316,7 +364,11 @@ mod tests {
 
     #[test]
     fn rejects_stale_account_or_wrong_pr_identity() {
-        let reader = fake(vec![json!({"login":"owner"}), pr(), json!({"login":"other"})]);
+        let reader = fake(vec![
+            json!({"login":"owner"}),
+            pr(),
+            json!({"login":"other"}),
+        ]);
         assert!(inspect_with("example/repo", 7, "owner", &reader).is_err());
         let mut wrong = pr();
         wrong["url"] = json!("https://github.com/other/repo/pull/7");
