@@ -14,6 +14,9 @@ pub enum Permission {
     InspectProject,
     /// Start one approved, owned coding-harness task.
     StartHarness,
+    /// Authorize one reviewed graph node to wait for its dependencies.
+    /// This receipt cannot itself authorize a process launch.
+    QueueHarness,
     /// Run one approved test suite in an owned Git worktree.
     RunTests,
     /// Apply only one explicitly reviewed clean Git fast-forward.
@@ -70,6 +73,7 @@ impl Grants {
         }
         let limit = match permission {
             Permission::InspectProject => (Duration::from_secs(600), 16),
+            Permission::QueueHarness => (Duration::from_secs(30 * 60), 1),
             Permission::StartHarness | Permission::RunTests | Permission::IntegrateFastForward => {
                 (Duration::from_secs(60), 1)
             }
@@ -81,7 +85,10 @@ impl Grants {
             (Permission::InspectProject, Scope::Project { project_id }) if !project_id.is_nil() => {
             }
             (
-                Permission::StartHarness | Permission::RunTests | Permission::IntegrateFastForward,
+                Permission::StartHarness
+                | Permission::QueueHarness
+                | Permission::RunTests
+                | Permission::IntegrateFastForward,
                 Scope::Task {
                     project_id,
                     run_id,
@@ -145,6 +152,47 @@ impl Grants {
         Ok(())
     }
 
+    /// Exchange an exact queued-node approval for a short-lived launch receipt.
+    /// The existing receipt is changed atomically, so revocation, expiration,
+    /// and a second activation cannot recreate the authority.
+    pub(crate) fn activate_harness(
+        &self,
+        receipt: &Receipt,
+        scope: &Scope,
+    ) -> Result<(), String> {
+        self.activate_harness_at(receipt, scope, Instant::now())
+    }
+
+    fn activate_harness_at(
+        &self,
+        receipt: &Receipt,
+        scope: &Scope,
+        now: Instant,
+    ) -> Result<(), String> {
+        let mut guard = self
+            .grants
+            .lock()
+            .map_err(|_| "Grant storage is unavailable")?;
+        let grant = guard
+            .get_mut(&receipt.id)
+            .ok_or("Queued job approval is missing or revoked")?;
+        if now >= grant.expires_at {
+            return Err("Queued job approval has expired".into());
+        }
+        if grant.permission != Permission::QueueHarness
+            || &grant.scope != scope
+            || grant.remaining != 1
+        {
+            return Err("Queued job approval does not cover this exact task".into());
+        }
+        let dispatch_deadline = now
+            .checked_add(Duration::from_secs(60))
+            .ok_or("Dispatch approval lifetime is invalid")?;
+        grant.permission = Permission::StartHarness;
+        grant.expires_at = grant.expires_at.min(dispatch_deadline);
+        Ok(())
+    }
+
     /// Consumes one use only for an exact permission and scope match.
     /// A failed check cannot decrement or broaden the grant.
     pub fn consume(
@@ -174,7 +222,10 @@ impl Grants {
             guard.remove(&receipt.id);
             return Err("Approval has expired".into());
         }
-        if grant.permission != permission || &grant.scope != scope {
+        if permission == Permission::QueueHarness
+            || grant.permission != permission
+            || &grant.scope != scope
+        {
             return Err("Approval does not cover this target or operation".into());
         }
         grant.remaining -= 1;
@@ -273,6 +324,97 @@ mod tests {
             node_id: "backend".into(),
             intent: "canonical-task-intent".into(),
         }
+    }
+
+    #[test]
+    fn queued_harness_approval_survives_a_long_predecessor_and_dispatches_once() {
+        let grants = Grants::default();
+        let scope = task();
+        let start = Instant::now();
+        let receipt = grants
+            .issue(
+                Permission::QueueHarness,
+                scope.clone(),
+                Duration::from_secs(30 * 60),
+                1,
+                true,
+            )
+            .unwrap();
+        let ready = start + Duration::from_secs(120);
+        assert!(
+            grants
+                .consume_at(&receipt, Permission::StartHarness, &scope, ready)
+                .is_err()
+        );
+        assert!(
+            grants
+                .consume_at(&receipt, Permission::QueueHarness, &scope, ready)
+                .is_err()
+        );
+        assert!(grants.activate_harness_at(&receipt, &task(), ready).is_err());
+        grants.activate_harness_at(&receipt, &scope, ready).unwrap();
+        assert!(grants.activate_harness_at(&receipt, &scope, ready).is_err());
+        grants
+            .consume_at(&receipt, Permission::StartHarness, &scope, ready)
+            .unwrap();
+        assert!(
+            grants
+                .consume_at(&receipt, Permission::StartHarness, &scope, ready)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn queued_harness_dispatch_cannot_outlive_revocation_or_either_deadline() {
+        let grants = Grants::default();
+        let scope = task();
+        let start = Instant::now();
+        let issue = || {
+            grants
+                .issue(
+                    Permission::QueueHarness,
+                    scope.clone(),
+                    Duration::from_secs(120),
+                    1,
+                    true,
+                )
+                .unwrap()
+        };
+        let receipt = issue();
+        assert!(
+            grants
+                .activate_harness_at(&receipt, &scope, start + Duration::from_secs(121))
+                .is_err()
+        );
+        let receipt = issue();
+        grants.revoke(&receipt).unwrap();
+        assert!(grants.activate_harness(&receipt, &scope).is_err());
+        let receipt = issue();
+        grants.activate_harness_at(&receipt, &scope, start).unwrap();
+        assert!(
+            grants
+                .consume_at(
+                    &receipt,
+                    Permission::StartHarness,
+                    &scope,
+                    start + Duration::from_secs(61),
+                )
+                .is_err()
+        );
+        let receipt = issue();
+        grants
+            .activate_harness_at(&receipt, &scope, start + Duration::from_secs(110))
+            .unwrap();
+        assert!(
+            grants
+                .consume_at(
+                    &receipt,
+                    Permission::StartHarness,
+                    &scope,
+                    start + Duration::from_secs(121),
+                )
+                .is_err()
+        );
     }
 
     #[test]
