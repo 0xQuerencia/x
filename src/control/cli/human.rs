@@ -105,6 +105,9 @@ pub(super) fn human_agent(snapshot: &Value) -> String {
             .to_string()
     };
     let mut out = format!("X: {}\n", text(snapshot, "phase"));
+    if let Some(outcome) = snapshot.get("action_outcome").and_then(Value::as_str) {
+        out.push_str(&format!("Effect outcome: {outcome}\n"));
+    }
     if let Some(task) = snapshot.get("task").filter(|t| t.is_object()) {
         let id = task.get("id").and_then(Value::as_u64).unwrap_or_default();
         out.push_str(&format!(
@@ -126,12 +129,27 @@ pub(super) fn human_agent(snapshot: &Value) -> String {
             };
             out.push_str(&format!(
                 "  [{}] {}{risk}\n",
-                text(step, "status"),
+                step.pointer("/execution/state")
+                    .and_then(Value::as_str)
+                    .map_or_else(|| text(step, "status"), str::to_string),
                 text(step, "title")
             ));
         }
-        if text(task, "phase") == "awaiting_approval" {
+        if text(task, "phase") == "awaiting_approval"
+            && !snapshot
+                .get("computer_question")
+                .is_some_and(Value::is_object)
+        {
             out.push_str(&format!("Approve with: hex agent approve {id}\n"));
+            if snapshot
+                .get("can_run_in_background")
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                out.push_str(&format!(
+                    "Or keep the foreground free: hex agent approve {id} --background\n"
+                ));
+            }
         }
         for key in ["error", "summary"] {
             let value = text(task, key);
@@ -150,6 +168,57 @@ pub(super) fn human_agent(snapshot: &Value) -> String {
                 }
             ));
         }
+    }
+    if let Some(question) = snapshot.get("computer_question").filter(|q| q.is_object()) {
+        let id = question
+            .get("task_id")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let token = text(question, "question_id");
+        out.push_str(&format!("Question: {}\n", text(question, "prompt")));
+        if let Some(answer) = question.get("pending_answer").and_then(Value::as_str) {
+            out.push_str(&format!("Your answer: {answer}\nApprove this answer: hex agent approve-answer {id} --question {token}\n"));
+        } else {
+            out.push_str(&format!(
+                "Answer with: hex agent answer {id} --question {token} \"your answer\"\n"
+            ));
+        }
+        out.push_str("Stop this task: hex agent stop --foreground\n");
+    }
+    for run in snapshot
+        .get("background_runs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let task = &run["task"];
+        let id = task.get("id").and_then(Value::as_u64).unwrap_or_default();
+        out.push_str(&format!(
+            "Background task {id} [{}]: {}\n",
+            text(task, "phase"),
+            text(task, "text")
+        ));
+        for step in task
+            .get("steps")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            out.push_str(&format!(
+                "  [{}] {}\n",
+                step.pointer("/execution/state")
+                    .and_then(Value::as_str)
+                    .map_or_else(|| text(step, "status"), str::to_string),
+                text(step, "title")
+            ));
+        }
+        for key in ["error", "summary"] {
+            let value = text(task, key);
+            if !value.is_empty() {
+                out.push_str(&format!("  {key}: {value}\n"));
+            }
+        }
+        out.push_str(&format!("Stop this run: hex agent stop --run {id}\n"));
     }
     let events: Vec<&Value> = snapshot
         .get("events")

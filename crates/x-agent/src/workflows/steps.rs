@@ -12,7 +12,7 @@ use super::paths;
 use crate::tools::{self, Action};
 use crate::wm::{self, Cap, WinInfo};
 
-fn windows_of(host: &dyn Host, app: &str) -> Result<Vec<WinInfo>, String> {
+pub(super) fn windows_of(host: &dyn Host, app: &str) -> Result<Vec<WinInfo>, String> {
     let all = host.windows()?;
     let mut found = wm::matching(app, &all, &wm::apps::load()).map_err(|e| e.to_string())?;
     found.sort_by(|a, b| (a.workspace, &a.id).cmp(&(b.workspace, &b.id)));
@@ -20,7 +20,7 @@ fn windows_of(host: &dyn Host, app: &str) -> Result<Vec<WinInfo>, String> {
 }
 
 /// The one window of `app` that is meant, or why that is unclear. Never guesses.
-fn pick_window(host: &dyn Host, app: &str, pick: Option<u8>) -> Result<WinInfo, String> {
+pub(super) fn pick_window(host: &dyn Host, app: &str, pick: Option<u8>) -> Result<WinInfo, String> {
     let mut found = windows_of(host, app)?;
     match (found.len(), pick) {
         (0, _) => Err(format!("No open {app} window")),
@@ -83,22 +83,37 @@ fn launch_new(
     workspace: Option<u8>,
     on_wait: &mut dyn FnMut(bool),
 ) -> StepResult {
-    let before: Vec<String> = match windows_of(host, app) {
-        Ok(w) => w.into_iter().map(|w| w.id).collect(),
+    let before = match windows_of(host, app) {
+        Ok(w) => w,
         Err(e) => return StepResult::failed(e),
     };
     if let Err(e) = host.launch(action) {
         return StepResult::failed(e);
     }
     let appeared = wait_for(host, cfg, timeout_of(step), on_wait, || {
-        windows_of(host, app)
-            .ok()?
-            .into_iter()
-            .find(|w| !before.contains(&w.id))
+        let mut candidates: Vec<_> = match windows_of(host, app) {
+            Ok(windows) => windows,
+            Err(e) => return Some(Err(e)),
+        }
+        .into_iter()
+        .filter(|w| {
+            !before
+                .iter()
+                .any(|old| old.id == w.id && old.pid == w.pid && old.class == w.class)
+        })
+        .collect();
+        match candidates.len() {
+            0 => None,
+            1 => Some(Ok(candidates.remove(0))),
+            count => Some(Err(format!(
+                "{count} new {app} windows appeared; the launched window is ambiguous"
+            ))),
+        }
     });
     let win = match appeared {
         Err(()) => return StepResult::cancelled(),
-        Ok(Some(w)) => w,
+        Ok(Some(Ok(w))) => w,
+        Ok(Some(Err(e))) => return StepResult::failed(format!("Launched, but {e}")),
         Ok(None) if workspace.is_some() => {
             return StepResult::failed(format!(
                 "Launched, but no {app} window appeared within {}s to place it",
@@ -106,9 +121,8 @@ fn launch_new(
             ));
         }
         Ok(None) => {
-            return StepResult::unverified(
+            return StepResult::launched(
                 "Launched; no new window appeared (it may have opened in a window that was already open)",
-                vec![],
             );
         }
     };
@@ -141,7 +155,20 @@ pub(super) fn run_step(
     opened: &HashMap<String, WinInfo>,
     on_wait: &mut dyn FnMut(bool),
 ) -> StepResult {
-    let result = run_action(step, host, cfg, opened, on_wait);
+    run_step_bound(step, host, cfg, opened, None, on_wait)
+}
+
+/// The graph adapter supplies an independently revalidated exact target.
+/// Existing sequential workflows continue through the same operation bodies.
+pub(super) fn run_step_bound(
+    step: &Step,
+    host: &dyn Host,
+    cfg: &Config,
+    opened: &HashMap<String, WinInfo>,
+    target: Option<&WinInfo>,
+    on_wait: &mut dyn FnMut(bool),
+) -> StepResult {
+    let result = run_action(step, host, cfg, opened, target, on_wait);
     on_wait(false);
     result
 }
@@ -151,24 +178,27 @@ fn run_action(
     host: &dyn Host,
     cfg: &Config,
     opened: &HashMap<String, WinInfo>,
+    target: Option<&WinInfo>,
     on_wait: &mut dyn FnMut(bool),
 ) -> StepResult {
     match &step.action {
         StepAction::OpenApp { app, workspace } => {
-            let existing = match windows_of(host, app) {
-                Ok(w) => w,
-                Err(e) => return StepResult::failed(e),
-            };
+            let existing =
+                match target.map_or_else(|| windows_of(host, app), |win| Ok(vec![win.clone()])) {
+                    Ok(w) => w,
+                    Err(e) => return StepResult::failed(e),
+                };
             // Running it again must not pile up a second copy: reuse what is open.
             if let Some(win) = existing.into_iter().next() {
                 let Some(ws) = workspace else {
-                    return StepResult::done("Already open, reused", vec![]);
+                    return StepResult::done("Already open, reused", vec![]).with_window(win);
                 };
                 return match move_to(host, &win, *ws) {
                     Ok(r) => StepResult::done(
                         format!("Already open, now on workspace {ws}"),
                         r.into_iter().collect(),
-                    ),
+                    )
+                    .with_window(win),
                     Err(e) => StepResult::failed(e),
                 };
             }
@@ -212,19 +242,29 @@ fn run_action(
                 target: url.clone(),
                 browser: String::new(),
             };
-            match host.launch(&action) {
-                Ok(_) => StepResult::unverified(
-                    "Sent to your browser; X does not check that the page loaded",
-                    vec![],
-                ),
+            match host
+                .execute_action(&action)
+                .map(crate::tools::ExecutionOutcome::checked)
+            {
+                Ok(result) => match result.state {
+                    crate::tools::EffectState::Launched => StepResult::launched(
+                        "Sent to your browser; X does not check that the page loaded",
+                    ),
+                    crate::tools::EffectState::Failed => StepResult::failed(result.message),
+                    _ => StepResult::unverified(
+                        "Browser request completed without page-load verification",
+                        vec![],
+                    ),
+                },
                 Err(e) => StepResult::failed(e),
             }
         }
         StepAction::FocusWindow { app, pick } => {
-            let win = match pick_window(host, app, *pick) {
-                Ok(w) => w,
-                Err(e) => return StepResult::failed(e),
-            };
+            let win =
+                match target.map_or_else(|| pick_window(host, app, *pick), |win| Ok(win.clone())) {
+                    Ok(w) => w,
+                    Err(e) => return StepResult::failed(e),
+                };
             let before = host.focused().ok().flatten();
             match host.focus(&win) {
                 Ok(()) => StepResult::done(
@@ -234,7 +274,8 @@ fn run_action(
                         .map(Reversal::FocusBack)
                         .into_iter()
                         .collect(),
-                ),
+                )
+                .with_window(win),
                 Err(e) => StepResult::failed(e),
             }
         }
@@ -259,15 +300,17 @@ fn run_action(
             workspace,
             pick,
         } => {
-            let win = match pick_window(host, app, *pick) {
-                Ok(w) => w,
-                Err(e) => return StepResult::failed(e),
-            };
+            let win =
+                match target.map_or_else(|| pick_window(host, app, *pick), |win| Ok(win.clone())) {
+                    Ok(w) => w,
+                    Err(e) => return StepResult::failed(e),
+                };
             match move_to(host, &win, *workspace) {
                 Ok(r) => StepResult::done(
                     format!("{app} is on workspace {workspace}"),
                     r.into_iter().collect(),
-                ),
+                )
+                .with_window(win),
                 Err(e) => StepResult::failed(e),
             }
         }
@@ -332,7 +375,9 @@ fn run_phrase(phrase: &str, host: &dyn Host) -> StepResult {
     let Some(actions) = tools::plan_rules(phrase) else {
         return StepResult::failed("X no longer understands that phrase");
     };
-    let mut verified = true;
+    let mut verified = !actions.is_empty();
+    let mut unresolved = false;
+    let mut evidence = None;
     for action in &actions {
         if host.cancelled() {
             return StepResult::cancelled();
@@ -340,21 +385,37 @@ fn run_phrase(phrase: &str, host: &dyn Host) -> StepResult {
         if let Err(e) = action.clone().validate() {
             return StepResult::failed(e);
         }
-        if !matches!(action, Action::Window { .. }) {
-            verified = false;
-        }
-        if let Err(e) = host.launch(action) {
-            return if host.cancelled() {
-                StepResult::cancelled()
-            } else {
-                StepResult::failed(e)
-            };
+        let result = match host.execute_action(action) {
+            Ok(result) => result.checked(),
+            Err(e) => {
+                return if host.cancelled() {
+                    StepResult::cancelled()
+                } else {
+                    StepResult::failed(e)
+                };
+            }
+        };
+        match result.state {
+            crate::tools::EffectState::Confirmed => evidence = result.evidence,
+            crate::tools::EffectState::Launched => verified = false,
+            crate::tools::EffectState::Observed | crate::tools::EffectState::Unverified => {
+                verified = false;
+                unresolved = true;
+            }
+            crate::tools::EffectState::Failed => return StepResult::failed(result.message),
         }
     }
     if verified {
-        StepResult::done("Done and checked by the window controller", vec![])
+        let Some(evidence) = evidence else {
+            return StepResult::unverified("No effect evidence was returned", vec![]);
+        };
+        let detail = "Requested effects independently confirmed";
+        StepResult::done(detail, vec![])
+            .with_execution(crate::tools::ExecutionOutcome::confirmed(detail, evidence))
+    } else if unresolved {
+        StepResult::unverified("The action's requested effect was not verified", vec![])
     } else {
-        StepResult::unverified("Launched; X does not check what it opened", vec![])
+        StepResult::launched("Launched; X does not check what it opened")
     }
 }
 
@@ -408,6 +469,7 @@ pub fn preflight(wf: &Workflow, host: &dyn Host, cfg: &Config) -> Vec<String> {
                         directory: d.display().to_string(),
                     })
                 }));
+                opens.push("files");
             }
             StepAction::OpenUrl { url } => {
                 need(host.installed(&Action::Url {

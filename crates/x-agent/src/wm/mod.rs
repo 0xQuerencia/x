@@ -257,6 +257,15 @@ impl CloseTarget {
 pub struct Outcome {
     pub message: String,
     pub undoable: bool,
+    pub effect: Effect,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Effect {
+    Confirmed,
+    WindowObservation,
+    KeysObservation,
+    Unverified,
 }
 
 /// One read of the desktop: what exists, what has focus, where we are.
@@ -414,6 +423,7 @@ impl Controller {
                 Op::Keys => Ok(Outcome {
                     message: keys::answer(&(self.binds)(), &req.target.app),
                     undoable: false,
+                    effect: Effect::KeysObservation,
                 }),
                 Op::Undo => self.undo(&all),
                 Op::Workspace => {
@@ -789,13 +799,14 @@ impl Controller {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        Ok(done(
-            format!(
+        Ok(Outcome {
+            message: format!(
                 "Asked {} to close; it is still open and may be asking to save",
                 label(win)
             ),
-            false,
-        ))
+            undoable: false,
+            effect: Effect::Unverified,
+        })
     }
 
     fn undo(&mut self, all: &[WinInfo]) -> Result<Outcome, WmError> {
@@ -885,7 +896,11 @@ impl Controller {
 }
 
 fn done(message: String, undoable: bool) -> Outcome {
-    Outcome { message, undoable }
+    Outcome {
+        message,
+        undoable,
+        effect: Effect::Confirmed,
+    }
 }
 
 /// App name plus a clipped, control-free title: safe to show, never parsed.
@@ -914,7 +929,11 @@ fn list(all: &[WinInfo]) -> Outcome {
         .map(|w| format!("{}: {}", w.workspace, label(w)))
         .collect();
     lines.sort();
-    done(lines.join("; "), false)
+    Outcome {
+        message: lines.join("; "),
+        undoable: false,
+        effect: Effect::WindowObservation,
+    }
 }
 
 /// Windows whose class belongs to what `app` names: an installed app, a role such as

@@ -44,7 +44,7 @@ pub enum Match {
     },
 }
 
-/// A safe UI summary of a saved v2 graph. Coding goals never enter the list.
+/// A safe UI summary of a saved supported graph. Coding goals never enter the list.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct GraphEntry {
     pub id: String,
@@ -228,6 +228,7 @@ impl Store {
                     .and_then(serde_json::Value::as_u64)
                     .is_some_and(|v| {
                         v == u64::from(super::dag::VERSION)
+                            || v == u64::from(super::dag::ARTIFACT_VERSION)
                             || v == u64::from(super::dag::PROOF_VERSION)
                     })
                 {
@@ -237,10 +238,12 @@ impl Store {
                 if path.file_stem()?.to_str()? != graph.id {
                     return None;
                 }
-                let coding_only = graph
-                    .nodes
-                    .iter()
-                    .all(|node| matches!(&node.job, super::dag::Job::Harness { .. }));
+                let coding_only = graph.nodes.iter().all(|node| {
+                    matches!(
+                        &node.job,
+                        super::dag::Job::Harness { .. } | super::dag::Job::Test { .. }
+                    )
+                });
                 Some(GraphEntry {
                     id: graph.id,
                     name: graph.name,
@@ -479,7 +482,12 @@ impl Store {
             verified: report
                 .nodes
                 .iter()
-                .filter(|node| node.outcome == super::scheduler::Outcome::Verified)
+                .filter(|node| {
+                    matches!(
+                        node.outcome,
+                        super::scheduler::Outcome::Verified | super::scheduler::Outcome::Tested
+                    )
+                })
                 .count(),
             delivered: report
                 .nodes
@@ -519,7 +527,10 @@ impl Store {
         // They must not be shown as artifact/test-verified after upgrading.
         if summary.proof_version == 0 {
             for node in &mut summary.nodes {
-                if node.outcome == super::scheduler::Outcome::Verified {
+                if matches!(
+                    node.outcome,
+                    super::scheduler::Outcome::Verified | super::scheduler::Outcome::Tested
+                ) {
                     node.outcome = super::scheduler::Outcome::Delivered;
                 }
             }

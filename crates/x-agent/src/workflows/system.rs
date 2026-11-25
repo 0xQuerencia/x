@@ -33,6 +33,17 @@ impl Host for SystemHost {
         action.execute()
     }
 
+    fn execute_action(&self, action: &Action) -> Result<tools::ExecutionOutcome, String> {
+        action.execute_outcome()
+    }
+    fn execute_action_scoped(
+        &self,
+        action: &Action,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<tools::ExecutionOutcome, String> {
+        action.execute_outcome_for_target(None, stop)
+    }
+
     fn installed(&self, action: &Action) -> Result<(), String> {
         action.argv(&|name| tools::which(name)).map(drop)
     }

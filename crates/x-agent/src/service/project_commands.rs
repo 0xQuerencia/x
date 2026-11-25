@@ -248,6 +248,14 @@ impl Service {
                 Ok(("done", format!("Selected {}", selected.name)))
             }
             Pending::Open(project) => {
+                let task_id = self
+                    .lock()
+                    .task
+                    .as_ref()
+                    .ok_or("No approved project task")?
+                    .id;
+                let _desktop =
+                    self.acquire_desktop(task_id, stop, std::time::Duration::from_secs(15))?;
                 let current = registry.validated_resolve(&project.id.to_string())?;
                 if current.root != project.root {
                     return Err("The approved project directory changed".into());

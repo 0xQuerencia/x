@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::dag::{Graph, Job, Node};
+use super::dag::{Graph, InputProof, Job, Node};
 use crate::cancellation::Cancellation;
 
 pub const MAX_PARALLEL: usize = 4;
@@ -19,9 +19,13 @@ const STOP_POLL: Duration = Duration::from_millis(100);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
+    /// Desktop request dispatched successfully; its effect was not verified.
+    Launched,
     /// Provider acknowledged the task and exited cleanly; no artifact/test proof.
     Delivered,
     Verified,
+    /// A fixed approved test suite passed at the recorded immutable commit.
+    Tested,
     Failed,
     Unverified,
     Cancelled,
@@ -32,7 +36,10 @@ impl Outcome {
     /// Version-2 graphs historically allowed successful delivery to release
     /// dependencies. Stronger evidence edges must opt in explicitly.
     pub fn completed(self) -> bool {
-        matches!(self, Self::Delivered | Self::Verified)
+        matches!(
+            self,
+            Self::Launched | Self::Delivered | Self::Verified | Self::Tested
+        )
     }
 }
 
@@ -56,14 +63,18 @@ pub struct Report {
     pub max_concurrent: usize,
 }
 
-/// A future harness/desktop adapter must gate *every* node against explicit
+/// A native executor must gate *every* node against explicit
 /// approval before the scheduler can run. There is intentionally no default.
 pub trait Executor: Send + Sync + 'static {
     fn authorized(&self, node: &Node) -> bool;
     /// Only a trusted executor that independently verified an isolated,
-    /// owned Git checkout may return a worktree resource key. Graph JSON and
+    /// owned Git checkout (or an exact private allocation reservation) may return a worktree resource key. Graph JSON and
     /// model output alone must never grant isolation.
     fn verified_worktree_key(&self, _node: &Node) -> Option<String> {
+        None
+    }
+    /// Optional native diagnostic, never model prose or raw process output.
+    fn outcome_reason(&self, _node: &Node) -> Option<String> {
         None
     }
     fn execute(&self, node: Node, stop: Cancellation) -> Outcome;
@@ -92,7 +103,7 @@ impl Resource {
 fn resource(node: &Node, executor: &dyn Executor) -> Resource {
     match &node.job {
         Job::Desktop { .. } => Resource::Desktop,
-        Job::Harness { project_id, .. } => executor
+        Job::Harness { project_id, .. } | Job::Test { project_id, .. } => executor
             .verified_worktree_key(node)
             .filter(|key| {
                 !key.is_empty()
@@ -138,7 +149,7 @@ impl JobStops {
 
 /// Execute a previously user-authorized graph. The runner may only report
 /// `Verified` after collecting independent evidence, never from model text.
-/// One writable job per project is allowed until worktree isolation lands.
+/// Project-wide writers serialize; verified isolated reservations may overlap.
 pub fn run(
     graph: &Graph,
     home: &Path,
@@ -232,6 +243,7 @@ pub(crate) fn run_observed_scoped(
                     .iter()
                     .chain(&node.requires)
                     .chain(&node.requires_verified)
+                    .chain(node.inputs.iter().map(|input| &input.node))
                     .all(|dependency| finished[ids[dependency.as_str()]].is_some());
                 if !all_finished {
                     continue;
@@ -240,11 +252,25 @@ pub(crate) fn run_observed_scoped(
                     finished[ids[dependency.as_str()]].is_some_and(Outcome::completed)
                 });
                 let proof_ok = node.requires_verified.iter().all(|dependency| {
-                    finished[ids[dependency.as_str()]] == Some(Outcome::Verified)
+                    matches!(
+                        finished[ids[dependency.as_str()]],
+                        Some(Outcome::Verified | Outcome::Tested)
+                    )
                 });
-                if !required_ok || !proof_ok {
+                let input_ok = node.inputs.iter().all(|input| {
+                    matches!(
+                        (input.proof, finished[ids[input.node.as_str()]]),
+                        (
+                            InputProof::Committed,
+                            Some(Outcome::Verified | Outcome::Tested)
+                        ) | (InputProof::Tested, Some(Outcome::Tested))
+                    )
+                });
+                if !required_ok || !proof_ok || !input_ok {
                     finished[index] = Some(Outcome::Skipped);
-                    notes[index] = if !proof_ok {
+                    notes[index] = if !input_ok {
+                        "Required artifact or test proof is missing".into()
+                    } else if !proof_ok {
                         "Required predecessor has no additional verification proof".into()
                     } else {
                         "Required predecessor did not complete".into()
@@ -331,6 +357,16 @@ pub(crate) fn run_observed_scoped(
         let joined = active
             .remove(&index)
             .is_some_and(|worker| worker.join().is_ok());
+        if !panicked
+            && joined
+            && let Some(reason) = executor.outcome_reason(&graph.nodes[index])
+        {
+            notes[index] = reason
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(240)
+                .collect();
+        }
         if panicked || !joined {
             outcome = Outcome::Failed;
             notes[index] = "Worker panicked or did not exit cleanly".into();
@@ -461,6 +497,8 @@ mod tests {
             requires_verified: vec![],
             required_change: None,
             required_commit: false,
+
+            inputs: vec![],
             job: Job::Harness {
                 harness: HarnessKind::OpenCode,
                 project_id: project_id.into(),

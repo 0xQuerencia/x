@@ -113,6 +113,20 @@ pub trait Host: Send + Sync {
     fn focused(&self) -> Result<Option<WinInfo>, String>;
     fn workspace(&self) -> Result<i64, String>;
     fn launch(&self, action: &Action) -> Result<String, String>;
+    /// Legacy hosts can report dispatch, but only native typed evidence can
+    /// prove the requested effect. Message text never changes this state.
+    fn execute_action(&self, action: &Action) -> Result<crate::tools::ExecutionOutcome, String> {
+        self.launch(action)
+            .map(crate::tools::ExecutionOutcome::launched)
+    }
+    fn execute_action_scoped(
+        &self,
+        action: &Action,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<crate::tools::ExecutionOutcome, String> {
+        stop.check()?;
+        self.execute_action(action)
+    }
     fn installed(&self, action: &Action) -> Result<(), String>;
     fn can(&self, cap: Cap) -> bool;
     fn focus(&self, window: &WinInfo) -> Result<(), String>;
@@ -136,11 +150,26 @@ pub(super) struct StepResult {
     pub detail: String,
     pub reversals: Vec<Reversal>,
     pub opened: Option<WinInfo>,
+    /// Also records reused windows without granting close-new-window authority.
+    pub window: Option<WinInfo>,
+    /// A successful dispatch with unknown effect, distinct from failed readback.
+    pub launched: bool,
+    pub execution: Option<crate::tools::ExecutionOutcome>,
 }
 
 impl StepResult {
+    pub fn with_execution(mut self, execution: crate::tools::ExecutionOutcome) -> Self {
+        self.execution = Some(execution.checked());
+        self
+    }
     pub fn with_opened(mut self, win: WinInfo) -> Self {
-        self.opened = Some(win);
+        self.opened = Some(win.clone());
+        self.window = Some(win);
+        self
+    }
+
+    pub fn with_window(mut self, win: WinInfo) -> Self {
+        self.window = Some(win);
         self
     }
 
@@ -150,6 +179,9 @@ impl StepResult {
             detail: detail.into(),
             reversals,
             opened: None,
+            window: None,
+            launched: false,
+            execution: None,
         }
     }
     pub fn unverified(detail: impl Into<String>, reversals: Vec<Reversal>) -> Self {
@@ -158,6 +190,15 @@ impl StepResult {
             detail: detail.into(),
             reversals,
             opened: None,
+            window: None,
+            launched: false,
+            execution: None,
+        }
+    }
+    pub fn launched(detail: impl Into<String>) -> Self {
+        Self {
+            launched: true,
+            ..Self::unverified(detail, vec![])
         }
     }
     pub fn failed(detail: impl Into<String>) -> Self {
@@ -166,6 +207,9 @@ impl StepResult {
             detail: detail.into(),
             reversals: vec![],
             opened: None,
+            window: None,
+            launched: false,
+            execution: None,
         }
     }
     pub fn cancelled() -> Self {
@@ -174,6 +218,9 @@ impl StepResult {
             detail: "Stopped".into(),
             reversals: vec![],
             opened: None,
+            window: None,
+            launched: false,
+            execution: None,
         }
     }
 }

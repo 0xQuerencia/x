@@ -48,6 +48,7 @@ pub(crate) struct World {
     pub(crate) log: Vec<String>,
     pub(crate) next: u32,
     pub(crate) startup_polls: usize,
+    pub(crate) windows_per_launch: usize,
 }
 
 pub(crate) struct Fake {
@@ -83,6 +84,7 @@ impl Fake {
                 log: vec![],
                 next: 0,
                 startup_polls: 2,
+                windows_per_launch: 1,
             }),
             cancel_after_launches: None,
             deny_permit: false,
@@ -147,7 +149,10 @@ impl Host for Fake {
             if w.launch_fails.contains(app) {
                 return Err(format!("could not launch {app}"));
             }
-            if !w.never_appears.contains(app) {
+            for _ in 0..w.windows_per_launch {
+                if w.never_appears.contains(app) {
+                    break;
+                }
                 w.next += 1;
                 let id = format!("0x{}", w.next);
                 let polls = w.startup_polls;
@@ -1125,6 +1130,8 @@ mod storage {
                 requires_verified: vec![],
                 required_change: None,
                 required_commit: false,
+
+                inputs: vec![],
                 job: Job::Harness {
                     harness: HarnessKind::OpenCode,
                     project_id: uuid::Uuid::new_v4().to_string(),

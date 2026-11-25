@@ -265,6 +265,132 @@ fn and_inside_a_query_is_kept() {
 }
 
 #[test]
+fn quoted_payloads_never_become_compound_actions() {
+    for (command, literal) in [
+        (
+            r#"open terminal then type "hello and open firefox""#,
+            "hello and open firefox",
+        ),
+        (
+            "open terminal then type 'don't open firefox and open chrome'",
+            "don't open firefox and open chrome",
+        ),
+        (
+            "open terminal then type “日本語 then open firefox”",
+            "日本語 then open firefox",
+        ),
+        (
+            r#"open terminal then type "hello  and   open firefox""#,
+            "hello  and   open firefox",
+        ),
+    ] {
+        assert_eq!(
+            plan_rules(command),
+            Some(vec![
+                Action::App {
+                    target: "terminal".into()
+                },
+                Action::Type {
+                    text: literal.into()
+                },
+            ]),
+            "{command}"
+        );
+    }
+}
+
+#[test]
+fn commands_after_closed_literals_still_form_a_reviewable_sequence() {
+    assert_eq!(
+        plan_rules(r#"type "hello and open chrome" then open firefox"#),
+        Some(vec![
+            Action::Type {
+                text: "hello and open chrome".into()
+            },
+            Action::App {
+                target: "firefox".into()
+            },
+        ])
+    );
+    assert_eq!(
+        plan_rules(r#"search google for "salt and pepper" then open github"#),
+        Some(vec![
+            Action::Search {
+                target: "google".into(),
+                query: "salt and pepper".into(),
+                browser: String::new()
+            },
+            Action::Url {
+                target: "https://github.com".into(),
+                browser: String::new()
+            },
+        ])
+    );
+    assert_eq!(
+        plan_rules(r#"open firefox then search google for "salt and pepper" then open terminal"#),
+        Some(vec![
+            Action::Search {
+                target: "google".into(),
+                query: "salt and pepper".into(),
+                browser: "firefox".into(),
+            },
+            Action::App {
+                target: "terminal".into()
+            },
+        ])
+    );
+}
+
+#[test]
+fn bounded_compound_local_controls_keep_order_and_reject_partial_plans() {
+    use crate::sys::Op;
+    assert_eq!(
+        plan_rules(
+            "open firefox then volume to 30% then open vscode then open files then mute audio"
+        ),
+        Some(vec![
+            Action::App {
+                target: "firefox".into()
+            },
+            Action::System {
+                op: Op::SetVolume(30)
+            },
+            Action::App {
+                target: "vscode".into()
+            },
+            Action::App {
+                target: "files".into()
+            },
+            Action::System {
+                op: Op::SetMute(true)
+            },
+        ])
+    );
+    for request in [
+        "open firefox then volume to 130%",
+        "open firefox then do not open files",
+        "do not open firefox then open files",
+        "open firefox then open chrome then open files then open terminal then open vscode then open brave",
+        r#"open terminal then type "hello
+world""#,
+    ] {
+        assert!(plan_rules(request).is_none(), "{request}");
+    }
+}
+
+#[test]
+fn incomplete_quoted_sequences_and_unknown_steps_do_nothing() {
+    for request in [
+        r#"open terminal then type "hello and open firefox"#,
+        "open terminal then type ‘hello and open firefox",
+        r#"type "hello" then open missing-application-xyz"#,
+        r#"open terminal then type "hello" then delete every file"#,
+    ] {
+        assert!(plan_rules(request).is_none(), "{request}");
+    }
+}
+
+#[test]
 fn query_cannot_inject_arguments_or_shell() {
     let a = plan_rules("search youtube for a&b; rm -rf ~ $(whoami) `id` --new-window").unwrap();
     let argv = a[0].argv(&fake_path).unwrap();

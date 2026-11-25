@@ -210,7 +210,7 @@ fn a_stale_control_is_reobserved_once_without_replaying_its_reference() {
         &Quiet,
         &Limits::default(),
     );
-    assert!(matches!(outcome, Outcome::Done(_)), "{outcome:?}");
+    assert!(matches!(outcome, Outcome::Observed(_)), "{outcome:?}");
     assert_eq!(
         *desktop.calls.lock().unwrap(),
         vec![
@@ -231,7 +231,7 @@ fn click_then_done() {
             r#"{"done":true,"evidence":"clicked"}"#,
         ],
     );
-    assert!(matches!(outcome, Outcome::Done(_)), "{outcome:?}");
+    assert!(matches!(outcome, Outcome::Observed(_)), "{outcome:?}");
     assert_eq!(acts, [UiAct::Click("@s:e1".into())]);
 }
 
@@ -266,6 +266,28 @@ fn stale_evidence_rejected() {
         ],
     );
     assert!(matches!(outcome, Outcome::Failed(_)), "{outcome:?}");
+}
+
+#[test]
+fn an_unrelated_new_phrase_can_only_report_observation() {
+    let before = screen("idle", vec![el("e1", "link", "Open result")]);
+    let after = screen(
+        "New notification arrived",
+        vec![el("e1", "link", "Open result")],
+    );
+    let (outcome, acts) = drive(
+        vec![before, after],
+        &[
+            r#"{"do":"click","id":"e1"}"#,
+            r#"{"done":true,"evidence":"New notification arrived","summary":"The requested result was opened successfully"}"#,
+        ],
+    );
+    let Outcome::Observed(note) = outcome else {
+        panic!("visible text must only be observation")
+    };
+    assert!(note.contains("New notification arrived"));
+    assert!(!note.contains("successfully"));
+    assert_eq!(acts.len(), 1);
 }
 
 #[test]
@@ -353,7 +375,7 @@ fn enter_after_address() {
             r#"{"done":true,"evidence":"loaded page"}"#,
         ],
     );
-    assert!(matches!(outcome, Outcome::Done(_)), "{outcome:?}");
+    assert!(matches!(outcome, Outcome::Observed(_)), "{outcome:?}");
     assert_eq!(acts.last(), Some(&UiAct::Key(Key::Enter)));
 }
 
@@ -417,7 +439,7 @@ fn structured_decider_decisions_reuse_screen_verification() {
         &Quiet,
         &Limits::default(),
     );
-    assert!(matches!(outcome, Outcome::Done(_)), "{outcome:?}");
+    assert!(matches!(outcome, Outcome::Observed(_)), "{outcome:?}");
     assert_eq!(
         *desktop.acts.lock().unwrap(),
         vec![UiAct::Click("@s:e1".into())]
@@ -438,7 +460,7 @@ fn real_searchbox_can_submit_but_normal_text_field_cannot() {
             r#"{"done":true,"evidence":"Search results loaded"}"#,
         ],
     );
-    assert!(matches!(outcome, Outcome::Done(_)), "{outcome:?}");
+    assert!(matches!(outcome, Outcome::Observed(_)), "{outcome:?}");
     assert!(acts.contains(&UiAct::Key(Key::Enter)));
 }
 
@@ -489,7 +511,16 @@ fn an_ambiguous_window_is_not_treated_as_an_absent_app() {
             panic!("must not launch on a lookup error")
         }
     }
-    assert!(wait_for_window(&Ambiguous, "chrome", &NoLaunch).is_err());
+    assert!(
+        wait_for_window(
+            &Ambiguous,
+            "chrome",
+            &NoLaunch,
+            Instant::now(),
+            Duration::from_secs(12)
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -511,5 +542,5 @@ fn model_summary_is_not_reported_as_verified_fact() {
         vec![screen("Ready", vec![])],
         &[r#"{"done":true,"evidence":"Ready","summary":"I submitted the form"}"#],
     );
-    assert!(matches!(outcome, Outcome::Done(note) if !note.contains("submitted")));
+    assert!(matches!(outcome, Outcome::Observed(note) if !note.contains("submitted")));
 }

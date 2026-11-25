@@ -11,6 +11,10 @@ pub const MAX_TRANSCRIPT: usize = 1000;
 pub const MAX_STEPS: usize = 5;
 const MAX_QUERY: usize = 300;
 
+mod outcome;
+mod sequence;
+pub use outcome::{EffectEvidence, EffectState, ExecutionOutcome};
+
 /// Executable candidates per approved app alias (names looked up on PATH).
 pub const APPS: &[(&str, &[&str])] = &[
     ("firefox", &["firefox"]),
@@ -549,11 +553,26 @@ impl Action {
         self.execute_for_target(None, &Cancellation::default())
     }
 
+    /// Execute with native proof preserved. A successful dispatch alone never
+    /// becomes a confirmed effect merely because of its action type or text.
+    pub fn execute_outcome(&self) -> Result<ExecutionOutcome, String> {
+        self.execute_outcome_for_target(None, &Cancellation::default())
+    }
+
     pub(crate) fn execute_for_target(
         &self,
         prepared: Option<&crate::wm::CloseTarget>,
         stop: &Cancellation,
     ) -> Result<String, String> {
+        self.execute_outcome_for_target(prepared, stop)
+            .map(|outcome| outcome.message)
+    }
+
+    pub(crate) fn execute_outcome_for_target(
+        &self,
+        prepared: Option<&crate::wm::CloseTarget>,
+        stop: &Cancellation,
+    ) -> Result<ExecutionOutcome, String> {
         let valid = self.clone().validate()?;
         stop.check()?;
         #[cfg(windows)]
@@ -567,28 +586,34 @@ impl Action {
                 ws: ws.clone(),
             };
             return crate::wm::run_with_target(&req, prepared)
-                .map(|o| {
-                    if o.undoable {
-                        format!("{} (say undo to revert)", o.message)
-                    } else {
-                        o.message
-                    }
-                })
+                .map(ExecutionOutcome::from)
                 .map_err(|e| e.to_string());
         }
         if let Self::BrowserTab { op } = &valid {
-            return crate::browser_tab::execute(*op);
+            return crate::browser_tab::execute(*op).map(ExecutionOutcome::launched);
         }
         if let Self::System { op } = &valid {
-            return crate::sys::execute(*op, &crate::sys::Local);
+            return crate::sys::execute(*op, &crate::sys::Local).map(|message| {
+                if matches!(op, crate::sys::Op::Next | crate::sys::Op::Previous) {
+                    ExecutionOutcome::launched(message)
+                } else {
+                    ExecutionOutcome::confirmed(message, EffectEvidence::SystemReadback)
+                }
+            });
         }
         if let Self::Copy { text } = &valid {
-            return crate::clipboard::copy(text);
+            return crate::clipboard::copy(text).map(|message| {
+                ExecutionOutcome::confirmed(message, EffectEvidence::ClipboardReadback)
+            });
         }
         if let Self::Screenshot { mode } = &valid {
             let mode = crate::screenshots::Mode::parse(mode)?;
-            return crate::screenshots::save(mode, None)
-                .map(|file| format!("Screenshot saved to {}", file.display()));
+            return crate::screenshots::save(mode, None).map(|file| {
+                ExecutionOutcome::confirmed(
+                    format!("Screenshot saved to {}", file.display()),
+                    EffectEvidence::OwnedFileWrite,
+                )
+            });
         }
         #[cfg(windows)]
         if let Self::Type { text } = &valid {
@@ -599,7 +624,8 @@ impl Action {
                     LAST_LAUNCHED.load(std::sync::atomic::Ordering::SeqCst),
                 )
             });
-            return crate::windows_input::type_text(text, expected, stop);
+            return crate::windows_input::type_text(text, expected, stop)
+                .map(ExecutionOutcome::launched);
         }
         let argv = if matches!(valid, Self::Opencode) {
             let dir = session_dir("opencode");
@@ -617,7 +643,10 @@ impl Action {
                 Some(stop),
             )?;
             return if ok {
-                Ok(format!("Typed {} characters", text.chars().count()))
+                Ok(ExecutionOutcome::launched(format!(
+                    "Typed {} characters; field contents were not read back",
+                    text.chars().count()
+                )))
             } else {
                 Err("wtype could not type into the focused window".into())
             };
@@ -649,7 +678,10 @@ impl Action {
         std::thread::spawn(move || {
             let _ = child.wait();
         });
-        Ok(format!("Launched {}", valid.describe()))
+        Ok(ExecutionOutcome::launched(format!(
+            "Launched {}",
+            valid.describe()
+        )))
     }
 }
 
@@ -918,7 +950,7 @@ fn normalize_app(name: &str) -> Option<&'static str> {
 }
 
 fn collapse_ws(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    sequence::normalize(s)
 }
 
 static WAKE_WORDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
@@ -1064,10 +1096,7 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
                     .map(|r| (s, rest[rest.len() - r.len()..].trim_start()))
             })
             .unwrap_or(("google", rest));
-        let query = strip_prefix_ci(rest, &["for"])
-            .unwrap_or(rest)
-            .trim()
-            .to_string();
+        let query = sequence::literal(strip_prefix_ci(rest, &["for"]).unwrap_or(rest))?.to_string();
         let action = Action::Search {
             target: site.into(),
             query,
@@ -1121,7 +1150,7 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
         });
     }
     if let Some(rest) = strip_prefix_ci(text, &["type", "write"]) {
-        let typed = rest.trim().trim_matches(['"', '\'', '“', '”']).trim();
+        let typed = sequence::literal(rest)?;
         return Action::Type {
             text: typed.to_string(),
         }
@@ -1160,44 +1189,6 @@ fn parse_one(text: &str) -> Option<Vec<Action>> {
         .map(|a| vec![a]);
     }
     None
-}
-
-fn split_steps(text: &str) -> Vec<String> {
-    // Split only where another action verb follows, so "and" inside a query survives.
-    let lower = text.to_ascii_lowercase();
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let mut i = 0;
-    while i < lower.len() {
-        for joiner in [" and then ", " then ", " and "] {
-            if lower[i..].starts_with(joiner) {
-                let after = &lower[i + joiner.len()..];
-                if [
-                    "open ",
-                    "launch ",
-                    "start ",
-                    "search ",
-                    "look up ",
-                    "type ",
-                    "write ",
-                    "switch to ",
-                    "focus ",
-                ]
-                .iter()
-                .any(|v| after.starts_with(v))
-                {
-                    parts.push(text[start..i].trim().to_string());
-                    start = i + joiner.len();
-                    i = start;
-                    break;
-                }
-            }
-        }
-        i += lower[i..].chars().next().map_or(1, char::len_utf8);
-    }
-    parts.push(text[start..].trim().to_string());
-    parts.retain(|p| !p.is_empty());
-    parts
 }
 
 fn focused() -> Option<(String, u32)> {
@@ -1293,13 +1284,22 @@ pub fn plan_rules(utterance: &str) -> Option<Vec<Action>> {
     if let Some(one) = parse_one(&content) {
         return Some(one);
     }
-    let parts = split_steps(&content);
+    let parts = sequence::split_steps(&content)?;
     if parts.len() <= 1 || parts.len() > MAX_STEPS {
         return None;
     }
     let mut actions = Vec::new();
     for part in &parts {
-        actions.extend(parse_one(part)?);
+        let mut next = parse_one(part)?;
+        if let Some(Action::App { target }) = actions.last()
+            && BROWSERS.contains(&target.as_str())
+            && let [Action::Search { browser, .. }] = next.as_mut_slice()
+            && browser.is_empty()
+        {
+            *browser = target.clone();
+            actions.pop();
+        }
+        actions.extend(next);
     }
     Some(actions)
 }

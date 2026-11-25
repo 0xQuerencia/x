@@ -2,12 +2,18 @@
 //! it run, and Stop it. Everything real lives in `crates/x-agent`; this file draws its
 //! snapshot and forwards presses to the same `hex agent` handler the CLI uses.
 
+mod composer;
+mod dialogue;
 mod edit;
 mod quick;
+mod runs;
 mod workflows;
 
+#[cfg(test)]
+mod visual_tests;
+
 use ::x_agent::phase::Phase;
-use ::x_agent::service::{Mode, Snapshot};
+use ::x_agent::service::{ActionCompletion, Mode, Snapshot, Task};
 use rune::{El, TextEdit, col, row, text};
 use rune_kit::TextInput;
 
@@ -21,6 +27,8 @@ use crate::desktop::i18n::tr;
 const SHOWN_EVENTS: usize = 40;
 
 pub(super) struct AgentPane {
+    composer: composer::Composer,
+    dialogue: dialogue::Dialogue,
     input: TextEdit,
     quick_query: TextEdit,
     snippet_trigger: TextEdit,
@@ -55,6 +63,8 @@ pub(super) struct AgentPane {
 impl Default for AgentPane {
     fn default() -> Self {
         Self {
+            composer: Default::default(),
+            dialogue: Default::default(),
             input: TextEdit::default(),
             quick_query: TextEdit::default(),
             snippet_trigger: TextEdit::default(),
@@ -98,6 +108,8 @@ impl AgentPane {
             return false;
         }
         let snapshot = agent_host::service().snapshot(0);
+        let composed = self.composer.poll(&snapshot);
+        let answered = self.dialogue.poll(&snapshot);
         let serialized = serde_json::to_string(&snapshot).unwrap_or_default();
         let listed = (self.show_workflows || self.show_quick) && self.workflows.refresh();
         let can_undo = snapshot.phase == Phase::Completed
@@ -105,7 +117,7 @@ impl AgentPane {
         let undo_changed = can_undo != self.undo_visible;
         self.undo_visible = can_undo;
         if serialized == self.shown {
-            return listed || undo_changed;
+            return listed || undo_changed || composed || answered;
         }
         if self.workspace.text.is_empty()
             && let Some(path) = &snapshot.workspace
@@ -125,19 +137,37 @@ fn phase_label(phase: Phase) -> &'static str {
         Phase::Transcribing => tr("Transcribing"),
         Phase::Planning => tr("Planning"),
         Phase::AwaitingApproval => tr("Needs your approval"),
+        Phase::WaitingForInput => tr("Needs your answer"),
         Phase::Running => tr("Running"),
-        Phase::Completed => tr("Completed"),
+        Phase::Completed => tr("Finished"),
         Phase::Failed => tr("Failed"),
         Phase::Cancelled => tr("Cancelled"),
     }
+}
+
+fn outcome_label(outcome: ActionCompletion) -> &'static str {
+    match outcome {
+        ActionCompletion::Confirmed => "Confirmed",
+        ActionCompletion::Launched => "Launched · effect unverified",
+        ActionCompletion::Observed => "Observed · goal unverified",
+        ActionCompletion::Partial => "Finished · some effects unverified",
+        ActionCompletion::Unverified => "Effect unverified",
+        ActionCompletion::Failed => "Failed",
+        ActionCompletion::Cancelled => "Cancelled",
+    }
+}
+
+fn task_label(task: &Task) -> &'static str {
+    task.action_outcome()
+        .map_or_else(|| phase_label(task.phase), outcome_label)
 }
 
 fn step_glyph(status: &str) -> &'static str {
     match status {
         "running" => "▸",
         "stopping" => "…",
-        "delivered" => "→",
-        "launched" | "done" => "✓",
+        "delivered" | "launched" => "→",
+        "done" | "tested" => "✓",
         "failed" => "✕",
         _ => "○",
     }
@@ -169,12 +199,22 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         return (Vec::new(), col().key("agent-pane").grow(1.0));
     };
     let busy = snapshot.phase.is_busy();
-    let tone = match snapshot.phase {
-        Phase::Failed => p.danger(),
-        Phase::AwaitingApproval => p.warning(),
-        Phase::Running | Phase::Listening | Phase::Transcribing | Phase::Planning => p.accent(),
-        Phase::Completed => p.success(),
-        Phase::Idle | Phase::Cancelled => p.muted(),
+    let tone = match snapshot.action_outcome {
+        Some(ActionCompletion::Confirmed) => p.success(),
+        Some(ActionCompletion::Failed) => p.danger(),
+        Some(
+            ActionCompletion::Launched
+            | ActionCompletion::Observed
+            | ActionCompletion::Partial
+            | ActionCompletion::Unverified,
+        ) => p.warning(),
+        Some(ActionCompletion::Cancelled) => p.muted(),
+        None => match snapshot.phase {
+            Phase::Failed => p.danger(),
+            Phase::AwaitingApproval | Phase::WaitingForInput => p.warning(),
+            Phase::Running | Phase::Listening | Phase::Transcribing | Phase::Planning => p.accent(),
+            Phase::Completed | Phase::Idle | Phase::Cancelled => p.muted(),
+        },
     };
     let mut status = row()
         .key("agent-status")
@@ -182,11 +222,15 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         .center_y()
         .child(status_dot(tone))
         .child(
-            text(phase_label(snapshot.phase))
-                .key("phase")
-                .shrink()
-                .font(DESCRIPTION)
-                .color(p.text()),
+            text(
+                snapshot
+                    .action_outcome
+                    .map_or_else(|| phase_label(snapshot.phase), outcome_label),
+            )
+            .key("phase")
+            .shrink()
+            .font(DESCRIPTION)
+            .color(p.text()),
         );
     match snapshot.pending_job_approvals {
         Some(count) if count > 0 => {
@@ -314,9 +358,11 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     if pane.show_quick {
         let mut body = col().key("agent-body").gap(16.0).child(status);
         if let Some(task) = &snapshot.task {
-            body = body.child(task_card(p, snapshot, task));
+            body = body.child(task_card(p, pane, snapshot, task));
         }
-        body = body.child(quick::view(p, ui));
+        body = body
+            .child(runs::panel(p, snapshot))
+            .child(quick::view(p, ui));
         return (
             actions,
             col()
@@ -331,9 +377,11 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     if pane.show_workflows {
         let mut body = col().key("agent-body").gap(16.0).child(status);
         if let Some(task) = &snapshot.task {
-            body = body.child(task_card(p, snapshot, task));
+            body = body.child(task_card(p, pane, snapshot, task));
         }
-        body = body.child(workflows::view(p, ui));
+        body = body
+            .child(runs::panel(p, snapshot))
+            .child(workflows::view(p, ui));
         return (
             actions,
             col()
@@ -400,7 +448,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             tr("Cancel"),
             ButtonKind::Secondary,
             |_: &mut Ui, _| {
-                agent_host::handle(AgentAction::Stop);
+                agent_host::handle(AgentAction::StopForeground);
             },
         ))
     } else {
@@ -419,8 +467,9 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         .child(mode_row)
         .child(capture);
     if let Some(task) = &snapshot.task {
-        body = body.child(task_card(p, snapshot, task));
+        body = body.child(task_card(p, pane, snapshot, task));
     }
+    body = body.child(runs::panel(p, snapshot));
     body = body
         .child(voice_row)
         .child(autonomy_control)
@@ -433,6 +482,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         body = body.child(workspace_row(p, pane, busy));
         body = body.child(registered_projects_row(p, pane, busy));
         body = body.child(session_picker_row(p, pane, busy));
+        body = body.child(composer::view(p, ui));
         body = body.child(browser_page_handoff_row(p, pane, busy));
         body = body.child(project_tests_row(p, pane, busy));
         body = body.child(recovery_review_row(p, pane));
@@ -788,6 +838,7 @@ fn registered_projects_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
                 }
                 match agent_host::service().select_registered_project(&project_id) {
                     Ok((project, _)) => {
+                        ui.agent.composer.select_project(project.clone());
                         ui.agent.workspace.text = project.root.display().to_string();
                         ui.agent.session_choices.clear();
                         ui.agent.session_message = None;
@@ -990,7 +1041,12 @@ fn recovery_review_row(p: Paint, pane: &AgentPane) -> El {
     item
 }
 
-fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> El {
+fn task_card(
+    p: Paint,
+    pane: &AgentPane,
+    snapshot: &Snapshot,
+    task: &::x_agent::service::Task,
+) -> El {
     let mut card = col()
         .key("agent-task")
         .gap(8.0)
@@ -1002,7 +1058,8 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             text(task.text.clone())
                 .key("task-text")
                 .font(p.k.ty.small_medium)
-                .color(p.text()),
+                .color(p.text())
+                .wrap(),
         );
     if snapshot.phase == Phase::AwaitingApproval
         && let Some(preview) = &task.edit
@@ -1016,7 +1073,16 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             _ => p.text(),
         };
         let mut line = format!("{}  {}", step_glyph(&step.status), step.title);
-        if step.status == "delivered" {
+        if let Some(execution) = &step.execution {
+            use ::x_agent::tools::EffectState;
+            line.push_str(match execution.state {
+                EffectState::Confirmed => " · Confirmed",
+                EffectState::Launched => " · Launched; effect unverified",
+                EffectState::Observed => " · Observed; goal unverified",
+                EffectState::Unverified => " · Effect unverified",
+                EffectState::Failed => " · Failed",
+            });
+        } else if step.status == "delivered" {
             line.push_str(" · Delivery confirmed; code not verified");
         } else if step.status == "stopping" {
             line.push_str(" · Stop requested");
@@ -1024,14 +1090,17 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
         if !step.risk.is_empty() && step.status == "pending" {
             line.push_str(&format!("  ·  {}", step.risk));
         }
-        if !step.detail.is_empty() && matches!(step.status.as_str(), "failed" | "launched") {
+        if !step.detail.is_empty()
+            && (step.execution.is_some() || matches!(step.status.as_str(), "failed" | "launched"))
+        {
             line.push_str(&format!("  ·  {}", step.detail));
         }
         card = card.child(
             text(line)
                 .key(format!("step{index}"))
                 .font(DESCRIPTION)
-                .color(color),
+                .color(color)
+                .wrap(),
         );
         if snapshot.cancellable_coding_jobs.contains(&index) {
             let task_id = task.id;
@@ -1048,8 +1117,15 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             ));
         }
     }
+    if snapshot.computer_question.is_some() {
+        card = card.child(dialogue::panel(p, pane, snapshot));
+    }
     if snapshot.phase == Phase::AwaitingApproval {
         let id = task.id;
+        let question = snapshot
+            .computer_question
+            .as_ref()
+            .map(|question| question.question_id.clone());
         card = card.child(
             row()
                 .key("agent-approval")
@@ -1057,10 +1133,19 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
                 .child(button(
                     p,
                     "agent-approve",
-                    tr("Approve and run"),
+                    if question.is_some() {
+                        "Approve and resume"
+                    } else {
+                        tr("Approve and run")
+                    },
                     ButtonKind::Primary,
                     move |_: &mut Ui, _| {
-                        if let Err(error) = agent_host::service().approve(id) {
+                        let service = agent_host::service();
+                        let result = match &question {
+                            Some(token) => service.approve_computer_answer(id, token),
+                            None => service.approve(id),
+                        };
+                        if let Err(error) = result {
                             agent_host::service().emit("error", &error);
                         }
                     },
@@ -1071,10 +1156,24 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
                     tr("Discard"),
                     ButtonKind::Secondary,
                     |_: &mut Ui, _| {
-                        agent_host::service().cancel();
+                        agent_host::service().cancel_foreground();
                     },
                 )),
         );
+    }
+    if snapshot.can_run_in_background {
+        let id = task.id;
+        card = card.child(button(
+            p,
+            "agent-approve-background",
+            "Approve in background",
+            ButtonKind::Secondary,
+            move |_: &mut Ui, _| {
+                if let Err(error) = agent_host::service().approve_background(id) {
+                    agent_host::service().emit("error", &error);
+                }
+            },
+        ));
     }
     // The Controller keeps stable window IDs for 30 seconds: these labels
     // never recompute index -> window identity while the user is choosing.
@@ -1110,14 +1209,14 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             },
         ));
     }
-    if snapshot.phase == Phase::Running {
+    if matches!(snapshot.phase, Phase::Running | Phase::WaitingForInput) {
         card = card.child(button(
             p,
             "agent-stop",
             tr("Stop"),
             ButtonKind::Danger,
             |_: &mut Ui, _| {
-                agent_host::handle(AgentAction::Stop);
+                agent_host::handle(AgentAction::StopForeground);
             },
         ));
     }
@@ -1140,7 +1239,8 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             text(error.clone())
                 .key("task-error")
                 .font(DESCRIPTION)
-                .color(p.danger()),
+                .color(p.danger())
+                .wrap(),
         );
     }
     if let Some(summary) = &task.summary {
@@ -1148,7 +1248,8 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             text(summary.clone())
                 .key("task-summary")
                 .font(DESCRIPTION)
-                .color(p.muted()),
+                .color(p.muted())
+                .wrap(),
         );
     }
     if let Some(files) = &task.changed_files {
@@ -1161,7 +1262,8 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             text(format!("{}: {shown}", tr("Changed files")))
                 .key("task-files")
                 .font(DESCRIPTION)
-                .color(p.text()),
+                .color(p.text())
+                .wrap(),
         );
     }
     card

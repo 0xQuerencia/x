@@ -9,7 +9,11 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
+use crate::cancellation::Cancellation;
 use crate::projects::Project;
+
+mod inspection;
+pub use inspection::{Inspection, Reservation};
 
 const TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -91,12 +95,9 @@ impl Manager {
         project: &Project,
         worktree: &OwnedWorktree,
     ) -> Result<(), String> {
-        let path = self.validate_owned(project, worktree)?;
-        if current_commit(&path)? != worktree.start_commit() {
-            return Err("The task worktree changed its approved starting commit".into());
-        }
+        self.verify_unchanged(project, worktree)?;
         let status = git(
-            &path,
+            worktree.path(),
             &[
                 "status",
                 "--porcelain=v1",
@@ -108,6 +109,117 @@ impl Manager {
             return Err("The task worktree is not clean at its approved starting commit".into());
         }
         Ok(())
+    }
+
+    /// Tests may create ignored build outputs, but may not change the tested
+    /// commit, index, tracked files or nonignored input files.
+    pub(crate) fn verify_unchanged(
+        &self,
+        project: &Project,
+        worktree: &OwnedWorktree,
+    ) -> Result<(), String> {
+        let path = self.validate_owned(project, worktree)?;
+        if current_commit(&path)? != worktree.start_commit() {
+            return Err("The task worktree changed its approved starting commit".into());
+        }
+        ensure_clean(&path)?;
+        Ok(())
+    }
+
+    /// Validate a planned repository and immutable base without creating a checkout.
+    pub(crate) fn validate_base(&self, project: &Project, commit: &str) -> Result<(), String> {
+        self.verify_project(project)?;
+        if !valid_commit(commit)
+            || git(
+                &project.root,
+                &["rev-parse", "--verify", &format!("{commit}^{{commit}}")],
+            )?
+            .trim()
+                != commit
+        {
+            return Err("The approved base is not an exact project commit".into());
+        }
+        Ok(())
+    }
+
+    /// Resolve only an independently observed output from this exact run/project.
+    /// Persisted JSON is historical evidence, never authority to select a checkout.
+    pub(crate) fn validate_artifact(
+        &self,
+        project: &Project,
+        run: Uuid,
+        artifact: &CommittedArtifact,
+    ) -> Result<(), String> {
+        if artifact.project_id != project.id || !artifact.valid_for(run, &artifact.node_id) {
+            return Err("Artifact belongs to a different project or run".into());
+        }
+        let source = self.reattach(project, run, &artifact.node_id, &artifact.base_commit)?;
+        if self.committed_artifact(project, &source)?.as_ref() != Some(artifact) {
+            return Err("Artifact source is dirty, stale or no longer matches its commit".into());
+        }
+        Ok(())
+    }
+
+    /// The reviewed graph authorizes these exact producer edges. Allocate only
+    /// when ready, then merge their immutable commits in declared order. Conflicts
+    /// remain in this owned checkout for inspection; the primary tree is untouched.
+    pub(crate) fn allocate_with_inputs(
+        &self,
+        project: &Project,
+        run: Uuid,
+        node: &str,
+        base: &str,
+        inputs: &[CommittedArtifact],
+        stop: &Cancellation,
+    ) -> Result<OwnedWorktree, String> {
+        stop.check()?;
+        self.validate_base(project, base)?;
+        for input in inputs {
+            self.validate_artifact(project, run, input)?;
+            git(
+                &project.root,
+                &["merge-base", "--is-ancestor", base, input.commit()],
+            )?;
+        }
+        let mut owned = self.allocate(
+            project,
+            run,
+            node,
+            inputs.first().map_or(base, CommittedArtifact::commit),
+            true,
+        )?;
+        for input in inputs.iter().skip(1) {
+            stop.check()?;
+            self.validate_owned(project, &owned)?;
+            ensure_clean(owned.path())?;
+            git(owned.path(), &[
+                "-c", "user.name=X artifact assembly", "-c", "user.email=x@localhost",
+                "-c", "commit.gpgSign=false", "-c", "merge.autoStash=false",
+                "merge", "--no-edit", "--no-gpg-sign", "--no-verify", input.commit(),
+            ]).map_err(|_| "Artifact inputs conflict or could not be merged; the isolated checkout is retained")?;
+        }
+        stop.check()?;
+        for input in inputs {
+            self.validate_artifact(project, run, input)?;
+        }
+        ensure_clean(owned.path())?;
+        owned.start_commit = current_commit(owned.path())?;
+        self.verify_start(project, &owned)?;
+        Ok(owned)
+    }
+
+    /// Record the tested/assembled checkpoint against the original reviewed
+    /// project base, rather than pretending the tester authored new changes.
+    pub(crate) fn checkpoint_artifact(
+        &self,
+        project: &Project,
+        worktree: &OwnedWorktree,
+        base: &str,
+    ) -> Result<Option<CommittedArtifact>, String> {
+        self.verify_unchanged(project, worktree)?;
+        let mut observed = worktree.clone();
+        observed.start_commit = base.to_owned();
+        self.committed_artifact(project, &observed)
     }
 
     /// Independently inspect the final checkout relative to the reviewed base.
@@ -539,14 +651,32 @@ fn valid_slug(value: &str) -> bool {
         && value.as_bytes()[0].is_ascii_alphanumeric()
 }
 
-fn valid_commit(value: &str) -> bool {
+pub(crate) fn valid_commit(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.bytes().all(|c| c.is_ascii_hexdigit())
+}
+
+fn ensure_clean(path: &Path) -> Result<(), String> {
+    if !git(
+        path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )?
+    .is_empty()
+    {
+        return Err("The owned checkout has uncommitted or untracked changes".into());
+    }
+    Ok(())
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new("git");
     command
         .current_dir(root)
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_COMMON_DIR")
@@ -592,311 +722,4 @@ fn open_lock(path: &Path) -> Result<File, String> {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-
-    fn fixture() -> (tempfile::TempDir, Project, Manager, String) {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        fs::create_dir(&home).unwrap();
-        let source = home.join("source");
-        fs::create_dir(&source).unwrap();
-        let base = home.join("XWorktrees");
-        fs::create_dir(&base).unwrap();
-
-        let run = |args: &[&str]| {
-            let success = Command::new("git")
-                .args(args)
-                .current_dir(&source)
-                .status()
-                .unwrap();
-            assert!(success.success());
-        };
-        run(&["init", "-q"]);
-        run(&[
-            "-c",
-            "user.name=X fixture",
-            "-c",
-            "user.email=x@invalid.example",
-            "-c",
-            "core.hooksPath=",
-            "commit",
-            "--allow-empty",
-            "-q",
-            "-m",
-            "fixture",
-        ]);
-        let source = source.canonicalize().unwrap();
-        let common = source.join(".git").canonicalize().unwrap();
-        let project = Project {
-            id: Uuid::new_v4(),
-            name: "Source".into(),
-            aliases: vec![],
-            root: source.clone(),
-            git_common_dir: Some(common),
-        };
-        let sha = git(&source, &["rev-parse", "HEAD"])
-            .unwrap()
-            .trim()
-            .to_string();
-        (dir, project, Manager::new(base, home), sha)
-    }
-
-    #[test]
-    fn creates_an_isolated_worktree_without_touching_dirty_original_checkout() {
-        let (_dir, project, manager, sha) = fixture();
-        fs::write(project.root.join("local-untracked.txt"), "never delete").unwrap();
-        let before = git(&project.root, &["status", "--porcelain=v1"]).unwrap();
-        let owned = manager
-            .allocate(&project, Uuid::new_v4(), "backend", &sha, true)
-            .unwrap();
-        assert!(owned.path().is_dir());
-        assert_eq!(owned.start_commit(), sha);
-        assert_eq!(
-            git_common_dir(owned.path()).unwrap(),
-            project.git_common_dir.unwrap()
-        );
-        assert_eq!(
-            git(&project.root, &["status", "--porcelain=v1"]).unwrap(),
-            before
-        );
-    }
-
-    #[test]
-    fn artifact_requires_a_changed_clean_descendant_commit() {
-        let (_dir, project, manager, sha) = fixture();
-        let owned = manager
-            .allocate(&project, Uuid::new_v4(), "backend", &sha, true)
-            .unwrap();
-        assert!(
-            manager
-                .committed_artifact(&project, &owned)
-                .unwrap()
-                .is_none()
-        );
-        git(
-            owned.path(),
-            &[
-                "-c",
-                "user.name=X",
-                "-c",
-                "user.email=x@invalid.test",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "empty",
-            ],
-        )
-        .unwrap();
-        assert!(
-            manager
-                .committed_artifact(&project, &owned)
-                .unwrap()
-                .is_none()
-        );
-        fs::write(owned.path().join("artifact.txt"), "implementation").unwrap();
-        assert!(
-            manager
-                .committed_artifact(&project, &owned)
-                .unwrap()
-                .is_none()
-        );
-        git(owned.path(), &["add", "--", "artifact.txt"]).unwrap();
-        git(
-            owned.path(),
-            &[
-                "-c",
-                "user.name=X",
-                "-c",
-                "user.email=x@invalid.test",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "-m",
-                "artifact",
-            ],
-        )
-        .unwrap();
-        let artifact = manager
-            .committed_artifact(&project, &owned)
-            .unwrap()
-            .unwrap();
-        assert_eq!(artifact.commit(), current_commit(owned.path()).unwrap());
-        assert!(artifact.valid_for(owned.run_id(), owned.task_id()));
-        fs::write(owned.path().join("partial.txt"), "not committed").unwrap();
-        assert!(
-            manager
-                .committed_artifact(&project, &owned)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn changed_paths_include_real_commits_and_untracked_files() {
-        let (_dir, project, manager, sha) = fixture();
-        let owned = manager
-            .allocate(&project, Uuid::new_v4(), "backend", &sha, true)
-            .unwrap();
-        assert!(manager.changed_paths(&project, &owned).unwrap().is_empty());
-        fs::write(owned.path().join("committed.txt"), "first").unwrap();
-        git(owned.path(), &["add", "--", "committed.txt"]).unwrap();
-        git(
-            owned.path(),
-            &[
-                "-c",
-                "user.name=X",
-                "-c",
-                "user.email=x@invalid.test",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "-m",
-                "fixture",
-            ],
-        )
-        .unwrap();
-        fs::write(owned.path().join("untracked.txt"), "second").unwrap();
-        assert_eq!(
-            manager.changed_paths(&project, &owned).unwrap(),
-            vec!["committed.txt".to_string(), "untracked.txt".to_string()]
-        );
-    }
-
-    #[test]
-    fn worktree_start_requires_clean_files_as_well_as_the_approved_commit() {
-        let (_dir, project, manager, sha) = fixture();
-        let owned = manager
-            .allocate(&project, Uuid::new_v4(), "backend", &sha, true)
-            .unwrap();
-        manager.verify_start(&project, &owned).unwrap();
-        fs::write(owned.path().join("local.txt"), "preserve this").unwrap();
-        assert!(manager.verify_start(&project, &owned).is_err());
-        assert_eq!(
-            fs::read_to_string(owned.path().join("local.txt")).unwrap(),
-            "preserve this"
-        );
-    }
-
-    #[test]
-    fn never_removes_changed_or_untracked_files_without_force() {
-        let (_dir, project, manager, sha) = fixture();
-        let owned = manager
-            .allocate(&project, Uuid::new_v4(), "frontend", &sha, true)
-            .unwrap();
-        fs::write(owned.path().join("untracked.txt"), "keep").unwrap();
-        assert!(manager.remove_if_clean(&project, &owned, true).is_err());
-        assert_eq!(
-            fs::read_to_string(owned.path().join("untracked.txt")).unwrap(),
-            "keep"
-        );
-    }
-
-    #[test]
-    fn reattach_accepts_only_exact_owned_paths_and_existing_ancestry() {
-        let (_dir, project, manager, sha) = fixture();
-        let run = Uuid::new_v4();
-        let owned = manager
-            .allocate(&project, run, "frontend", &sha, true)
-            .unwrap();
-        let recovered = manager.reattach(&project, run, "frontend", &sha).unwrap();
-        assert_eq!(recovered.path(), owned.path());
-        assert_eq!(recovered.start_commit(), sha);
-        assert!(manager.reattach(&project, run, "other-task", &sha).is_err());
-        assert!(
-            manager
-                .reattach(&project, run, "../frontend", &sha)
-                .is_err()
-        );
-        assert!(
-            manager
-                .reattach(&project, Uuid::nil(), "frontend", &sha)
-                .is_err()
-        );
-        assert!(
-            manager
-                .reattach(&project, run, "frontend", &"0".repeat(40))
-                .is_err()
-        );
-        assert!(
-            Command::new("git")
-                .current_dir(&project.root)
-                .args([
-                    "-c",
-                    "user.name=X test",
-                    "-c",
-                    "user.email=x@invalid.example",
-                    "-c",
-                    "core.hooksPath=",
-                    "commit",
-                    "--allow-empty",
-                    "-qm",
-                    "new primary commit",
-                ])
-                .status()
-                .unwrap()
-                .success()
-        );
-        let newer_sha = git(&project.root, &["rev-parse", "HEAD"]).unwrap();
-        assert!(
-            manager
-                .reattach(&project, run, "frontend", newer_sha.trim())
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn symlinked_worktree_base_is_refused() {
-        use std::os::unix::fs::symlink;
-
-        let (dir, project, manager, sha) = fixture();
-        let redirected = dir.path().join("redirected");
-        fs::create_dir(&redirected).unwrap();
-        let alias = manager.home.join("redirected-worktrees");
-        symlink(&redirected, &alias).unwrap();
-        let unsafe_manager = Manager::new(alias, manager.home.clone());
-        assert!(
-            unsafe_manager
-                .allocate(&project, Uuid::new_v4(), "backend", &sha, true)
-                .is_err()
-        );
-        assert!(fs::read_dir(&redirected).unwrap().next().is_none());
-    }
-
-    #[test]
-    fn task_ids_and_cleanup_ownership_are_rechecked() {
-        let (_dir, project, manager, sha) = fixture();
-        let run_id = Uuid::new_v4();
-        let owned = manager
-            .allocate(&project, run_id, "backend", &sha, true)
-            .unwrap();
-        assert!(
-            manager
-                .allocate(&project, run_id, "backend", &sha, true)
-                .is_err()
-        );
-        let mut different = project.clone();
-        different.id = Uuid::new_v4();
-        assert!(manager.remove_if_clean(&different, &owned, true).is_err());
-        assert!(owned.path().exists());
-    }
-
-    #[test]
-    fn explicit_approval_and_clean_tree_are_required_for_cleanup() {
-        let (_dir, project, manager, sha) = fixture();
-        assert!(
-            manager
-                .allocate(&project, Uuid::new_v4(), "api", &sha, false)
-                .is_err()
-        );
-        let owned = manager
-            .allocate(&project, Uuid::new_v4(), "api", &sha, true)
-            .unwrap();
-        assert!(manager.remove_if_clean(&project, &owned, false).is_err());
-        manager.remove_if_clean(&project, &owned, true).unwrap();
-        assert!(!owned.path().exists());
-        assert!(project.root.exists());
-    }
-}
+mod tests;

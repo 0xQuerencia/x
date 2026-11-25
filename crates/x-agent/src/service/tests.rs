@@ -3,6 +3,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+mod mixed_graphs;
+
 #[derive(Default)]
 struct FakeStt {
     transcript: Mutex<Option<Result<String, SttError>>>,
@@ -259,26 +261,158 @@ fn action_risk_labels_agree_with_autonomy_policy() {
 }
 
 #[test]
-fn window_action_is_reported_verified_instead_of_launched() {
+fn legacy_window_launch_does_not_invent_native_readback_proof() {
     let (service, _, _) = rig();
     let task = service.plan("list windows", Mode::Actions).unwrap();
     assert_eq!(task.steps[0].risk, "reads local desktop state");
     service.approve(task.id).unwrap();
     let result = wait_for(&service, |s| s.phase == Phase::Completed);
     let task = result.task.unwrap();
-    assert_eq!(task.steps[0].status, "done");
-    assert!(
-        result
-            .events
-            .iter()
-            .any(|event| { event.kind == "result" && event.text.ends_with("(verified)") })
+    assert_eq!(task.steps[0].status, "launched");
+    assert_eq!(
+        task.steps[0].execution.as_ref().unwrap().state,
+        tools::EffectState::Launched
     );
+    assert_eq!(result.action_outcome, Some(ActionCompletion::Launched));
+    assert!(result.events.iter().any(|event| {
+        event.kind == "result" && event.text.ends_with("(launched; outcome not verified)")
+    }));
     assert!(
         !result
             .events
             .iter()
-            .any(|event| { event.text.contains("launched; outcome not verified") })
+            .any(|event| { event.text.ends_with("(verified)") })
     );
+}
+
+#[test]
+fn native_effect_status_never_depends_on_message_substrings() {
+    struct TypedLauncher(Mutex<std::collections::VecDeque<tools::ExecutionOutcome>>);
+    impl Launcher for TypedLauncher {
+        fn launch(&self, _: &Action) -> Result<String, String> {
+            panic!("typed boundary required")
+        }
+        fn execute_prepared(
+            &self,
+            _: &Action,
+            _: Option<&crate::wm::CloseTarget>,
+            stop: &Cancellation,
+        ) -> Result<tools::ExecutionOutcome, String> {
+            stop.check()?;
+            self.0
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or_else(|| "No outcome remaining".into())
+        }
+    }
+    for (outcome, expected_phase, expected_effect) in [
+        (
+            tools::ExecutionOutcome::confirmed(
+                "Closed Editor (still open is the document title)",
+                tools::EffectEvidence::NativeWindowReadback,
+            ),
+            Phase::Completed,
+            tools::EffectState::Confirmed,
+        ),
+        (
+            tools::ExecutionOutcome::unverified("The application retained its document"),
+            Phase::Failed,
+            tools::EffectState::Unverified,
+        ),
+        (
+            tools::ExecutionOutcome {
+                state: tools::EffectState::Confirmed,
+                message: "success".into(),
+                evidence: None,
+            },
+            Phase::Failed,
+            tools::EffectState::Unverified,
+        ),
+    ] {
+        let launcher = Arc::new(TypedLauncher(Mutex::new([outcome].into())));
+        let service = Service::new(Arc::new(FakeStt::default()), launcher, None);
+        let task = service.plan("focus terminal", Mode::Actions).unwrap();
+        service.approve(task.id).unwrap();
+        let snapshot = wait_for(&service, |state| !state.phase.is_busy());
+        assert_eq!(snapshot.phase, expected_phase);
+        let task = snapshot.task.unwrap();
+        assert_eq!(
+            task.steps[0].execution.as_ref().unwrap().state,
+            expected_effect
+        );
+        assert_eq!(
+            task.steps[0].status,
+            if expected_phase == Phase::Completed {
+                "done"
+            } else {
+                "failed"
+            }
+        );
+        assert_eq!(
+            snapshot.action_outcome,
+            Some(if expected_phase == Phase::Completed {
+                ActionCompletion::Confirmed
+            } else {
+                ActionCompletion::Failed
+            })
+        );
+    }
+}
+
+#[test]
+fn mixed_confirmed_and_launched_steps_project_partial_without_breaking_legacy_phase() {
+    struct Mixed;
+    impl Launcher for Mixed {
+        fn launch(&self, _: &Action) -> Result<String, String> {
+            panic!("typed boundary required")
+        }
+        fn execute_prepared(
+            &self,
+            action: &Action,
+            _: Option<&crate::wm::CloseTarget>,
+            stop: &Cancellation,
+        ) -> Result<tools::ExecutionOutcome, String> {
+            stop.check()?;
+            Ok(match action {
+                Action::Window { .. } => tools::ExecutionOutcome::confirmed(
+                    "Focus matched the exact window",
+                    tools::EffectEvidence::NativeWindowReadback,
+                ),
+                _ => tools::ExecutionOutcome::launched("Browser process accepted"),
+            })
+        }
+    }
+    let service = Service::new(Arc::new(FakeStt::default()), Arc::new(Mixed), None);
+    let task = service
+        .plan_task(
+            "fixture",
+            Mode::Actions,
+            Some(vec![
+                Action::Window {
+                    op: crate::wm::Op::Focus,
+                    target: crate::wm::Target {
+                        app: "terminal".into(),
+                        pick: None,
+                    },
+                    ws: None,
+                },
+                Action::App {
+                    target: "firefox".into(),
+                },
+            ]),
+            PlanOptions::default(),
+        )
+        .unwrap();
+    service.approve(task.id).unwrap();
+    let snapshot = wait_for(&service, |state| !state.phase.is_busy());
+    assert_eq!(snapshot.phase, Phase::Completed);
+    assert_eq!(snapshot.action_outcome, Some(ActionCompletion::Partial));
+    let json = serde_json::to_value(&snapshot).unwrap();
+    assert_eq!(json["phase"], "completed");
+    assert_eq!(json["action_outcome"], "partial");
+    assert_eq!(json["task"]["steps"][0]["status"], "done");
+    assert_eq!(json["task"]["steps"][1]["status"], "launched");
 }
 
 #[test]
@@ -516,7 +650,11 @@ fn reviewed_computer_subtask_does_not_drop_following_actions() {
     let done = wait_for(&s, |x| !x.phase.is_busy());
     assert_eq!(done.phase, Phase::Completed);
     let steps = done.task.unwrap().steps;
-    assert_eq!(steps[0].status, "done");
+    assert_eq!(steps[0].status, "launched");
+    assert_eq!(
+        steps[0].execution.as_ref().unwrap().state,
+        tools::EffectState::Observed
+    );
     assert_eq!(steps[1].status, "launched");
 
     let remote = screen_rig(false);
@@ -1182,12 +1320,16 @@ echo '{"type":"text","sessionID":"ses_browser","part":{"text":"received selectio
     }
 
     #[test]
-    fn copy_is_a_verified_action() {
+    fn a_legacy_copy_launcher_cannot_supply_clipboard_readback_proof() {
         let (s, l, ..) = setup(usize::MAX);
         let t = s.plan("copy this", Mode::Actions).unwrap();
         s.approve(t.id).unwrap();
         let done = wait_for(&s, |x| x.phase == Phase::Completed);
-        assert_eq!(done.task.unwrap().steps[0].status, "done");
+        let step = &done.task.unwrap().steps[0];
+        assert_eq!(step.status, "launched");
+        let execution = step.execution.as_ref().unwrap();
+        assert_eq!(execution.state, tools::EffectState::Launched);
+        assert!(execution.evidence.is_none());
         assert_eq!(l.launched.lock().unwrap().len(), 1);
     }
 
@@ -2520,6 +2662,8 @@ echo '{"type":"step_finish","sessionID":"ses_graph_fixture","part":{"type":"step
         requires_verified: vec![],
         required_change: None,
         required_commit: false,
+
+        inputs: vec![],
         job: Job::Harness {
             harness,
             project_id: project.id.to_string(),
@@ -2743,6 +2887,312 @@ sleep 60"#,
     assert_eq!(task.steps[1].status, "delivered");
     assert!(service.cancel_coding_job(task.id, 1).is_err());
     assert_eq!(done.pending_job_approvals, Some(0));
+}
+
+#[test]
+fn artifact_graph_tests_real_combined_code_and_gates_the_exact_downstream_checkout() {
+    use crate::verification::test_runner::Suite;
+    use crate::workflows::dag::{ARTIFACT_VERSION, ArtifactInput, HarnessKind, InputProof, Job};
+    for (passes, cancel_test) in [(true, false), (false, false), (true, true)] {
+        let (service, directory, repo, mut graph) = graph_workflow_fixture();
+        std::fs::create_dir(repo.join("src")).unwrap();
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = \"artifact-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("Cargo.lock"),
+            "version = 4\n\n[[package]]\nname = \"artifact-fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join(".gitignore"), "target/\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "mod front; mod back;\n#[test] fn combined() { assert_eq!(front::value(), 1); assert_eq!(back::value(), 2); }\n").unwrap();
+        std::fs::write(repo.join("src/front.rs"), "pub fn value() -> i32 { 0 }\n").unwrap();
+        std::fs::write(repo.join("src/back.rs"), "pub fn value() -> i32 { 0 }\n").unwrap();
+        let git = |args: &[&str]| {
+            let result = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            String::from_utf8(result.stdout).unwrap()
+        };
+        git(&["add", "."]);
+        git(&["commit", "-m", "exact test fixture"]);
+        let base = git(&["rev-parse", "HEAD"]);
+        let backend = if passes { 2 } else { 3 };
+        fake_opencode(
+            directory.path(),
+            &format!(
+                r#"set -e
+case "$*" in
+  *frontend*) printf 'pub fn value() -> i32 {{ 1 }}\n' > src/front.rs; git add src/front.rs; git commit -m frontend >/dev/null; session=ses_front;;
+  *backend*) printf 'pub fn value() -> i32 {{ {backend} }}\n' > src/back.rs; git add src/back.rs; git commit -m backend >/dev/null; session=ses_back;;
+  *review*) test "$(cat src/front.rs)" = 'pub fn value() -> i32 {{ 1 }}'; test "$(cat src/back.rs)" = 'pub fn value() -> i32 {{ 2 }}'; session=ses_review;;
+  *) exit 18;;
+esac
+printf '{{"type":"step_start","sessionID":"%s","part":{{"type":"step-start"}}}}\n' "$session"
+"#
+            ),
+        );
+        let project_id = graph.nodes[0].job.project_id().unwrap().to_owned();
+        let mut front = graph.nodes[0].clone();
+        front.id = "front".into();
+        front.required_commit = true;
+        front.job = Job::Harness {
+            harness: HarnessKind::OpenCode,
+            project_id: project_id.clone(),
+            goal: "frontend".into(),
+        };
+        let mut back = front.clone();
+        back.id = "back".into();
+        back.job = Job::Harness {
+            harness: HarnessKind::OpenCode,
+            project_id: project_id.clone(),
+            goal: "backend".into(),
+        };
+        let mut test = front.clone();
+        test.id = "test".into();
+        test.required_commit = false;
+        test.job = Job::Test {
+            project_id: project_id.clone(),
+            suite: Suite::CargoWorkspace,
+        };
+        test.inputs = ["front", "back"]
+            .into_iter()
+            .map(|node| ArtifactInput {
+                node: node.into(),
+                proof: InputProof::Committed,
+            })
+            .collect();
+        let mut review = front.clone();
+        review.id = "review".into();
+        review.required_commit = false;
+        review.job = Job::Harness {
+            harness: HarnessKind::OpenCode,
+            project_id,
+            goal: "review".into(),
+        };
+        review.inputs = vec![ArtifactInput {
+            node: "test".into(),
+            proof: InputProof::Tested,
+        }];
+        graph.version = ARTIFACT_VERSION;
+        graph.nodes = vec![front, back, test, review];
+        std::fs::write(
+            directory.path().join("state/workflows/coding-graph.json"),
+            serde_json::to_vec(&graph).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(repo.join("owner.txt"), "preserve my untracked edits").unwrap();
+        let task = service.plan_graph_workflow(&graph.id).unwrap();
+        assert!(task.steps[2].title.contains("cargo_workspace"));
+        assert!(task.steps[2].title.contains("front"));
+        assert!(!directory.path().join("X Worktrees").exists());
+        service.approve(task.id).unwrap();
+        if cancel_test {
+            service.cancel_coding_job(task.id, 2).unwrap();
+        }
+        let finished = wait_for(&service, |snapshot| !snapshot.phase.is_busy());
+        let steps = finished.task.unwrap().steps;
+        assert_eq!(steps[0].status, "done");
+        assert_eq!(steps[1].status, "done");
+        assert_eq!(
+            steps[2].status,
+            if cancel_test {
+                "cancelled"
+            } else if passes {
+                "tested"
+            } else {
+                "failed"
+            }
+        );
+        assert_eq!(
+            steps[3].status,
+            if passes && !cancel_test {
+                "delivered"
+            } else {
+                "skipped"
+            }
+        );
+        assert_eq!(
+            finished.phase,
+            if passes && !cancel_test {
+                Phase::Completed
+            } else {
+                Phase::Failed
+            }
+        );
+        let claims = service.coding_claims_summary().unwrap();
+        let inventory = service.coding_worktree_inventory().unwrap();
+        let checkouts = inventory["jobs"].as_array().unwrap();
+        assert_eq!(inventory["count"], claims["count"]);
+        for checkout in checkouts {
+            assert_eq!(checkout["inspection"]["state"], "owned");
+            assert_eq!(checkout["reservation"]["approved_base"], base.trim());
+            assert!(checkout["reservation"]["resolved_commit"].is_string());
+            if checkout["node_id"] == "test" {
+                assert_eq!(checkout["inspection"]["clean_for_cleanup"], false);
+                assert_eq!(checkout["inspection"]["prepared_commit_matches"], true);
+            }
+        }
+        if cancel_test {
+            assert!(
+                claims["jobs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|job| job["node_id"] != "test")
+            );
+        } else {
+            let tested = claims["jobs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|job| job["node_id"] == "test")
+                .unwrap();
+            assert_eq!(tested["test_evidence"]["passed"], passes);
+            assert_eq!(tested["test_evidence"]["suite"], "cargo_workspace");
+            let sha = tested["test_evidence"]["commit"].as_str().unwrap();
+            assert_ne!(sha, base.trim());
+            if passes {
+                assert_eq!(tested["artifact"]["commit"], sha);
+            } else {
+                assert!(tested["artifact"].is_null());
+            }
+        }
+        let allocated = directory
+            .path()
+            .join("X Worktrees")
+            .join(graph.nodes[0].job.project_id().unwrap());
+        assert_eq!(
+            allocated.read_dir().unwrap().count(),
+            if cancel_test {
+                2
+            } else if passes {
+                4
+            } else {
+                3
+            }
+        );
+        assert_eq!(git(&["rev-parse", "HEAD"]), base);
+        assert_eq!(
+            std::fs::read_to_string(repo.join("owner.txt")).unwrap(),
+            "preserve my untracked edits"
+        );
+        assert!(!repo.join("target").exists());
+        assert_eq!(finished.pending_job_approvals, Some(0));
+    }
+}
+
+#[test]
+fn interrupted_preparation_inventory_retains_exact_partial_allocations_without_replaying() {
+    use crate::workflows::recovery::{Begin, Journal};
+    use crate::worktrees::{Manager, Reservation};
+
+    let (_original, directory, repo, graph) = graph_workflow_fixture();
+    let support = directory.path().join("state");
+    let home = directory.path().to_path_buf();
+    let base = home.join("X Worktrees");
+    std::fs::create_dir(&base).unwrap();
+    let registry = crate::projects::Registry::new(support.clone(), home.clone());
+    let project = registry
+        .resolve(graph.nodes[0].job.project_id().unwrap())
+        .unwrap();
+    let manager = Manager::new(base.clone(), home.clone());
+    let sha = manager.starting_commit(&project).unwrap();
+    let run = uuid::Uuid::new_v4();
+    let journal_dir = support.join("workflow-journal");
+    let journal = Journal::new(journal_dir.clone());
+    let fingerprint = "d".repeat(64);
+    for node in ["first", "second", "third"] {
+        assert!(matches!(
+            journal
+                .begin_preparation(
+                    run,
+                    node,
+                    &fingerprint,
+                    Reservation::planned(&project, &sha).unwrap(),
+                )
+                .unwrap(),
+            Begin::Fresh(_)
+        ));
+    }
+    let first = manager
+        .allocate(&project, run, "first", &sha, true)
+        .unwrap();
+    std::fs::write(first.path().join("unfinished.txt"), "retain my work").unwrap();
+    let collision = base
+        .join(project.id.to_string())
+        .join(format!("{run}-second"));
+    std::fs::write(&collision, "unrelated path: never remove").unwrap();
+    assert!(
+        manager
+            .allocate(&project, run, "second", &sha, true)
+            .is_err()
+    );
+    journal.begin(run, "legacy", &fingerprint).unwrap();
+
+    // Simulate a fresh process after allocation but before prepared-SHA recording.
+    let (reopened, _, _) = rig();
+    reopened.set_workflow_dirs(support.join("workflows"), home);
+    let before = std::fs::read(journal_dir.join("x-job-claims.json")).unwrap();
+    let report = reopened
+        .coding_run_worktree_inventory(&run.to_string())
+        .unwrap();
+    let jobs = report["jobs"].as_array().unwrap();
+    let job = |node: &str| jobs.iter().find(|job| job["node_id"] == node).unwrap();
+    assert_eq!(jobs.len(), 4);
+    assert_eq!(job("first")["inspection"]["state"], "owned");
+    assert_eq!(job("first")["inspection"]["clean_for_cleanup"], false);
+    assert_eq!(job("first")["inspection"]["current_commit"], sha);
+    assert_eq!(
+        job("first")["reservation"]["project_id"],
+        project.id.to_string()
+    );
+    assert!(job("first")["reservation"]["resolved_commit"].is_null());
+    assert_eq!(job("first")["recorded_state"], "claimed");
+    assert_eq!(job("second")["inspection"]["state"], "unverified");
+    assert_eq!(job("third")["inspection"]["state"], "absent");
+    assert_eq!(job("legacy")["inspection"]["state"], "unrecorded");
+    assert_eq!(report["executed"], false);
+    assert_eq!(report["retried"], false);
+    assert_eq!(report["removed"], false);
+    assert!(!report.to_string().contains(&fingerprint));
+    assert_eq!(
+        std::fs::read(journal_dir.join("x-job-claims.json")).unwrap(),
+        before
+    );
+    assert_eq!(
+        std::fs::read_to_string(first.path().join("unfinished.txt")).unwrap(),
+        "retain my work"
+    );
+    assert_eq!(
+        std::fs::read_to_string(collision).unwrap(),
+        "unrelated path: never remove"
+    );
+    assert!(repo.is_dir());
+    let recovered = Journal::new(journal_dir);
+    assert!(matches!(
+        recovered.begin(run, "first", &fingerprint).unwrap(),
+        Begin::RequiresReconciliation(_)
+    ));
+    assert!(
+        reopened
+            .coding_run_worktree_inventory("../outside")
+            .is_err()
+    );
+    assert!(
+        reopened
+            .coding_run_worktree_inventory(&uuid::Uuid::nil().to_string())
+            .is_err()
+    );
 }
 
 #[test]

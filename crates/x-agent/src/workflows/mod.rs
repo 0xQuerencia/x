@@ -3,6 +3,7 @@
 //! [`store`] for the files on disk.
 
 pub mod dag;
+pub(crate) mod desktop_exec;
 pub mod engine;
 pub mod harness_exec;
 pub mod integration;

@@ -1,5 +1,5 @@
 //! A deterministic, non-executing workflow DAG contract.
-//! The existing sequential workflow runner stays unchanged until the scheduler lands.
+//! Legacy sequencing, explicit proof edges and immutable input contracts share this schema.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -10,6 +10,8 @@ use super::model::{OnFailure, StepAction, Workflow};
 
 pub const VERSION: u16 = 2;
 pub const PROOF_VERSION: u16 = 3;
+pub const ARTIFACT_VERSION: u16 = 4;
+pub const MAX_INPUTS: usize = 8;
 pub const MAX_NODES: usize = 64;
 pub const MAX_DEPENDENCIES: usize = 64;
 
@@ -26,11 +28,39 @@ pub enum Job {
     Desktop {
         action: StepAction,
     },
+    Test {
+        project_id: String,
+        suite: crate::verification::test_runner::Suite,
+    },
     Harness {
         harness: HarnessKind,
         project_id: String,
         goal: String,
     },
+}
+
+/// A local producer identity, never a model-supplied commit or filesystem path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactInput {
+    pub node: String,
+    pub proof: InputProof,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputProof {
+    Committed,
+    Tested,
+}
+
+impl Job {
+    pub fn project_id(&self) -> Option<&str> {
+        match self {
+            Self::Harness { project_id, .. } | Self::Test { project_id, .. } => Some(project_id),
+            Self::Desktop { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -52,6 +82,9 @@ pub struct Node {
     /// Version 3: require a changed, clean descendant commit as an artifact.
     #[serde(default, skip_serializing_if = "is_false")]
     pub required_commit: bool,
+    /// Version 4: immutable outputs to assemble in this node's private checkout.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<ArtifactInput>,
     pub job: Job,
     #[serde(default)]
     pub on_failure: OnFailure,
@@ -93,6 +126,7 @@ impl Graph {
                     requires_verified: vec![],
                     required_change: None,
                     required_commit: false,
+                    inputs: vec![],
                     job: Job::Desktop {
                         action: step.action,
                     },
@@ -113,7 +147,7 @@ impl Graph {
 
     /// Validate graph structure. This alone does not authorize any operation.
     pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.version, VERSION | PROOF_VERSION) {
+        if !matches!(self.version, VERSION | PROOF_VERSION | ARTIFACT_VERSION) {
             return Err("Unsupported workflow graph version".into());
         }
         if !slug(&self.id) || self.name.trim().is_empty() || self.name.chars().count() > 80 {
@@ -127,8 +161,35 @@ impl Graph {
             if !slug(&node.id) || !ids.insert(node.id.as_str()) {
                 return Err("Graph nodes require unique safe IDs".into());
             }
+            if (!node.inputs.is_empty() || matches!(node.job, Job::Test { .. }))
+                && (self.version != ARTIFACT_VERSION || node.job.project_id().is_none())
+            {
+                return Err("Artifact inputs and test jobs require a v4 coding graph".into());
+            }
+            if !node.inputs.is_empty()
+                && matches!(
+                    node.job,
+                    Job::Harness {
+                        harness: HarnessKind::ClaudeCode,
+                        ..
+                    }
+                )
+            {
+                return Err("Tool-free Claude cannot inspect an artifact checkout; choose a workspace-capable reviewer".into());
+            }
+            if node.inputs.len() > MAX_INPUTS {
+                return Err("A job may consume at most eight artifacts".into());
+            }
+            if let Job::Test { project_id, .. } = &node.job
+                && (uuid::Uuid::parse_str(project_id).map_or(true, |id| id.is_nil())
+                    || node.inputs.is_empty()
+                    || node.required_commit
+                    || node.required_change.is_some())
+            {
+                return Err("A test job requires a registered project and committed input".into());
+            }
             if node.required_commit
-                && (self.version != PROOF_VERSION
+                && (self.version < PROOF_VERSION
                     || node.required_change.is_some()
                     || !matches!(
                         &node.job,
@@ -143,7 +204,7 @@ impl Graph {
                 );
             }
             if let Some(path) = &node.required_change
-                && (self.version != PROOF_VERSION
+                && (self.version < PROOF_VERSION
                     || !matches!(
                         &node.job,
                         Job::Harness {
@@ -176,6 +237,43 @@ impl Graph {
             }
         }
         for node in &self.nodes {
+            if let Job::Desktop {
+                action: StepAction::CloseOpenedWindow { opened_by },
+            } = &node.job
+            {
+                let source = self.nodes.iter().find(|source| &source.id == opened_by);
+                if !source.is_some_and(|source| {
+                    matches!(
+                        &source.job,
+                        Job::Desktop {
+                            action: StepAction::OpenApp { .. } | StepAction::OpenTerminal { .. }
+                        }
+                    )
+                }) || !self.depends_on(&node.id, opened_by)
+                {
+                    return Err(
+                        "Closing a run-opened window requires an explicit predecessor opener"
+                            .into(),
+                    );
+                }
+            }
+            let mut inputs = HashSet::new();
+            for input in &node.inputs {
+                let source = self
+                    .nodes
+                    .iter()
+                    .find(|source| source.id == input.node)
+                    .ok_or("Artifact source does not exist")?;
+                if input.node == node.id
+                    || !inputs.insert(&input.node)
+                    || source.job.project_id() != node.job.project_id()
+                    || !(source.required_commit || matches!(source.job, Job::Test { .. }))
+                    || (input.proof == InputProof::Tested
+                        && !matches!(source.job, Job::Test { .. }))
+                {
+                    return Err("Artifact input must name a distinct same-project producer with the required proof".into());
+                }
+            }
             for edges in [&node.after, &node.requires, &node.requires_verified] {
                 let mut seen = HashSet::new();
                 for required in edges {
@@ -227,6 +325,33 @@ impl Graph {
         Ok(())
     }
 
+    /// Whether a declared predecessor is reachable through this node's edges.
+    pub(crate) fn depends_on(&self, node: &str, predecessor: &str) -> bool {
+        let mut waiting = vec![node];
+        let mut seen = HashSet::new();
+        while let Some(id) = waiting.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(current) = self.nodes.iter().find(|node| node.id == id) else {
+                continue;
+            };
+            for dependency in current
+                .after
+                .iter()
+                .chain(&current.requires)
+                .chain(&current.requires_verified)
+                .chain(current.inputs.iter().map(|input| &input.node))
+            {
+                if dependency == predecessor {
+                    return true;
+                }
+                waiting.push(dependency);
+            }
+        }
+        false
+    }
+
     /// A stable topological order; this is a plan, never an execution request.
     pub fn order(&self) -> Result<Vec<String>, String> {
         let lookup: HashMap<&str, usize> = self
@@ -244,6 +369,7 @@ impl Graph {
                 .iter()
                 .chain(&node.requires)
                 .chain(&node.requires_verified)
+                .chain(node.inputs.iter().map(|input| &input.node))
             {
                 if !already.insert(dep.as_str()) {
                     continue;
@@ -289,7 +415,7 @@ fn slug(value: &str) -> bool {
         && value.as_bytes()[0].is_ascii_alphanumeric()
 }
 
-/// Accept a strict v2 or v3 graph, or convert an existing v1 workflow in memory.
+/// Accept a supported strict graph or convert an existing v1 workflow in memory.
 /// Neither path executes anything, and unknown keys are refused.
 pub fn decode(input: &str, home: &Path) -> Result<Graph, String> {
     let value: serde_json::Value =
@@ -303,7 +429,7 @@ pub fn decode(input: &str, home: &Path) -> Result<Graph, String> {
         Some(version)
             if version
                 .as_u64()
-                .is_some_and(|v| v == u64::from(VERSION) || v == u64::from(PROOF_VERSION)) =>
+                .is_some_and(|v| matches!(v, v if v == u64::from(VERSION) || v == u64::from(PROOF_VERSION) || v == u64::from(ARTIFACT_VERSION))) =>
         {
             let graph: Graph =
                 serde_json::from_str(input).map_err(|e| format!("Invalid workflow graph: {e}"))?;
@@ -387,6 +513,8 @@ mod tests {
             requires_verified: vec![],
             required_change: None,
             required_commit: false,
+
+            inputs: vec![],
             job: Job::Desktop {
                 action: StepAction::SwitchWorkspace { workspace: 4 },
             },
@@ -481,5 +609,40 @@ mod tests {
             *project_id = uuid::Uuid::new_v4().to_string();
         }
         graph.validate().unwrap();
+    }
+
+    #[test]
+    fn artifact_edges_are_versioned_same_project_and_proof_typed() {
+        let project = uuid::Uuid::new_v4().to_string();
+        let raw = serde_json::json!({
+            "version": 4, "id": "artifact-plan", "name": "Artifact plan", "nodes": [
+                {"id":"write", "required_commit":true, "job":{"type":"harness", "harness":"open_code", "project_id":project, "goal":"Implement the reviewed change"}},
+                {"id":"test", "inputs":[{"node":"write", "proof":"committed"}], "job":{"type":"test", "project_id":project, "suite":"cargo_agent"}},
+                {"id":"review", "inputs":[{"node":"test", "proof":"tested"}], "job":{"type":"harness", "harness":"open_code", "project_id":project, "goal":"Review the tested code"}}
+            ]
+        });
+        let graph = decode(&raw.to_string(), &home()).unwrap();
+        assert_eq!(graph.order().unwrap(), ["write", "test", "review"]);
+        for mutate in 0..7 {
+            let mut value = raw.clone();
+            match mutate {
+                0 => value["version"] = 3.into(),
+                1 => value["nodes"][1]["inputs"][0]["node"] = "missing".into(),
+                2 => value["nodes"][1]["inputs"][0]["proof"] = "tested".into(),
+                3 => {
+                    value["nodes"][1]["job"]["project_id"] = uuid::Uuid::new_v4().to_string().into()
+                }
+                4 => value["nodes"][0]["required_commit"] = false.into(),
+                5 => value["nodes"][1]["inputs"][0]["commit"] = "forged-sha".into(),
+                _ => {
+                    value["nodes"][0]["inputs"] =
+                        serde_json::json!([{"node":"test", "proof":"tested"}])
+                }
+            }
+            assert!(
+                decode(&value.to_string(), &home()).is_err(),
+                "mutation {mutate}"
+            );
+        }
     }
 }

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{Authority, Check, Evidence, Kind, Result as Verification, Status};
 use crate::cancellation::Cancellation;
@@ -16,7 +16,7 @@ use crate::worktrees::{Manager, OwnedWorktree};
 
 const MAX_TEST_TIME: Duration = Duration::from_secs(120);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Suite {
     CargoWorkspace,
@@ -25,6 +25,23 @@ pub enum Suite {
     Pnpm,
     Pytest,
     Go,
+}
+
+/// Independently observed suite result bound to an exact Git commit.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestEvidence {
+    pub suite: Suite,
+    pub commit: String,
+    /// None means the process or checkout could not be verified.
+    pub passed: Option<bool>,
+    pub observed_at: u64,
+}
+
+impl TestEvidence {
+    pub(crate) fn valid(&self) -> bool {
+        self.observed_at > 0 && crate::worktrees::valid_commit(&self.commit)
+    }
 }
 
 impl Suite {
@@ -135,7 +152,8 @@ impl Runner for SystemRunner {
             .env_remove("GIT_INDEX_FILE")
             .env_remove("NODE_OPTIONS")
             .env_remove("PYTHONSTARTUP")
-            .env_remove("RUSTC_WRAPPER");
+            .env_remove("RUSTC_WRAPPER")
+            .env_remove("CARGO_TARGET_DIR");
         crate::desktop::capture_scoped(&mut command, MAX_TEST_TIME, Some(stop))
             .map(|(success, _output)| success)
             .map_err(|_| "The approved test process did not finish reliably".into())
@@ -157,6 +175,7 @@ fn verify_with(
     if stop.requested() {
         return Err("Stopped before launching project tests".into());
     }
+    manager.verify_start(project, worktree)?;
     let workspace = manager.validate_owned(project, worktree)?;
     grants.consume(
         receipt,
@@ -164,7 +183,7 @@ fn verify_with(
         &scope_for_suite(project, worktree, suite),
     )?;
     let reported = runner.run(&workspace, suite, stop);
-    let status = if stop.requested() {
+    let status = if stop.requested() || manager.verify_unchanged(project, worktree).is_err() {
         Status::Unknown
     } else {
         match reported {

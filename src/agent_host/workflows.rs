@@ -40,8 +40,21 @@ fn permission_preview(graph: &Graph) -> serde_json::Value {
             Job::Desktop { action } => serde_json::json!({
                 "node_id": node.id,
                 "operation": "desktop",
-                "approval": "service_plan",
+                "approval": "task_scoped_one_use",
+                "target_binding": "native_review_and_dispatch_revalidation",
+                "input_lease": "shared_exclusive_per_mutation",
+                "background_allowed": false,
                 "action": action,
+            }),
+            Job::Test { project_id, suite } => serde_json::json!({
+                "node_id": node.id,
+                "operation": "project_tests",
+                "approval": "task_scoped_one_use",
+                "project_id": project_id,
+                "suite": suite,
+                "inputs": node.inputs,
+                "runs_project_scripts": true,
+                "requires_registered_project": true,
             }),
             Job::Harness {
                 harness,
@@ -52,6 +65,8 @@ fn permission_preview(graph: &Graph) -> serde_json::Value {
                 "operation": "harness",
                 "approval": "task_scoped_one_use",
                 "provider": harness,
+                "inputs": node.inputs,
+                "required_commit": node.required_commit,
                 "project_id": project_id,
                 "requires_registered_project": true,
             }),
@@ -87,6 +102,14 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         "claims" if !value.is_empty() => refuse("workflow claims takes no arguments".into()),
         "claims" => match svc.coding_claims_summary() {
+            Ok(report) => ControlReply::done(report.to_string()),
+            Err(error) => refuse(error),
+        },
+        "worktrees" => match if value.is_empty() {
+            svc.coding_worktree_inventory()
+        } else {
+            svc.coding_run_worktree_inventory(value)
+        } {
             Ok(report) => ControlReply::done(report.to_string()),
             Err(error) => refuse(error),
         },
@@ -179,7 +202,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, claims, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }
@@ -204,6 +227,7 @@ mod tests {
                 requires_verified: vec![],
                 required_change: None,
                 required_commit: false,
+                inputs: vec![],
                 job: Job::Harness {
                     harness: HarnessKind::OpenCode,
                     project_id: "123e4567-e89b-12d3-a456-426614174000".into(),

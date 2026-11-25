@@ -5,6 +5,7 @@ use crate::harness::{Kind, Session, SessionId};
 
 const LIST_TTL: Duration = Duration::from_secs(60);
 
+#[derive(Clone)]
 pub(super) struct SessionList {
     workspace: PathBuf,
     listed: Instant,

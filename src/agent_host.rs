@@ -6,11 +6,9 @@
 //! so a transcript never pastes into the focused app.
 
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
 
 use x_agent::hexcli::HexCli;
 use x_agent::service::{Mode, RealLauncher, Service};
@@ -18,6 +16,7 @@ use x_agent::service::{Mode, RealLauncher, Service};
 use crate::control::{AgentAction, ControlReply};
 
 pub(crate) mod heard;
+mod notifications;
 mod projects;
 mod sessions;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -81,7 +80,7 @@ pub fn service() -> &'static Service {
         // to a different model or endpoint.
         service.set_planner(saved.as_deref().and_then(planner_for));
         let watched = service.clone();
-        thread::spawn(move || watch(&watched));
+        thread::spawn(move || notifications::watch(&watched));
         service
     })
 }
@@ -583,11 +582,17 @@ fn follow_up_window_choice(text: &str) -> Option<Result<String, String>> {
     if choices.is_empty() {
         return None;
     }
-    Some(
+    Some(service().with_desktop_control(|| {
         x_agent::wm::choose(index)
-            .map(|out| out.message)
-            .map_err(|e| e.to_string()),
-    )
+            .map_err(|e| e.to_string())
+            .and_then(|out| {
+                if out.effect == x_agent::wm::Effect::Unverified {
+                    Err(out.message)
+                } else {
+                    Ok(out.message)
+                }
+            })
+    }))
 }
 
 /// Plans a spoken command. True when X took it; false when it was not a command X knows
@@ -631,148 +636,6 @@ pub(crate) fn plan_spoken(mode: Mode, command: &str) -> bool {
         Err(error) => {
             service().emit("error", &error);
             true
-        }
-    }
-}
-
-fn toast(title: &str, body: &str) {
-    let brand = |text: &str| {
-        if crate::app_paths::is_x_build() {
-            text.replace("Hex", "X")
-        } else {
-            text.to_string()
-        }
-    };
-    if let Ok(mut child) = Command::new("notify-send")
-        .args(["-a", "X", "-t", "5000", "--"])
-        .arg(brand(title))
-        .arg(brand(body))
-        .stdin(Stdio::null())
-        .spawn()
-    {
-        thread::spawn(move || {
-            let _ = child.wait();
-        });
-    }
-}
-
-const APPROVAL_WAIT: Duration = Duration::from_secs(60);
-/// Some notification daemons answer an action prompt themselves; a click that fast is not a person.
-const HUMAN_FASTEST: Duration = Duration::from_millis(900);
-
-/// Shows Allow and Deny in a desktop notification for this exact task. Ends, and
-/// denies, when the wait runs out or the task is no longer the one awaiting approval.
-fn ask_approval(svc: &Service, id: u64, summary: String) {
-    let Ok(mut child) = Command::new("notify-send")
-        .args([
-            "-a",
-            "X",
-            "-u",
-            "critical",
-            "-A",
-            "allow=Allow",
-            "-A",
-            "deny=Deny",
-            "--wait",
-            "--",
-        ])
-        .arg("X needs your approval")
-        .arg(&summary)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .spawn()
-    else {
-        svc.emit(
-            "info",
-            "No notification service; approve in the Agent pane or with `hex agent approve`",
-        );
-        return;
-    };
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = Command::new(exe)
-            .args(["window", "show", "agent"])
-            .stdin(Stdio::null())
-            .spawn();
-    }
-    let shown = Instant::now();
-    let deadline = shown + APPROVAL_WAIT;
-    loop {
-        let snapshot = svc.snapshot(0);
-        let current = snapshot.phase == x_agent::phase::Phase::AwaitingApproval
-            && snapshot.task.as_ref().is_some_and(|task| task.id == id);
-        if !current || Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            if current {
-                svc.cancel();
-                svc.emit("info", "Approval timed out; nothing ran");
-            }
-            return;
-        }
-        if let Ok(Some(_)) = child.try_wait() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(150));
-    }
-    let mut choice = String::new();
-    if let Some(mut out) = child.stdout.take() {
-        let _ = std::io::Read::read_to_string(&mut out, &mut choice);
-    }
-    let _ = child.wait();
-    if shown.elapsed() < HUMAN_FASTEST {
-        svc.emit(
-            "info",
-            "The notification service answered before anyone could read it, so it was ignored; use Approve in the Agent pane",
-        );
-    } else if choice.trim() == "allow" {
-        if let Err(error) = svc.approve(id) {
-            svc.emit("error", &error);
-        }
-    } else {
-        svc.cancel();
-        svc.emit("info", "Denied; nothing ran");
-    }
-}
-
-/// Mirrors X's state into desktop notifications: an approval prompt for each plan that
-/// waits, and a line for each result or error, so nothing needs the terminal.
-fn watch(svc: &Service) {
-    let mut seen = svc.snapshot(0).events.last().map_or(0, |event| event.n);
-    let mut asked = 0;
-    loop {
-        thread::sleep(Duration::from_millis(200));
-        if !crate::labs::x_agent() {
-            continue;
-        }
-        let snapshot = svc.snapshot(seen);
-        if let Some(last) = snapshot.events.last() {
-            seen = last.n;
-        }
-        for event in &snapshot.events {
-            match event.kind.as_str() {
-                "error" => toast("X: problem", &event.text),
-                "permission" if event.text.starts_with("Blocked ") => toast(
-                    "X: OpenCode was blocked",
-                    &format!("{}. Allow it once from the Agent pane.", event.text),
-                ),
-                "info" if event.text == "Task completed" => {
-                    if let Some(task) = &snapshot.task {
-                        toast("X: done", task.summary.as_deref().unwrap_or(&task.text));
-                    }
-                }
-                _ => {}
-            }
-        }
-        let Some(task) = snapshot.task.as_ref() else {
-            continue;
-        };
-        if snapshot.phase == x_agent::phase::Phase::AwaitingApproval && task.id != asked {
-            asked = task.id;
-            let steps: Vec<_> = task.steps.iter().map(|step| step.title.as_str()).collect();
-            let summary = format!("{}\n{}", task.text, steps.join("\n"));
-            let svc = svc.clone();
-            let id = task.id;
-            thread::spawn(move || ask_approval(&svc, id, summary));
         }
     }
 }
@@ -833,6 +696,11 @@ pub fn handle(action: AgentAction) -> ControlReply {
     let svc = service();
     match action {
         AgentAction::Status { since } => snapshot(since),
+        AgentAction::Notifications { mode } => notifications::configure(&mode, svc),
+        AgentAction::ClearActivity => ControlReply::done(format!(
+            "Cleared {} finished in-memory task(s). Active work and recovery evidence remain available.",
+            svc.clear_completed_activity()
+        )),
         AgentAction::Toggle { mode } => match Mode::parse(&mode) {
             Err(error) => ControlReply::error("usage", error),
             Ok(mode) => {
@@ -889,7 +757,53 @@ pub fn handle(action: AgentAction) -> ControlReply {
             Ok(()) => ControlReply::done("Approved; running"),
             Err(error) => ControlReply::error("refused", error),
         },
-        AgentAction::Choose { index } => match x_agent::wm::choose(usize::from(index)) {
+        AgentAction::ApproveBackground { id } => match svc.approve_background(id) {
+            Ok(()) => ControlReply::done("Approved; running in the background"),
+            Err(error) => ControlReply::error("refused", error),
+        },
+        AgentAction::AnswerComputer { id, question, text } => {
+            match svc.answer_computer(id, &question, &text) {
+                Ok(_) => snapshot(0),
+                Err(error) => ControlReply::error("refused", error),
+            }
+        }
+        AgentAction::ApproveComputerAnswer { id, question } => {
+            match svc.approve_computer_answer(id, &question) {
+                Ok(()) => ControlReply::done("Answer approved; resuming the same computer step"),
+                Err(error) => ControlReply::error("refused", error),
+            }
+        }
+        AgentAction::StopForeground => {
+            svc.cancel_foreground();
+            ControlReply::done("Foreground Stop requested")
+        }
+        AgentAction::StopRun { id } => match svc.cancel_run(id) {
+            Ok(()) => ControlReply::done("Run Stop requested"),
+            Err(error) => ControlReply::error("refused", error),
+        },
+        AgentAction::StopJob { id, index } => {
+            let foreground = svc
+                .snapshot(0)
+                .task
+                .as_ref()
+                .is_some_and(|task| task.id == id);
+            let result = if foreground {
+                svc.cancel_coding_job(id, index)
+            } else {
+                svc.cancel_background_job(id, index)
+            };
+            match result {
+                Ok(()) => ControlReply::done("Job Stop requested"),
+                Err(error) => ControlReply::error("refused", error),
+            }
+        }
+        AgentAction::Choose { index } => match svc.with_desktop_control(|| {
+            x_agent::wm::choose(usize::from(index)).map_err(|error| error.to_string())
+        }) {
+            Ok(outcome) if outcome.effect == x_agent::wm::Effect::Unverified => {
+                svc.emit("error", &outcome.message);
+                ControlReply::error("unverified", outcome.message)
+            }
             Ok(outcome) => {
                 svc.emit("result", &outcome.message);
                 ControlReply::done(outcome.message)
@@ -900,27 +814,26 @@ pub fn handle(action: AgentAction) -> ControlReply {
             }
         },
         AgentAction::Undo => {
-            use x_agent::wm::{Op, Request, Target};
-            // The two controllers maintain separate bounded histories; choose
-            // the newest verified change rather than arbitrarily undoing an
-            // older window action after the person changed volume.
-            let window_at = x_agent::wm::latest_undo_at();
-            let system_at = x_agent::sys::latest_undo_at();
-            if system_at.is_some_and(|time| window_at.is_none_or(|window| time > window)) {
-                match x_agent::sys::undo(&x_agent::sys::Local) {
-                    Ok(message) => ControlReply::done(message),
-                    Err(error) => ControlReply::error("refused", error),
+            let result = svc.with_desktop_control(|| {
+                use x_agent::wm::{Op, Request, Target};
+                // Undo the newest verified effect from the shared native controllers.
+                let window_at = x_agent::wm::latest_undo_at();
+                let system_at = x_agent::sys::latest_undo_at();
+                if system_at.is_some_and(|time| window_at.is_none_or(|window| time > window)) {
+                    x_agent::sys::undo(&x_agent::sys::Local)
+                } else {
+                    x_agent::wm::run(&Request {
+                        op: Op::Undo,
+                        target: Target::default(),
+                        ws: None,
+                    })
+                    .map(|outcome| outcome.message)
+                    .map_err(|error| error.to_string())
                 }
-            } else {
-                let request = Request {
-                    op: Op::Undo,
-                    target: Target::default(),
-                    ws: None,
-                };
-                match x_agent::wm::run(&request) {
-                    Ok(outcome) => ControlReply::done(outcome.message),
-                    Err(error) => ControlReply::error("refused", error.to_string()),
-                }
+            });
+            match result {
+                Ok(message) => ControlReply::done(message),
+                Err(error) => ControlReply::error("refused", error),
             }
         }
         AgentAction::Stop => {
