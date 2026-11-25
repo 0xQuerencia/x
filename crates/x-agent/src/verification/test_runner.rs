@@ -407,8 +407,8 @@ fn capture_test(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = crate::retry_busy(|| command.spawn())
-        .map_err(|_| "Could not start approved tests")?;
+    let mut child =
+        crate::retry_busy(|| command.spawn()).map_err(|_| "Could not start approved tests")?;
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         let _ = child.kill();
         let _ = child.wait();
@@ -524,9 +524,17 @@ mod tests {
         assert_eq!(correction.commit, owned.start_commit());
         assert_eq!(correction.suite, Suite::CargoAgent);
         assert_eq!(correction.excerpt.stderr, "diagnostic");
-        assert!(correction.validate_source(&manager, &project, &owned).is_ok());
+        assert!(
+            correction
+                .validate_source(&manager, &project, &owned)
+                .is_ok()
+        );
         correction.commit = "0".repeat(40);
-        assert!(correction.validate_source(&manager, &project, &owned).is_err());
+        assert!(
+            correction
+                .validate_source(&manager, &project, &owned)
+                .is_err()
+        );
         assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
