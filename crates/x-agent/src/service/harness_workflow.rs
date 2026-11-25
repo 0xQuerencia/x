@@ -218,7 +218,11 @@ impl Service {
             return Err(busy(state.phase));
         }
         state.serial += 1;
-        let preview = format!("Run coding workflow {} in {}", graph.name, base.display());
+        let preview = format!(
+            "Run coding workflow {} in {} (queued jobs may start for 30 minutes after approval)",
+            graph.name,
+            base.display()
+        );
         let mut task = task(state.serial, &preview, steps, None);
         task.phase = Phase::AwaitingApproval;
         state.graph_workflow = Some(PendingGraph {
@@ -383,9 +387,9 @@ impl Service {
                     .map_or(Proof::DeliveryOnly, |path| Proof::ChangedFile(path.clone()));
                 let scope = approval_scope(node, job.project.id, tree, &proof)?;
                 let receipt = grants.issue(
-                    Permission::StartHarness,
+                    Permission::QueueHarness,
                     scope,
-                    Duration::from_secs(60),
+                    Duration::from_secs(30 * 60),
                     1,
                     true,
                 )?;
@@ -401,6 +405,7 @@ impl Service {
             }
             drop(state);
             stop.check()?;
+            let service = self.clone();
             ApprovedHarnessExecutor::new(
                 &workflow.graph,
                 run,
@@ -408,6 +413,14 @@ impl Service {
                 Arc::clone(&workflow.manager),
                 Arc::clone(&workflow.journal),
             )
+            .map(|executor| {
+                executor.with_activity(Arc::new(move |node, attempt, kind| {
+                    service.emit(
+                        "workflow_activity",
+                        &format!("{run} / {node} / attempt {attempt}: {}", kind.as_str()),
+                    );
+                }))
+            })
         })();
         if result.is_err() {
             for id in workflow
