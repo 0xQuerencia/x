@@ -2,7 +2,7 @@
 //! written atomically with owner-only permissions, read with a size cap, and never followed
 //! through symlinks. Nothing secret belongs here and nothing here is ever executed as text.
 
-use std::io::Write;
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
@@ -106,7 +106,32 @@ impl Store {
         if meta.len() > MAX_FILE {
             return Err("file is too large".into());
         }
-        std::fs::read_to_string(path).map_err(|e| e.to_string())
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_FLAG_OPEN_REPARSE_POINT: inspect the link, not its target.
+            options.custom_flags(0x0020_0000);
+        }
+        let file = options.open(path).map_err(|e| e.to_string())?;
+        let opened = file.metadata().map_err(|e| e.to_string())?;
+        if !opened.is_file() || opened.len() > MAX_FILE {
+            return Err("not a bounded regular file".into());
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_FILE + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > MAX_FILE {
+            return Err("file is too large".into());
+        }
+        String::from_utf8(bytes).map_err(|e| e.to_string())
     }
 
     fn ensure_private_dir(&self) -> Result<(), String> {
