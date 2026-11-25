@@ -272,16 +272,33 @@ fn rebind(desktop: &dyn Desktop, app: &str, win: &Win, host: &dyn Host) -> Resul
     Ok(now)
 }
 
+fn wait_interruptible(host: &dyn Host, duration: Duration) -> bool {
+    let start = Instant::now();
+    while !host.stopped() {
+        let remaining = duration.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            return true;
+        }
+        std::thread::sleep(remaining.min(Duration::from_millis(25)));
+    }
+    false
+}
+
 fn wait_for_window(desktop: &dyn Desktop, app: &str, host: &dyn Host) -> Result<Win, String> {
+    if host.stopped() {
+        return Err("Stopped".into());
+    }
     if let Ok(win) = desktop.find_window(app) {
         return Ok(win);
+    }
+    if host.stopped() {
+        return Err("Stopped".into());
     }
     host.emit("action", &format!("Open {app}"));
     host.open_app(app)?;
     let start = Instant::now();
     loop {
-        std::thread::sleep(Duration::from_millis(500));
-        if host.stopped() {
+        if !wait_interruptible(host, Duration::from_millis(500)) {
             return Err("Stopped".into());
         }
         match desktop.find_window(app) {
@@ -341,6 +358,7 @@ pub(crate) fn run_with(
     let start = Instant::now();
     let win = match wait_for_window(desktop, app, host) {
         Ok(win) => win,
+        Err(_) if host.stopped() => return Outcome::Cancelled,
         Err(e) => return Outcome::Failed(e),
     };
     let mut p = Progress {
@@ -397,6 +415,9 @@ pub(crate) fn run_with(
             return Outcome::Failed("Stopped: two steps in a row changed nothing".into());
         }
         p.acted_last = false;
+        if host.stopped() {
+            return Outcome::Cancelled;
+        }
         let step = decide(goal, app, &obs, &p.history);
         if host.stopped() {
             return Outcome::Cancelled;
@@ -421,7 +442,9 @@ pub(crate) fn run_with(
             Step::Fail(why) => return Outcome::Failed(format!("Cannot be done: {why}")),
             Step::Wait => {
                 p.history.push("(waited for the interface to load)".into());
-                std::thread::sleep(Duration::from_millis(750));
+                if !wait_interruptible(host, Duration::from_millis(750)) {
+                    return Outcome::Cancelled;
+                }
                 continue;
             }
             Step::Done { evidence, summary } => {
@@ -451,8 +474,11 @@ pub(crate) fn run_with(
                     stale_retry_used = false;
                     p.acts += 1;
                     p.acted_last = true;
-                    std::thread::sleep(SETTLE);
+                    if !wait_interruptible(host, SETTLE) {
+                        return Outcome::Cancelled;
+                    }
                 }
+                Err(_) if host.stopped() => return Outcome::Cancelled,
                 Err(Refusal::Stop(reason)) => return Outcome::Failed(reason),
                 Err(Refusal::Retry(reason)) => {
                     p.typed_into_navigation = false;
@@ -551,9 +577,14 @@ fn act(
         obs.element(id)
             .ok_or_else(|| Refusal::Retry(format!("No control {id:?} on screen now")))
     };
-    let send = |action: &UiAct| match host.cancellation() {
-        Some(stop) => desktop.act_scoped(win, action, stop),
-        None => desktop.act(win, action),
+    let send = |action: &UiAct| {
+        if host.stopped() {
+            return Err("Stopped".into());
+        }
+        match host.cancellation() {
+            Some(stop) => desktop.act_scoped(win, action, stop),
+            None => desktop.act(win, action),
+        }
     };
     let mut typed_nav = false;
     let described = match &step {
@@ -618,9 +649,13 @@ fn act(
                     return Err(Refusal::Stop("Stopped".into()));
                 }
                 send(&ui).map_err(retry)?;
-                std::thread::sleep(KEY_GAP);
+                if !wait_interruptible(host, KEY_GAP) {
+                    return Err(Refusal::Stop("Stopped".into()));
+                }
             }
-            std::thread::sleep(PAGE_LOAD);
+            if !wait_interruptible(host, PAGE_LOAD) {
+                return Err(Refusal::Stop("Stopped".into()));
+            }
             format!("went to {url}")
         }
         Step::Done { .. } | Step::Ask(_) | Step::Fail(_) | Step::Wait => return Ok(()),
