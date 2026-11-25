@@ -497,6 +497,10 @@ harness handles the approved run.
 
 ### Claude Code Work
 
+The capability report distinguishes workspace-writing OpenCode from tool-free
+Claude Code analysis. Claude Code Work explicitly previews prompt-only access;
+it cannot satisfy a required file-change proof. No tool flags are relaxed.
+
 With Claude Code 2 installed, choose a project, run `hex agent claude <goal>`,
 and approve the task. X uses Claude Code's own login and streams its structured
 events. This mode sends the goal with tool access and MCP disabled. To continue
