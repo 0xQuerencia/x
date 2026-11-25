@@ -24,6 +24,7 @@ const PARALLEL_WORKERS: usize = 2;
 
 fn node_status(outcome: Outcome) -> &'static str {
     match outcome {
+        Outcome::Delivered => "delivered",
         Outcome::Verified => "done",
         Outcome::Failed => "failed",
         Outcome::Unverified => "unverified",
@@ -61,6 +62,7 @@ fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
             let status = match claim.state {
                 State::Claimed if delivery_observed => "delivery_observed",
                 State::Claimed => "possibly_delivered",
+                State::Delivered => "delivered",
                 State::Verified => "verified",
                 State::Failed => "failed",
                 State::Unverified => "unverified",
@@ -254,7 +256,7 @@ impl Service {
                 let complete = report
                     .nodes
                     .iter()
-                    .filter(|node| node.outcome == Outcome::Verified)
+                    .filter(|node| node.outcome.completed())
                     .count();
                 for node in &report.nodes {
                     let status = node_status(node.outcome);
@@ -265,8 +267,14 @@ impl Service {
                     };
                     self.emit("verification", &detail);
                 }
+                let delivered = report
+                    .nodes
+                    .iter()
+                    .filter(|node| node.outcome == Outcome::Delivered)
+                    .count();
+                let verified = complete - delivered;
                 let summary = format!(
-                    "{complete}/{} jobs returned verified delivery",
+                    "{complete}/{} jobs completed: {delivered} delivery-only, {verified} with additional proof",
                     report.nodes.len()
                 );
                 let phase = if report.stopped || stop.requested() {
