@@ -11,7 +11,7 @@ use super::recovery::{Begin, Journal, State};
 use super::scheduler::{Executor, Outcome};
 use crate::cancellation::Cancellation;
 use crate::grants::{Grants, Permission, Receipt, Scope};
-use crate::harness::{Adapter, EventSink, Kind, Request, RunStatus, WorkAccess};
+use crate::harness::{Adapter, EventKind, EventSink, Kind, Request, RunStatus, WorkAccess};
 use crate::projects::Project;
 use crate::verification::{Outcome as VerifiedOutcome, Result as Verification};
 use crate::worktrees::{Manager, OwnedWorktree};
@@ -95,11 +95,14 @@ impl Assignment {
     }
 }
 
+type JobActivity = Arc<dyn Fn(&str, u8, EventKind) + Send + Sync>;
+
 pub struct ApprovedHarnessExecutor {
     run_id: Uuid,
     assignments: HashMap<String, Assignment>,
     worktrees: Arc<Manager>,
     journal: Arc<Journal>,
+    activity: Option<JobActivity>,
 }
 
 impl ApprovedHarnessExecutor {
@@ -148,7 +151,15 @@ impl ApprovedHarnessExecutor {
             assignments: slots,
             worktrees,
             journal,
+            activity: None,
         })
+    }
+
+    /// Only structured event kinds leave the worker; provider text, session
+    /// IDs and tool arguments are deliberately not forwarded to the UI.
+    pub(crate) fn with_activity(mut self, activity: JobActivity) -> Self {
+        self.activity = Some(activity);
+        self
     }
 
     fn assignment(&self, node: &Node) -> Option<&Assignment> {
@@ -252,7 +263,13 @@ impl Executor for ApprovedHarnessExecutor {
             let journal = Arc::clone(&self.journal);
             let claim = claim.clone();
             let observed = Arc::clone(&observed);
+            let activity = self.activity.clone();
+            let node_id = node.id.clone();
+            let attempt = claim.attempt;
             Arc::new(move |event| {
+                if let Some(activity) = &activity {
+                    activity(&node_id, attempt, event.kind);
+                }
                 if let Some(session) = event
                     .accepted_session()
                     .filter(|session| session.kind() == harness_kind)
@@ -737,6 +754,29 @@ mod tests {
             .is_err()
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn parallel_activity_is_node_scoped_and_does_not_expose_provider_text() {
+        let (_directory, graph, runner, _peak, _calls) = fixture(true);
+        let runner = Arc::try_unwrap(runner).ok().unwrap();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let runner = Arc::new(runner.with_activity(Arc::new(move |node, attempt, kind| {
+            captured.lock().unwrap().push((node.to_owned(), attempt, kind));
+        })));
+        scheduler::run(
+            &graph,
+            Path::new("/tmp"),
+            runner,
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![("back".to_owned(), 1, EventKind::Text)]
+        );
     }
 
     #[test]
