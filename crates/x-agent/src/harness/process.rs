@@ -350,6 +350,9 @@ fn supervise(
         match wait_with_grace(child, stop) {
             Some(s) => s.code(),
             None => {
+                if !stop.requested() {
+                    errors.push(format!("{} did not exit after closing its output", cfg.name));
+                }
                 terminate(child);
                 child.wait().ok().and_then(|s| s.code())
             }
