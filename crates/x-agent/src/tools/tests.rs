@@ -397,7 +397,8 @@ fn computer_sequences_reject_unbound_typing_and_sessions() {
     assert!(matches!(parse_reply(safe), Ok(Reply::Steps(steps)) if steps.len() == 2));
     let unsafe_typing = r#"{"steps":[{"kind":"computer","app":"chrome","goal":"read the status"},{"kind":"type","text":"hello"}]}"#;
     assert!(parse_reply(unsafe_typing).is_err());
-    let session = r#"{"steps":[{"kind":"session","goal":"review code"},{"kind":"app","target":"firefox"}]}"#;
+    let session =
+        r#"{"steps":[{"kind":"session","goal":"review code"},{"kind":"app","target":"firefox"}]}"#;
     assert!(parse_reply(session).is_err());
 }
 
