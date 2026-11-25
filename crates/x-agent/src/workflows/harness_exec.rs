@@ -66,10 +66,7 @@ impl Assignment {
             return Err("The approved harness task or project changed".into());
         }
         if let Proof::ChangedFile(path) = &proof
-            && (path.is_empty()
-                || path.starts_with('/')
-                || path.contains("..")
-                || path.chars().any(char::is_control))
+            && !crate::verification::valid_expected_path(path)
         {
             return Err("The expected changed file path is unsafe".into());
         }
@@ -297,9 +294,13 @@ impl Executor for ApprovedHarnessExecutor {
                 VerifiedOutcome::Verified if evidence_id.is_some() => match &assignment.proof {
                     Proof::DeliveryOnly => Outcome::Delivered,
                     Proof::ChangedFile(path) => {
+                        let changes = self
+                            .worktrees
+                            .changed_paths(&assignment.project, &assignment.worktree)
+                            .ok();
                         match Verification::required_git_change(
                             &node.id,
-                            result.changed_files.as_deref(),
+                            changes.as_deref(),
                             path,
                             unix_now(),
                         ) {
@@ -534,6 +535,7 @@ mod tests {
                 after: vec![],
                 requires: vec![],
                 requires_verified: vec![],
+                required_change: None,
                 job: Job::Harness {
                     harness,
                     project_id: project.id.to_string(),
