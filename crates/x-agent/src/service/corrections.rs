@@ -282,3 +282,91 @@ impl Service {
         self.plan_graph_review(graph, Some(&project), Some(binding))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::verification::test_runner::FailureExcerpt;
+
+    fn failed(project: Uuid, node: &str, commit: &str) -> CorrectionDraft {
+        CorrectionDraft {
+            project_id: project,
+            run_id: Uuid::new_v4(),
+            node_id: node.into(),
+            commit: commit.into(),
+            suite: Suite::CargoAgent,
+            excerpt: FailureExcerpt {
+                stdout: "untrusted stdout".into(),
+                stderr: "private stderr".into(),
+                stdout_truncated: false,
+                stderr_truncated: false,
+            },
+        }
+    }
+
+    #[test]
+    fn correction_chain_allows_two_exact_reviewed_attempts_without_replay() {
+        let mut history = History::default();
+        let project = Uuid::new_v4();
+        let initial = failed(project, "test", &"a".repeat(40));
+        let run = initial.run_id;
+        history.record(initial, None);
+        let first = history.find(run, "test").unwrap().binding().unwrap();
+        assert_eq!(first.attempt, 1);
+        let mut wrong = first.clone();
+        wrong.commit = "b".repeat(40);
+        assert!(history.consume(&wrong).is_err());
+        history.consume(&first).unwrap();
+        assert!(history.consume(&first).is_err());
+
+        let failure = failed(project, "correction-retest", &"b".repeat(40));
+        let run = failure.run_id;
+        history.record(failure, Some(&first));
+        let second = history
+            .find(run, "correction-retest")
+            .unwrap()
+            .binding()
+            .unwrap();
+        assert_eq!(second.root, first.root);
+        assert_eq!(second.attempt, 2);
+        history.consume(&second).unwrap();
+
+        let failure = failed(project, "correction-retest", &"c".repeat(40));
+        let run = failure.run_id;
+        history.record(failure, Some(&second));
+        assert!(
+            history
+                .find(run, "correction-retest")
+                .unwrap()
+                .binding()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn correction_graph_requires_new_commit_and_retests_the_same_suite() {
+        let mut history = History::default();
+        let failure = failed(Uuid::new_v4(), "test", &"a".repeat(40));
+        let run = failure.run_id;
+        history.record(failure, None);
+        let binding = history.find(run, "test").unwrap().binding().unwrap();
+        let graph = correction_graph(&binding, "Fix the failing assertion").unwrap();
+        assert_eq!(graph.nodes.len(), 2);
+        assert!(graph.nodes[0].required_commit);
+        assert_eq!(graph.nodes[1].inputs[0].node, "correction-write");
+        assert_eq!(graph.nodes[1].inputs[0].proof, InputProof::Committed);
+        assert!(matches!(
+            graph.nodes[1].job,
+            Job::Test {
+                suite: Suite::CargoAgent,
+                ..
+            }
+        ));
+        let encoded = serde_json::to_string(&graph).unwrap();
+        assert!(encoded.contains(&binding.commit));
+        assert!(!encoded.contains("private stderr"));
+        assert!(!encoded.contains("untrusted stdout"));
+        assert!(correction_graph(&binding, "").is_err());
+        assert!(correction_graph(&binding, "fix\nnew command").is_err());
+    }
+}
