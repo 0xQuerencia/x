@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::model::{OnFailure, StepAction, Workflow};
 
 pub const VERSION: u16 = 2;
+pub const PROOF_VERSION: u16 = 3;
 pub const MAX_NODES: usize = 64;
 pub const MAX_DEPENDENCIES: usize = 64;
 
@@ -42,6 +43,9 @@ pub struct Node {
     /// Verification edges: predecessor must finish successfully.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    /// Version 3: require additional proof, not merely successful delivery.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_verified: Vec<String>,
     pub job: Job,
     #[serde(default)]
     pub on_failure: OnFailure,
@@ -80,6 +84,7 @@ impl Graph {
                     id: step.id,
                     after,
                     requires: step.requires,
+                    requires_verified: vec![],
                     job: Job::Desktop {
                         action: step.action,
                     },
@@ -100,7 +105,7 @@ impl Graph {
 
     /// Validate graph structure. This alone does not authorize any operation.
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != VERSION {
+        if !matches!(self.version, VERSION | PROOF_VERSION) {
             return Err("Unsupported workflow graph version".into());
         }
         if !slug(&self.id) || self.name.trim().is_empty() || self.name.chars().count() > 80 {
@@ -114,7 +119,13 @@ impl Graph {
             if !slug(&node.id) || !ids.insert(node.id.as_str()) {
                 return Err("Graph nodes require unique safe IDs".into());
             }
-            if node.after.len() > MAX_DEPENDENCIES || node.requires.len() > MAX_DEPENDENCIES {
+            if self.version == VERSION && !node.requires_verified.is_empty() {
+                return Err("Verified dependency edges require graph version 3".into());
+            }
+            if node.after.len() > MAX_DEPENDENCIES
+                || node.requires.len() > MAX_DEPENDENCIES
+                || node.requires_verified.len() > MAX_DEPENDENCIES
+            {
                 return Err("Too many dependencies".into());
             }
             if let Job::Harness {
@@ -129,7 +140,7 @@ impl Graph {
             }
         }
         for node in &self.nodes {
-            for edges in [&node.after, &node.requires] {
+            for edges in [&node.after, &node.requires, &node.requires_verified] {
                 let mut seen = HashSet::new();
                 for required in edges {
                     if required == &node.id {
@@ -192,7 +203,12 @@ impl Graph {
         let mut next = vec![Vec::new(); self.nodes.len()];
         for (index, node) in self.nodes.iter().enumerate() {
             let mut already = HashSet::new();
-            for dep in node.after.iter().chain(&node.requires) {
+            for dep in node
+                .after
+                .iter()
+                .chain(&node.requires)
+                .chain(&node.requires_verified)
+            {
                 if !already.insert(dep.as_str()) {
                     continue;
                 }
@@ -244,7 +260,11 @@ pub fn decode(input: &str, home: &Path) -> Result<Graph, String> {
                 .map_err(|e| format!("Invalid legacy workflow: {e}"))?;
             Graph::from_legacy(legacy, home)
         }
-        Some(version) if version.as_u64() == Some(u64::from(VERSION)) => {
+        Some(version)
+            if version
+                .as_u64()
+                .is_some_and(|v| v == u64::from(VERSION) || v == u64::from(PROOF_VERSION)) =>
+        {
             let graph: Graph = serde_json::from_value(value)
                 .map_err(|e| format!("Invalid workflow graph: {e}"))?;
             graph.validate_with_home(home)?;
@@ -324,6 +344,7 @@ mod tests {
             id: "verify".into(),
             after: vec![],
             requires: vec!["first".into(), "second".into()],
+            requires_verified: vec![],
             job: Job::Desktop {
                 action: StepAction::SwitchWorkspace { workspace: 4 },
             },
@@ -331,6 +352,20 @@ mod tests {
         });
         graph.validate().unwrap();
         assert_eq!(graph.order().unwrap(), ["first", "second", "verify"]);
+    }
+
+    #[test]
+    fn proof_edges_require_v3_and_participate_in_cycle_validation() {
+        let mut graph = Graph::from_legacy(legacy(), &home()).unwrap();
+        graph.nodes[1].requires_verified = vec!["first".into()];
+        assert!(graph.validate().is_err());
+        graph.version = PROOF_VERSION;
+        graph.validate().unwrap();
+        assert_eq!(graph.order().unwrap(), ["first", "second"]);
+        let serialized = serde_json::to_string(&graph).unwrap();
+        assert_eq!(decode(&serialized, &home()).unwrap(), graph);
+        graph.nodes[0].requires_verified = vec!["second".into()];
+        assert!(graph.validate().unwrap_err().contains("cycle"));
     }
 
     #[test]
