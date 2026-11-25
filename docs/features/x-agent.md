@@ -253,6 +253,11 @@ worktree for each job.
 The task steps reflect scheduler dispatch and each node's terminal outcome
 while other jobs are still running. A skipped dependency never appears as
 running. These states describe job execution, not a percentage of code work.
+The scheduler joins owned workers before releasing their resource locks and
+reports a worker spawn failure or panic as Failed. A stop-on-failure node
+prevents new dispatch but lets already-running siblings finish. Global Stop
+requests cancellation of every child; workers must cooperate with that token,
+and X does not claim that an unresponsive worker has been terminated.
 
 ### Approved Git worktree isolation (development)
 
