@@ -132,3 +132,93 @@ impl JobStops {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cancellation::Cancellation;
+
+    fn fixture() -> (JobStops, Arc<Grants>, Receipt, Scope) {
+        let stops = JobStops::new(2, &Cancellation::default());
+        let grants = Arc::new(Grants::default());
+        let scope = Scope::Task {
+            project_id: Uuid::new_v4(),
+            run_id: Uuid::new_v4(),
+            node_id: "queued".into(),
+            intent: "fixed suite".into(),
+        };
+        let receipt = grants
+            .issue(
+                Permission::QueueTests,
+                scope.clone(),
+                Duration::from_secs(30),
+                1,
+                true,
+            )
+            .unwrap();
+        stops
+            .register_renewal(
+                0,
+                Arc::clone(&grants),
+                receipt,
+                Permission::QueueTests,
+                scope.clone(),
+            )
+            .unwrap();
+        grants.expire_for_test(&receipt);
+        (stops, grants, receipt, scope)
+    }
+
+    #[test]
+    fn expired_receipt_has_no_authority_before_explicit_review() {
+        let (stops, grants, receipt, scope) = fixture();
+        assert_eq!(grants.pending_count().unwrap(), 0);
+        assert!(
+            grants
+                .check(&receipt, Permission::QueueTests, &scope)
+                .is_err()
+        );
+        assert!(stops.permission_review_token(0).is_none());
+        assert_eq!(stops.wait_for_permission(0), Some(true));
+        assert_eq!(stops.wait_for_permission(0), Some(false));
+        let token = stops.permission_review_token(0).unwrap();
+        assert!(stops.renew_permission(1, token).is_err());
+        stops.renew_permission(0, token).unwrap();
+        assert!(stops.permission_review_token(0).is_none());
+        assert_eq!(grants.pending_count().unwrap(), 1);
+        assert!(stops.renew_permission(0, token).is_err());
+    }
+
+    #[test]
+    fn stopped_revoked_or_timed_out_wait_cannot_be_renewed() {
+        let (stops, grants, receipt, _) = fixture();
+        assert_eq!(stops.wait_for_permission(0), Some(true));
+        let token = stops.permission_review_token(0).unwrap();
+        assert!(grants.revoke(&receipt).unwrap());
+        assert!(stops.renew_permission(0, token).is_err());
+        assert_eq!(stops.wait_for_permission(0), None);
+
+        let (stops, _, _, _) = fixture();
+        assert_eq!(stops.wait_for_permission(0), Some(true));
+        let token = stops.permission_review_token(0).unwrap();
+        stops.request(0).unwrap();
+        assert!(stops.renew_permission(0, token).is_err());
+        assert!(!stops.requested(1));
+
+        let (stops, _, _, _) = fixture();
+        assert_eq!(stops.wait_for_permission(0), Some(true));
+        let token = stops.permission_review_token(0).unwrap();
+        stops
+            .renewals
+            .lock()
+            .unwrap()
+            .get_mut(&0)
+            .unwrap()
+            .review
+            .as_mut()
+            .unwrap()
+            .deadline = Instant::now();
+        assert!(stops.renew_permission(0, token).is_err());
+        assert_eq!(stops.wait_for_permission(0), None);
+    }
+}
