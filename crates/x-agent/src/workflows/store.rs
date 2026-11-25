@@ -198,8 +198,13 @@ impl Store {
             .filter_map(|path| {
                 let text = Self::read(&path).ok()?;
                 let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-                if value.get("version").and_then(serde_json::Value::as_u64)
-                    != Some(u64::from(super::dag::VERSION))
+                if !value
+                    .get("version")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|v| {
+                        v == u64::from(super::dag::VERSION)
+                            || v == u64::from(super::dag::PROOF_VERSION)
+                    })
                 {
                     return None;
                 }
