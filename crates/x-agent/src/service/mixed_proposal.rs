@@ -11,12 +11,8 @@ use crate::workflows::model::{OnFailure, StepAction};
 
 use super::{Service, Task, session_targets};
 
-fn text(input: &str) -> &str {
-    tools::strip_wake_word(input).trim()
-}
-
 pub(super) fn recognizes(input: &str) -> bool {
-    let lower = text(input).to_ascii_lowercase();
+    let lower = tools::strip_wake_word(input).to_ascii_lowercase();
     lower.starts_with("plan mixed ")
         || ((lower.starts_with("open ") || lower.starts_with("focus "))
             && lower.contains(" then ")
@@ -33,7 +29,11 @@ fn app(phrase: &str) -> Result<String, String> {
 }
 
 fn graph(input: &str, project: &Project) -> Result<Graph, String> {
-    let input = text(input);
+    if input.chars().any(char::is_control) {
+        return Err("Use a single line of explicit steps".into());
+    }
+    let normalized = tools::strip_wake_word(input);
+    let input = normalized.trim();
     let lower = input.to_ascii_lowercase();
     let input = if lower.starts_with("plan mixed ") {
         &input["plan mixed ".len()..]
