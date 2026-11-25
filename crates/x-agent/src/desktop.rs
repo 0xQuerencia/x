@@ -119,6 +119,24 @@ impl Observation {
                 .any(|text| text.to_lowercase().contains(&needle))
     }
 
+    /// Completion evidence must match a complete non-secret visible field.
+    pub fn shows_exact(&self, evidence: &str) -> bool {
+        let needle = evidence.trim().to_lowercase();
+        needle.chars().count() >= 3
+            && std::iter::once(&self.title)
+                .chain(self.texts.iter())
+                .chain(
+                    self.elements
+                        .iter()
+                        .filter(|e| !e.is_secret())
+                        .flat_map(|e| [&e.name, &e.value]),
+                )
+                .any(|text| {
+                    let safe = prompt_text(text);
+                    !safe.contains("[redacted]") && safe.to_lowercase() == needle
+                })
+    }
+
     pub fn render(&self) -> String {
         let mut out = format!("window: {:?}\ncontrols:\n", prompt_text(&self.title));
         for e in &self.elements {
