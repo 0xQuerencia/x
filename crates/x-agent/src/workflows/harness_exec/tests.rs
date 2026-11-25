@@ -52,6 +52,7 @@ impl OwnedRun for FakeRun {
             errors: Vec::new(),
             stderr: Vec::new(),
             changed_files: Some(vec!["src/app.rs".into()]),
+            termination: None,
         }
     }
 }

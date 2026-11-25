@@ -166,17 +166,25 @@ impl Service {
         let ok = res.status == RunStatus::Completed;
         self.set_step(1, if ok { "done" } else { "failed" });
         self.set_step(2, if ok { "done" } else { "failed" });
+        let closure = res.termination.map(|evidence| evidence.summary());
         match res.status {
             RunStatus::Cancelled => self.finish(
                 Phase::Cancelled,
                 None,
-                Some("Stopped. Changes may already exist on disk; nothing was rolled back.".into()),
+                Some(format!(
+                    "Stopped. {}Changes may already exist on disk; nothing was rolled back.",
+                    closure.map_or(String::new(), |proof| format!("{proof} ")),
+                )),
                 res.changed_files,
             ),
             RunStatus::Completed => self.finish(
                 Phase::Completed,
                 None,
-                Some(format!("{} exited 0 with no error events.", kind.label())),
+                Some(format!(
+                    "{} exited 0 with no error events.{}",
+                    kind.label(),
+                    closure.map_or(String::new(), |proof| format!(" {proof}")),
+                )),
                 res.changed_files,
             ),
             RunStatus::Failed => {
@@ -189,7 +197,12 @@ impl Service {
                 } else {
                     res.errors.join("; ")
                 };
-                self.finish(Phase::Failed, Some(why), None, res.changed_files)
+                self.finish(
+                    Phase::Failed,
+                    Some(why),
+                    closure.map(str::to_owned),
+                    res.changed_files,
+                )
             }
         }
     }
