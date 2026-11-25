@@ -116,6 +116,17 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(report) => ControlReply::done(report.to_string()),
             Err(error) => refuse(error),
         },
+        "correction-preview" => match svc.correction_preview(value) {
+            Ok(report) => ControlReply::done(report.to_string()),
+            Err(error) => refuse(error),
+        },
+        "plan-correction" => match value.split_once(' ') {
+            Some((source, goal)) => match svc.plan_correction(source, goal) {
+                Ok(_) => super::snapshot(0),
+                Err(error) => refuse(error),
+            },
+            None => need("an exact failure run/node identity and a correction goal"),
+        },
         "uncertain" if !value.is_empty() => refuse("workflow uncertain takes no arguments".into()),
         "uncertain" => match svc.uncertain_coding_jobs() {
             Ok(report) => ControlReply::done(report.to_string()),
@@ -205,7 +216,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, correction-preview, plan-correction, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }
