@@ -233,14 +233,7 @@ impl Result {
         expected_path: &str,
         observed_at: u64,
     ) -> std::result::Result<Self, String> {
-        if expected_path.is_empty()
-            || expected_path.len() > 160
-            || expected_path.starts_with('/')
-            || expected_path
-                .split('/')
-                .any(|part| part.is_empty() || part == "..")
-            || expected_path.chars().any(char::is_control)
-        {
+        if !valid_expected_path(expected_path) {
             return Err("Expected a safe, project-relative path".into());
         }
         let status = match changed_files {
@@ -274,6 +267,18 @@ impl Result {
             vec!["A changed file does not prove tests pass".into()],
         )
     }
+}
+
+/// A portable project-relative Git path. This is never interpreted as a shell
+/// command or Git pathspec.
+pub(crate) fn valid_expected_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 160
+        && !path.contains(['\\', ':'])
+        && !path.chars().any(char::is_control)
+        && !path
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".." | ".git"))
 }
 
 #[cfg(test)]
