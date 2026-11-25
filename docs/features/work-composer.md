@@ -82,3 +82,9 @@ rune_ui::agent::composer::tests::render_native_work_composer_light_and_dark --
 --ignored --exact` and inspect both images when this form changes. It fails when
 no GPU or software Vulkan adapter is available; it does not silently claim a
 visual pass. These component renders supplement the full Rune golden suite.
+
+## Review a recorded worktree result (B03/B11)
+
+Run `hex agent workflow worktrees` to locate a recorded run UUID and node ID, then `hex agent workflow review-worktree <run-id> <node-id>` for the local JSON review. It verifies the registered project and checkout identity, shows the exact base and observed HEAD, a bounded committed patch, and whether a recorded test result matches the current clean inputs. A dirty checkout does not inherit passing test evidence. Uncommitted contents are not included in the committed patch. An unavailable or possibly running checkout refuses review.
+
+This explicit local command returns repository text to the operator, not to the Decider or a coding provider; patch contents remain untrusted. It does not authorize tests, correction, integration or cleanup. Native result-review controls and permission renewal remain separate work. The Git fixture checks actual commit content and stale-test handling; installed-operator acceptance is still required.
