@@ -301,8 +301,10 @@ Coding graphs currently use delivery-only evidence. The task and saved report
 label those nodes Delivered, not code-verified. Older saved coding graph
 summaries are read as delivery-only. Existing v2 requires edges retain their
 historical successful-delivery semantics; they do not establish that a
-predecessor produced a usable artifact or passed tests. Stronger dependency
-proofs require a new explicit graph contract.
+predecessor produced a usable artifact or passed tests. Version 3 graphs may
+add `requires_verified` edges: delivery-only predecessors cannot release
+those jobs. Version 2 inputs retain their existing meaning. An explicit
+additional proof producer is required before such a dependency can succeed.
 
 ### Verified worktree scheduling (development)
 
