@@ -297,8 +297,12 @@ and exit code 0 are both observed; it does not prove code correctness.
 A separate Git status check reports whether an exact project-relative file
 changed, not whether the resulting code works.
 
-Coding graphs currently use verified delivery. Their run summary reports how
-many jobs returned that evidence.
+Coding graphs currently use delivery-only evidence. The task and saved report
+label those nodes Delivered, not code-verified. Older saved coding graph
+summaries are read as delivery-only. Existing v2 requires edges retain their
+historical successful-delivery semantics; they do not establish that a
+predecessor produced a usable artifact or passed tests. Stronger dependency
+proofs require a new explicit graph contract.
 
 ### Verified worktree scheduling (development)
 
