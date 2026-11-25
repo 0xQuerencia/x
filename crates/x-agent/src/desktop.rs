@@ -425,6 +425,32 @@ fn focus_window(win: &Win) -> Result<(), String> {
     Err("The window did not take focus".into())
 }
 
+fn accessibility_window_id<'a>(listed: &'a Value, win: &Win) -> Result<&'a str, String> {
+    let same_pid = listed
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|w| w.get("pid").and_then(Value::as_u64) == Some(u64::from(win.pid)));
+    let mut exact = same_pid
+        .clone()
+        .filter(|w| w.get("title").and_then(Value::as_str) == Some(win.title.as_str()));
+    let candidate = if let Some(first) = exact.next() {
+        if exact.next().is_some() {
+            return Err("Several accessibility windows have the same title".into());
+        }
+        Some(first)
+    } else {
+        // A fallback is safe only when the process has exactly one window.
+        let mut windows = same_pid;
+        windows.next().filter(|_| windows.next().is_none())
+    };
+    candidate
+        .and_then(|w| w.get("id")?.as_str())
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "The window has no unique accessibility tree".into())
+}
+
 impl Desktop for AgentDesktop {
     fn find_window(&self, app: &str) -> Result<Win, String> {
         self.find_window_or_absent(app)?
@@ -451,27 +477,7 @@ impl Desktop for AgentDesktop {
             .pop()
             .ok_or_else(|| format!("No {app} window is open"))?;
         let listed = self.run(&["list-windows"])?;
-        let same_pid = listed
-            .get("data")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter(|w| w.get("pid").and_then(Value::as_u64) == Some(u64::from(win.pid)));
-        let id = same_pid
-            .clone()
-            .find(|w| w.get("title").and_then(Value::as_str) == Some(win.title.as_str()))
-            .or_else(|| {
-                let titled = |w: &&Value| {
-                    w.get("title")
-                        .and_then(Value::as_str)
-                        .is_some_and(|t| !t.is_empty())
-                };
-                let mut named = same_pid.clone().filter(|w| titled(w));
-                named.next().filter(|_| named.next().is_none())
-            })
-            .and_then(|w| w.get("id")?.as_str())
-            .ok_or("The window has no accessibility tree (is accessibility on for this app?)")?;
-        win.id = id.to_string();
+        win.id = accessibility_window_id(&listed, &win)?.to_string();
         Ok(Some(win))
     }
 
@@ -599,3 +605,37 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod accessibility_window_tests {
+    use super::*;
+
+    fn window() -> Win {
+        Win {
+            address: "0x1".into(),
+            pid: 7,
+            class: "chrome".into(),
+            title: "Tab".into(),
+            id: String::new(),
+        }
+    }
+
+    #[test]
+    fn duplicate_accessibility_titles_are_ambiguous() {
+        let listed = serde_json::json!({"data": [
+            {"pid": 7, "title": "Tab", "id": "a"},
+            {"pid": 7, "title": "Tab", "id": "b"}
+        ]});
+        assert!(accessibility_window_id(&listed, &window()).is_err());
+    }
+
+    #[test]
+    fn unique_exact_title_is_scoped_to_process() {
+        let listed = serde_json::json!({"data": [
+            {"pid": 8, "title": "Tab", "id": "other"},
+            {"pid": 7, "title": "Other", "id": "a"},
+            {"pid": 7, "title": "Tab", "id": "b"}
+        ]});
+        assert_eq!(accessibility_window_id(&listed, &window()).unwrap(), "b");
+    }
+}
