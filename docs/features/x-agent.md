@@ -250,6 +250,9 @@ lock. Unverified outputs never unlock success-dependent tasks.
 
 Approved coding graphs use two workers and require a verified, owned Git
 worktree for each job.
+The task steps reflect scheduler dispatch and each node's terminal outcome
+while other jobs are still running. A skipped dependency never appears as
+running. These states describe job execution, not a percentage of code work.
 
 ### Approved Git worktree isolation (development)
 
