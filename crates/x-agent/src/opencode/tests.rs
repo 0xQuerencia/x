@@ -329,3 +329,24 @@ fn named_delivery_does_not_fall_back_when_private_session_run_is_unsupported() {
     assert!(Run::start(cfg, Arc::new(|_, _| {})).is_err());
     assert!(!f.repo.join("started").exists());
 }
+
+#[test]
+fn dropping_a_run_stops_its_owned_process() {
+    let f = fixture();
+    let run = f.start("echo $$ > owner.pid\nsleep 60", STALL_AFTER);
+    let pidfile = f.repo.join("owner.pid");
+    for _ in 0..100 {
+        if std::fs::read_to_string(&pidfile).is_ok_and(|s| !s.trim().is_empty()) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let pid: i32 = std::fs::read_to_string(pidfile)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    drop(run);
+    // SAFETY: signal 0 only checks process existence.
+    assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
+}
