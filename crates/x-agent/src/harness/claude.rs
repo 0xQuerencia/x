@@ -15,6 +15,7 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability::StreamEvents,
     Capability::StopOwnedRun,
     Capability::ResumeOwnedSession,
+    Capability::ToolFreeAnalysis,
 ];
 
 pub struct Adapter {
@@ -200,6 +201,14 @@ fn parse(line: &str) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_free_claude_does_not_advertise_workspace_writes() {
+        let adapter = Adapter::new(PathBuf::from("unused"));
+        let descriptor = adapter.descriptor();
+        assert!(descriptor.capabilities.contains(&Capability::ToolFreeAnalysis));
+        assert!(!descriptor.supports_workspace_write());
+    }
 
     #[test]
     fn terminal_result_and_identity_are_required_for_success_evidence() {
