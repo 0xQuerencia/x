@@ -131,7 +131,7 @@ impl ChildGuard {
             // Do not advertise Windows closure evidence on Linux.
             termination: None,
             failure: (forced && !stop.requested() && !failed)
-                .then_some("required forced process-group cleanup"),
+                .then_some("did not exit cleanly: required forced process-group cleanup"),
         }
     }
 }
