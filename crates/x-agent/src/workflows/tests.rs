@@ -1282,6 +1282,21 @@ mod storage {
     }
 
     #[test]
+    fn bounded_reads_reject_linked_and_oversized_graph_imports() {
+        let h = home();
+        let s = store(h.path());
+        let large = h.path().join("large.json");
+        std::fs::write(&large, vec![b' '; 64 * 1024 + 1]).unwrap();
+        assert!(s.import_graph(&large).unwrap_err().contains("too large"));
+
+        let actual = h.path().join("actual.json");
+        std::fs::write(&actual, "{}").unwrap();
+        let link = h.path().join("link.json");
+        std::os::unix::fs::symlink(&actual, &link).unwrap();
+        assert!(s.import_graph(&link).unwrap_err().contains("regular file"));
+    }
+
+    #[test]
     fn duplicate_delete_and_import() {
         let h = home();
         let s = store(h.path());
