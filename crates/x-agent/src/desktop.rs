@@ -326,8 +326,11 @@ pub(crate) fn capture_scoped(
     let (send, output) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let mut buf = Vec::new();
-        let _ = (&mut stdout).take(OUTPUT_CAP).read_to_end(&mut buf);
-        let _ = send.send(buf);
+        let result = (&mut stdout)
+            .take(OUTPUT_CAP + 1)
+            .read_to_end(&mut buf)
+            .map(|_| buf);
+        let _ = send.send(result);
     });
     let start = Instant::now();
     let status = loop {
@@ -344,12 +347,20 @@ pub(crate) fn capture_scoped(
                 return Err(format!("{:?} timed out", cmd.get_program()));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(15)),
-            Err(e) => return Err(e.to_string()),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e.to_string());
+            }
         }
     };
     let bytes = output
         .recv_timeout(limit.saturating_sub(start.elapsed()))
-        .map_err(|_| format!("{:?} did not close its output in time", cmd.get_program()))?;
+        .map_err(|_| format!("{:?} did not close its output in time", cmd.get_program()))?
+        .map_err(|e| format!("Could not read helper output: {e}"))?;
+    if bytes.len() as u64 > OUTPUT_CAP {
+        return Err("Helper output exceeded the capture limit".into());
+    }
     Ok((status.success(), bytes))
 }
 
@@ -587,3 +598,25 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, unix))]
+mod capture_limit_tests {
+    use super::*;
+
+    #[test]
+    fn oversized_helper_output_is_not_a_successful_partial_capture() {
+        let mut command = Command::new("head");
+        command.args(["-c", &(OUTPUT_CAP + 1).to_string(), "/dev/zero"]);
+        assert!(capture(&mut command, Duration::from_secs(5)).is_err());
+    }
+
+    #[test]
+    fn complete_helper_output_is_preserved() {
+        let mut command = Command::new("printf");
+        command.arg("complete");
+        assert_eq!(
+            capture(&mut command, Duration::from_secs(5)).unwrap(),
+            (true, b"complete".to_vec())
+        );
+    }
+}
