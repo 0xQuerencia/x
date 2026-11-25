@@ -209,6 +209,12 @@ impl Grants {
             && now >= grant.expires_at
     }
 
+    #[cfg(test)]
+    pub(crate) fn expire_for_test(&self, receipt: &Receipt) {
+        let mut entries = self.grants.lock().unwrap();
+        entries.get_mut(&receipt.id).unwrap().expires_at = Instant::now();
+    }
+
     /// Only the native exact-review handler may call this. Never resurrect a
     /// revoked, spent, activated, mismatched or already renewed receipt.
     pub(crate) fn renew_queued(
