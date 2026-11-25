@@ -2655,3 +2655,19 @@ fn spoken_session_resume_requires_current_provider_evidence_after_approval() {
     assert_eq!(result.selected_session.unwrap().id.as_str(), "ses_fixture");
     assert_eq!(checks.load(Ordering::SeqCst), 2);
 }
+
+#[test]
+fn running_computer_model_permission_is_not_cached() {
+    let s = screen_rig(false);
+    let selected = s.planner.lock().unwrap().clone().unwrap();
+    s.set_computer_remote(true);
+    assert!(s.screen_decision_permission(&selected, "chrome").is_ok());
+    s.set_computer_remote(false);
+    assert!(s.screen_decision_permission(&selected, "chrome").is_err());
+    s.set_computer_remote(true);
+    s.set_planner(Some(Arc::new(ScreenPlanner {
+        local: false,
+        replies: Mutex::new(vec![]),
+    })));
+    assert!(s.screen_decision_permission(&selected, "chrome").is_err());
+}
