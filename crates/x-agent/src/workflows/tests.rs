@@ -1313,6 +1313,24 @@ mod storage {
     }
 
     #[test]
+    fn historical_graph_results_do_not_claim_code_verification() {
+        use crate::workflows::scheduler::Outcome;
+        let h = home();
+        let s = store(h.path());
+        std::fs::create_dir_all(s.dir()).unwrap();
+        let path = s.dir().join("old-graph.last.json");
+        std::fs::write(
+            path,
+            br#"{"graph_id":"old-graph","finished_at":123,"verified":1,"stopped":false,"nodes":[{"id":"backend","outcome":"verified"}]}"#,
+        )
+        .unwrap();
+        let saved = s.last_graph("old-graph").unwrap().unwrap();
+        assert_eq!(saved.verified, 0);
+        assert_eq!(saved.delivered, 1);
+        assert_eq!(saved.nodes[0].outcome, Outcome::Delivered);
+    }
+
+    #[test]
     fn saved_graph_result_omits_provider_text_and_rejects_corruption() {
         use crate::workflows::scheduler::{NodeReport, Outcome, Report as DagReport};
 
