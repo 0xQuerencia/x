@@ -65,6 +65,11 @@ impl Assignment {
         {
             return Err("The approved harness task or project changed".into());
         }
+        if matches!(&proof, Proof::ChangedFile(_))
+            && !adapter.descriptor().supports_workspace_write()
+        {
+            return Err("The harness cannot satisfy a required file change".into());
+        }
         if let Proof::ChangedFile(path) = &proof
             && (path.is_empty()
                 || path.starts_with('/')
@@ -265,7 +270,11 @@ impl Executor for ApprovedHarnessExecutor {
             workspace: assignment.worktree.path().to_path_buf(),
             prompt: goal.clone(),
             session: None,
-            access: WorkAccess::Workspace,
+            access: if assignment.adapter.descriptor().supports_workspace_write() {
+                WorkAccess::Workspace
+            } else {
+                WorkAccess::SelectionOnly
+            },
             allow_commands: Vec::new(),
         };
         let owned = match assignment.adapter.start(request, sink, &stop) {
