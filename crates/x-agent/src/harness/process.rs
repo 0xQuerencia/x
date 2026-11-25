@@ -307,11 +307,7 @@ fn supervise(
                     continue;
                 }
                 let event = (cfg.parse)(l);
-                let expected = cfg.session.as_ref().or(if cfg.require_terminal {
-                    accepted_session.as_ref()
-                } else {
-                    None
-                });
+                let expected = cfg.session.as_ref().or(accepted_session.as_ref());
                 if let (Some(expected), Some(reported)) = (expected, &event.session)
                     && expected != reported
                 {
