@@ -201,7 +201,35 @@ fn supervise(
     let (mut errors, mut stderr_tail): (Vec<String>, Vec<String>) = (vec![], vec![]);
     let mut accepted_session = None;
     let mut terminal = false;
+    #[cfg(windows)]
+    let mut exited_at = None::<Instant>;
     while open > 0 && !stop.requested() {
+        // An exited root can leave inherited pipe handles in a live descendant.
+        // EOF alone must not keep the supervisor outside its native Job cleanup.
+        // The running provider has no new total deadline; only its post-exit
+        // output drain is bounded. Check even while descendants emit output.
+        #[cfg(windows)]
+        match owned.observe_exit() {
+            Ok(true) => {
+                let ended = exited_at.get_or_insert_with(Instant::now);
+                if ended.elapsed() >= KILL_GRACE {
+                    let message = format!(
+                        "{} left owned processes running with open output after its exit",
+                        cfg.name
+                    );
+                    errors.push(message.clone());
+                    on_event(Event::new(EventKind::Error, message));
+                    break;
+                }
+            }
+            Ok(false) => {}
+            Err(_) => {
+                let message = "Could not observe the owned process exit";
+                errors.push(message.into());
+                on_event(Event::new(EventKind::Error, message));
+                break;
+            }
+        }
         match rx.recv_timeout(POLL) {
             Err(RecvTimeoutError::Timeout) => {
                 if !stalled && last.elapsed() > cfg.stall_after {

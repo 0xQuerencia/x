@@ -171,7 +171,7 @@ impl ChildGuard {
 
     /// Release the direct process handle only after exit. Job accounting can
     /// retain exited members while process handles remain open.
-    fn observe_exit(&mut self) -> Result<bool, io::Error> {
+    pub(super) fn observe_exit(&mut self) -> Result<bool, io::Error> {
         let Some(child) = self.child.as_mut() else {
             return Ok(self.exit.is_some());
         };

@@ -50,7 +50,7 @@ fn owned_job_fixture_process() {
     });
     let child_role = match role.as_str() {
         "parent" => Some("descendant"),
-        "descendant" | "leftover" => Some("grandchild"),
+        "descendant" | "leftover" | "leftover_output" => Some("grandchild"),
         _ => None,
     };
     if let Some(child_role) = child_role {
@@ -67,7 +67,7 @@ fn owned_job_fixture_process() {
     )
     .unwrap();
     println!("owned_ack");
-    if matches!(role.as_str(), "exit" | "leftover") {
+    if matches!(role.as_str(), "exit" | "leftover" | "leftover_output") {
         return;
     }
     let start = Instant::now();
@@ -308,21 +308,26 @@ fn normal_exit_reports_independent_job_closure_without_forced_termination() {
 
 #[test]
 fn zero_exit_with_leftover_owned_descendant_cannot_report_completed() {
-    let directory = tempfile::tempdir().unwrap();
-    let run = start_run("leftover", directory.path(), Arc::new(|_| {}));
-    let descendant = Identity::observe(directory.path(), "grandchild");
-    let result = joined(run);
-    assert_eq!(result.status, RunStatus::Failed);
-    assert_eq!(result.exit_code, Some(0));
-    assert!(
-        result
-            .errors
-            .iter()
-            .any(|error| error.contains("left owned processes running"))
-    );
-    assert!(matches!(
-        result.termination,
-        Some(TerminationEvidence::WindowsJobEmpty { forced: true, .. })
-    ));
-    descendant.assert_exited();
+    // Cover both explicit inherited standard streams and incidental inheritable
+    // pipe handles retained even when a grandchild's own stdout/stderr are null.
+    for role in ["leftover", "leftover_output"] {
+        let directory = tempfile::tempdir().unwrap();
+        let run = start_run(role, directory.path(), Arc::new(|_| {}));
+        let descendant = Identity::observe(directory.path(), "grandchild");
+        let result = joined(run);
+        assert_eq!(result.status, RunStatus::Failed, "{role}");
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.accepted_session.unwrap().as_str(), "ses_owned_job");
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.contains("left owned processes running"))
+        );
+        assert!(matches!(
+            result.termination,
+            Some(TerminationEvidence::WindowsJobEmpty { forced: true, .. })
+        ));
+        descendant.assert_exited();
+    }
 }

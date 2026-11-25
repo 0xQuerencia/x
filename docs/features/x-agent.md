@@ -663,6 +663,14 @@ supervisor startup failure uses the same ownership guard. An exited provider
 whose remaining Job members require termination cannot report successful
 completion, even when the provider exited zero.
 
+The Windows supervisor observes the direct process exit independently of pipe
+EOF. A descendant can retain an inherited output handle after that exit,
+including when its own standard streams were redirected. X drains remaining
+events for at most five seconds after the direct process exits, preserving an
+acknowledged session, then records failure and enters the same owned Job
+cleanup. Continuous descendant output cannot extend that drain deadline. This
+adds no total deadline to a provider whose direct process is still running.
+
 `harness::RunResult` adds optional typed `termination` evidence with
 `scope: windows_job_empty`, elapsed milliseconds and whether forced termination
 was requested. Its absence grants no native closure proof. Work summaries and
