@@ -49,6 +49,9 @@ pub struct Node {
     /// Version 3: require an observed change to this exact relative Git path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_change: Option<String>,
+    /// Version 3: require a changed, clean descendant commit as an artifact.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub required_commit: bool,
     pub job: Job,
     #[serde(default)]
     pub on_failure: OnFailure,
@@ -89,6 +92,7 @@ impl Graph {
                     requires: step.requires,
                     requires_verified: vec![],
                     required_change: None,
+                    required_commit: false,
                     job: Job::Desktop {
                         action: step.action,
                     },
@@ -122,6 +126,13 @@ impl Graph {
         for node in &self.nodes {
             if !slug(&node.id) || !ids.insert(node.id.as_str()) {
                 return Err("Graph nodes require unique safe IDs".into());
+            }
+            if node.required_commit
+                && (self.version != PROOF_VERSION
+                    || node.required_change.is_some()
+                    || !matches!(&node.job, Job::Harness { harness: HarnessKind::OpenCode, .. }))
+            {
+                return Err("Commit proof requires a v3 OpenCode job without another proof profile".into());
             }
             if let Some(path) = &node.required_change {
                 if self.version != PROOF_VERSION
@@ -253,6 +264,10 @@ impl Graph {
     }
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn slug(value: &str) -> bool {
     (1..=40).contains(&value.len())
         && value
@@ -358,6 +373,7 @@ mod tests {
             requires: vec!["first".into(), "second".into()],
             requires_verified: vec![],
             required_change: None,
+            required_commit: false,
             job: Job::Desktop {
                 action: StepAction::SwitchWorkspace { workspace: 4 },
             },
@@ -365,6 +381,27 @@ mod tests {
         });
         graph.validate().unwrap();
         assert_eq!(graph.order().unwrap(), ["first", "second", "verify"]);
+    }
+
+    #[test]
+    fn committed_artifact_requires_a_v3_writer_job() {
+        let mut graph = Graph::from_legacy(legacy(), &home()).unwrap();
+        graph.nodes[0].job = Job::Harness {
+            harness: HarnessKind::OpenCode,
+            project_id: uuid::Uuid::new_v4().to_string(),
+            goal: "commit a fix".into(),
+        };
+        graph.nodes[0].required_commit = true;
+        assert!(graph.validate().is_err());
+        graph.version = PROOF_VERSION;
+        graph.validate().unwrap();
+        graph.nodes[0].required_change = Some("src/main.rs".into());
+        assert!(graph.validate().is_err());
+        graph.nodes[0].required_change = None;
+        if let Job::Harness { harness, .. } = &mut graph.nodes[0].job {
+            *harness = HarnessKind::ClaudeCode;
+        }
+        assert!(graph.validate().is_err());
     }
 
     #[test]

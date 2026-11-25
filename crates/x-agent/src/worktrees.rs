@@ -27,6 +27,35 @@ pub struct OwnedWorktree {
     start_commit: String,
 }
 
+/// An observed immutable commit produced in an exact owned checkout.
+/// This records Git evidence, not test success or permission to integrate.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommittedArtifact {
+    project_id: Uuid,
+    run_id: Uuid,
+    node_id: String,
+    base_commit: String,
+    commit: String,
+}
+
+impl CommittedArtifact {
+    pub fn commit(&self) -> &str {
+        &self.commit
+    }
+
+    pub(crate) fn valid_for(&self, run_id: Uuid, node_id: &str) -> bool {
+        !self.project_id.is_nil()
+            && !run_id.is_nil()
+            && self.run_id == run_id
+            && self.node_id == node_id
+            && valid_slug(node_id)
+            && valid_commit(&self.base_commit)
+            && valid_commit(&self.commit)
+            && self.base_commit != self.commit
+    }
+}
+
 impl OwnedWorktree {
     pub fn path(&self) -> &Path {
         &self.path
@@ -105,6 +134,53 @@ impl Manager {
         changes.dedup();
         self.validate_owned(project, worktree)?;
         Ok(changes)
+    }
+
+    /// Inspect a committed output independently of provider prose. Uncommitted
+    /// changes are never an artifact; ignored build files are not transferred.
+    pub(crate) fn committed_artifact(
+        &self,
+        project: &Project,
+        worktree: &OwnedWorktree,
+    ) -> Result<Option<CommittedArtifact>, String> {
+        let path = self.validate_owned(project, worktree)?;
+        let commit = current_commit(&path)?;
+        if commit == worktree.start_commit() {
+            return Ok(None);
+        }
+        git(
+            &path,
+            &["merge-base", "--is-ancestor", worktree.start_commit(), &commit],
+        )?;
+        let base_tree = git(
+            &path,
+            &["rev-parse", "--verify", &format!("{}^{{tree}}", worktree.start_commit())],
+        )?;
+        let final_tree = git(&path, &["rev-parse", "--verify", &format!("{commit}^{{tree}}")])?;
+        if !valid_commit(base_tree.trim()) || !valid_commit(final_tree.trim()) {
+            return Err("Git did not return valid artifact tree identities".into());
+        }
+        if base_tree.trim() == final_tree.trim() {
+            return Ok(None);
+        }
+        let status = git(
+            &path,
+            &["status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],
+        )?;
+        if !status.is_empty() {
+            return Ok(None);
+        }
+        self.validate_owned(project, worktree)?;
+        if current_commit(&path)? != commit {
+            return Err("The artifact HEAD changed during verification".into());
+        }
+        Ok(Some(CommittedArtifact {
+            project_id: project.id,
+            run_id: worktree.run_id(),
+            node_id: worktree.task_id().to_owned(),
+            base_commit: worktree.start_commit().to_owned(),
+            commit,
+        }))
     }
 
     /// Requires explicit user approval for this exact run/task/project tuple.
@@ -441,7 +517,10 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_COMMON_DIR")
         .env_remove("GIT_INDEX_FILE")
-        .args(["-c", "core.hooksPath=", "-c", "core.fsmonitor=false"])
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_NAMESPACE")
+        .args(["--no-replace-objects", "-c", "core.hooksPath=", "-c", "core.fsmonitor=false"])
         .args(args);
     let (success, output) = crate::desktop::capture(&mut command, TIMEOUT)
         .map_err(|_| "Git worktree operation failed or timed out")?;
@@ -541,6 +620,36 @@ mod tests {
             git(&project.root, &["status", "--porcelain=v1"]).unwrap(),
             before
         );
+    }
+
+    #[test]
+    fn artifact_requires_a_changed_clean_descendant_commit() {
+        let (_dir, project, manager, sha) = fixture();
+        let owned = manager
+            .allocate(&project, Uuid::new_v4(), "backend", &sha, true)
+            .unwrap();
+        assert!(manager.committed_artifact(&project, &owned).unwrap().is_none());
+        git(
+            owned.path(),
+            &["-c", "user.name=X", "-c", "user.email=x@invalid.test",
+                "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "empty"],
+        )
+        .unwrap();
+        assert!(manager.committed_artifact(&project, &owned).unwrap().is_none());
+        fs::write(owned.path().join("artifact.txt"), "implementation").unwrap();
+        assert!(manager.committed_artifact(&project, &owned).unwrap().is_none());
+        git(owned.path(), &["add", "--", "artifact.txt"]).unwrap();
+        git(
+            owned.path(),
+            &["-c", "user.name=X", "-c", "user.email=x@invalid.test",
+                "-c", "commit.gpgsign=false", "commit", "-m", "artifact"],
+        )
+        .unwrap();
+        let artifact = manager.committed_artifact(&project, &owned).unwrap().unwrap();
+        assert_eq!(artifact.commit(), current_commit(owned.path()).unwrap());
+        assert!(artifact.valid_for(owned.run_id(), owned.task_id()));
+        fs::write(owned.path().join("partial.txt"), "not committed").unwrap();
+        assert!(manager.committed_artifact(&project, &owned).unwrap().is_none());
     }
 
     #[test]

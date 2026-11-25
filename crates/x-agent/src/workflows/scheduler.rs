@@ -460,6 +460,7 @@ mod tests {
             requires: requires.iter().map(|text| (*text).into()).collect(),
             requires_verified: vec![],
             required_change: None,
+            required_commit: false,
             job: Job::Harness {
                 harness: HarnessKind::OpenCode,
                 project_id: project_id.into(),

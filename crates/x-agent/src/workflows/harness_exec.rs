@@ -23,6 +23,8 @@ pub enum Proof {
     DeliveryOnly,
     /// Provider delivery and Git-status evidence for this precise file.
     ChangedFile(String),
+    /// A clean descendant commit whose Git tree differs from the approved base.
+    CommittedArtifact,
 }
 
 /// Constructed only after an exact project, task and worktree scope is
@@ -69,6 +71,9 @@ impl Assignment {
             && !crate::verification::valid_expected_path(path)
         {
             return Err("The expected changed file path is unsafe".into());
+        }
+        if matches!(&proof, Proof::CommittedArtifact) && *harness != HarnessKind::OpenCode {
+            return Err("This harness cannot produce a committed artifact".into());
         }
         let scope = approval_scope(node, project.id, &worktree, &proof)?;
         grants.check(&receipt, Permission::QueueHarness, &scope)?;
@@ -308,6 +313,7 @@ impl Executor for ApprovedHarnessExecutor {
             .as_ref()
             .filter(|session| session.kind() == harness_kind)
             .map(|session| session.as_str());
+        let mut artifact = None;
         let outcome = if stop.requested() || result.status == RunStatus::Cancelled {
             Outcome::Cancelled
         } else {
@@ -315,6 +321,17 @@ impl Executor for ApprovedHarnessExecutor {
                 VerifiedOutcome::Failed => Outcome::Failed,
                 VerifiedOutcome::Verified if evidence_id.is_some() => match &assignment.proof {
                     Proof::DeliveryOnly => Outcome::Delivered,
+                    Proof::CommittedArtifact => match self.worktrees.committed_artifact(
+                        &assignment.project,
+                        &assignment.worktree,
+                    ) {
+                        Ok(Some(proof)) => {
+                            artifact = Some(proof);
+                            Outcome::Verified
+                        }
+                        Ok(None) => Outcome::Failed,
+                        Err(_) => Outcome::Unverified,
+                    },
                     Proof::ChangedFile(path) => {
                         let changes = self
                             .worktrees
@@ -338,6 +355,12 @@ impl Executor for ApprovedHarnessExecutor {
                 VerifiedOutcome::Unverified | VerifiedOutcome::Verified => Outcome::Unverified,
             }
         };
+        let outcome = if stop.requested() {
+            artifact = None;
+            Outcome::Cancelled
+        } else {
+            outcome
+        };
         let persisted = match outcome {
             Outcome::Delivered => State::Delivered,
             Outcome::Verified => State::Verified,
@@ -346,7 +369,10 @@ impl Executor for ApprovedHarnessExecutor {
             Outcome::Unverified | Outcome::Skipped => State::Unverified,
         };
         if (evidence_id.is_none() && observed.get().is_some_and(Result::is_err))
-            || self.journal.settle(&claim, persisted, evidence_id).is_err()
+            || self
+                .journal
+                .settle_with_artifact(&claim, persisted, evidence_id, artifact)
+                .is_err()
         {
             return Outcome::Unverified;
         }
@@ -558,6 +584,7 @@ mod tests {
                 requires: vec![],
                 requires_verified: vec![],
                 required_change: None,
+                required_commit: false,
                 job: Job::Harness {
                     harness,
                     project_id: project.id.to_string(),

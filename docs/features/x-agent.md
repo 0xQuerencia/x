@@ -329,6 +329,16 @@ against the pinned base, including committed and untracked changes. Missing
 changes fail the node; unreadable evidence is Unverified. This is file-change
 proof, not proof of correctness, tests or handoff.
 
+A v3 OpenCode node can instead set `required_commit: true`. X verifies
+that the owned checkout ended at a new descendant commit, with a changed
+Git tree and no tracked or non-ignored uncommitted changes. It records the
+exact base and output commit IDs, project, run and node in the durable claim
+journal. `hex agent workflow claims` exposes that artifact evidence locally
+without revealing provider session IDs or prompts. The receipt binds this
+proof profile. X does not auto-commit, run tests, transfer the artifact to
+a successor's checkout, or merge it; those require separate implementation
+and approvals. Ignored build outputs are not part of the artifact.
+
 ### Verified worktree scheduling (development)
 
 The DAG scheduler now supports worktree-scoped resource locks. Jobs in the

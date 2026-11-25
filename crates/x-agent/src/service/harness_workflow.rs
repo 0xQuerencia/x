@@ -82,6 +82,7 @@ fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
                 "evidence_recorded": delivery_observed,
                 "requires_provider_check_before_retry": !delivery_observed,
                 "retry_blocked_by_delivery": delivery_observed,
+                "artifact": claim.artifact,
             })
         })
         .collect::<Vec<_>>();
@@ -198,10 +199,14 @@ impl Service {
                 projects.insert(project_id.clone(), (project, commit));
             }
             let (project, commit) = &projects[project_id];
-            let proof_note = node.required_change.as_ref().map_or_else(
-                || "delivery only".to_owned(),
-                |path| format!("required file change: {path}"),
-            );
+            let proof_note = if node.required_commit {
+                "required committed artifact".to_owned()
+            } else {
+                node.required_change.as_ref().map_or_else(
+                    || "delivery only".to_owned(),
+                    |path| format!("required file change: {path}"),
+                )
+            };
             let preview = step(
                 &format!(
                     "{} · {} · {} at {commit} · {goal} · {proof_note}",
@@ -423,10 +428,13 @@ impl Service {
                 .zip(&workflow.jobs)
                 .zip(worktrees)
             {
-                let proof = node
-                    .required_change
-                    .as_ref()
-                    .map_or(Proof::DeliveryOnly, |path| Proof::ChangedFile(path.clone()));
+                let proof = if node.required_commit {
+                    Proof::CommittedArtifact
+                } else {
+                    node.required_change
+                        .as_ref()
+                        .map_or(Proof::DeliveryOnly, |path| Proof::ChangedFile(path.clone()))
+                };
                 let scope = approval_scope(node, job.project.id, tree, &proof)?;
                 let receipt = grants.issue(
                     Permission::QueueHarness,
@@ -494,6 +502,7 @@ mod reconciliation_tests {
                 attempt: 1,
                 state: State::Claimed,
                 evidence_id: Some("ses_private_provider_id".into()),
+                artifact: None,
             },
             Claim {
                 run_id,
@@ -502,6 +511,7 @@ mod reconciliation_tests {
                 attempt: 1,
                 state: State::Claimed,
                 evidence_id: None,
+                artifact: None,
             },
         ];
         let preview = reconciliation_preview(claims);
@@ -529,6 +539,7 @@ mod reconciliation_tests {
                 attempt: 2,
                 state: State::Failed,
                 evidence_id: Some("ses_private".into()),
+                artifact: None,
             },
             Claim {
                 run_id: run,
@@ -537,6 +548,7 @@ mod reconciliation_tests {
                 attempt: 1,
                 state: State::Verified,
                 evidence_id: Some("provider_secret".into()),
+                artifact: None,
             },
         ];
         let report = claim_status_preview(claims);

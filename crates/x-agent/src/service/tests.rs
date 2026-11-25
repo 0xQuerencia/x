@@ -2329,6 +2329,7 @@ echo '{"type":"step_finish","sessionID":"ses_graph_fixture","part":{"type":"step
         requires,
         requires_verified: vec![],
         required_change: None,
+        required_commit: false,
         job: Job::Harness {
             harness,
             project_id: project.id.to_string(),
@@ -2370,6 +2371,59 @@ echo '{"type":"step_finish","sessionID":"ses_graph_fixture","part":{"type":"step
 echo '{"type":"result","subtype":"success","is_error":false,"session_id":"5e3b19e7-c7ce-42f0-919d-15a735a1ed16","result":"fixture review"}'"#,
     );
     (service.with_claude(Some(claude)), directory, repo, graph)
+}
+
+#[test]
+fn real_committed_artifact_is_recorded_and_missing_commit_blocks_dependents() {
+    for commit in [true, false] {
+        let (service, directory, _, mut graph) = graph_workflow_fixture();
+        let body = if commit {
+            r#"printf 'implementation' > artifact.txt
+git add -- artifact.txt
+git -c user.name=X -c user.email=x@invalid.test -c commit.gpgsign=false -c core.hooksPath= commit -qm artifact || exit 1
+echo '{"type":"step_start","sessionID":"ses_graph_fixture","part":{"type":"step-start"}}'"#
+        } else {
+            r#"printf 'uncommitted implementation' > artifact.txt
+echo '{"type":"step_start","sessionID":"ses_graph_fixture","part":{"type":"step-start"}}'"#
+        };
+        fake_opencode(directory.path(), body);
+        graph.version = crate::workflows::dag::PROOF_VERSION;
+        graph.nodes[0].required_commit = true;
+        graph.nodes[1].requires.clear();
+        graph.nodes[1].requires_verified = vec!["inspect".into()];
+        std::fs::write(
+            directory.path().join("state/workflows/coding-graph.json"),
+            serde_json::to_vec(&graph).unwrap(),
+        )
+        .unwrap();
+        let task = service.plan_graph_workflow(&graph.id).unwrap();
+        assert!(task.steps[0].title.contains("required committed artifact"));
+        service.approve(task.id).unwrap();
+        let snapshot = wait_for(&service, |state| !state.phase.is_busy());
+        let steps = snapshot.task.unwrap().steps;
+        let claims = service.coding_claims_summary().unwrap();
+        let job = claims["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|job| job["node_id"] == "inspect")
+            .unwrap();
+        if commit {
+            assert_eq!(snapshot.phase, Phase::Completed);
+            assert_eq!(steps[0].status, "done");
+            assert_eq!(steps[1].status, "delivered");
+            let artifact = &job["artifact"];
+            let sha = artifact["commit"].as_str().unwrap();
+            assert!(matches!(sha.len(), 40 | 64));
+            assert_ne!(artifact["commit"], artifact["base_commit"]);
+            assert_eq!(artifact["node_id"], "inspect");
+        } else {
+            assert_eq!(snapshot.phase, Phase::Failed);
+            assert_eq!(steps[0].status, "failed");
+            assert_eq!(steps[1].status, "skipped");
+            assert!(job["artifact"].is_null());
+        }
+    }
 }
 
 #[test]
