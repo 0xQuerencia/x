@@ -38,6 +38,8 @@ jobs:
       HEX_LOCAL_BUILD: "1"
       HEX_TEST_BUILD: "1"
       BLA_VENDOR: OpenBLAS
+      # Match the x86-64-v3 CPU baseline regardless of the runner's ISA.
+      TRANSCRIBE_CMAKE_ARGS: -DGGML_NATIVE=OFF -DGGML_AVX512=OFF
       OPENSSL_NO_VENDOR: "1"
       CC: clang
       CXX: clang++
@@ -71,11 +73,14 @@ jobs:
           install -Dm755 target/release/hex dist/x-linux-x64
           file dist/x-linux-x64 | grep -E 'ELF 64-bit.*x86-64'
           dist/x-linux-x64 --version
+          smoke_home=$(mktemp -d)
+          HOME="$smoke_home" python3 scripts/test-linux-service.py dist/x-linux-x64
           (cd dist && sha256sum x-linux-x64 > SHA256SUMS && sha256sum --check SHA256SUMS)
           printf '%s\n' \
             'Experimental X Linux x64 preview built on Ubuntu 24.04.' \
             'Not tested on KDE Plasma or any second-party workstation.' \
-            'Needs compatible runtime libraries (glibc >= 2.39, Wayland/X11/audio/graphics).' \
+            'Needs an x86-64-v3 CPU (including AVX2) and compatible runtime libraries.' \
+            'Requires glibc >= 2.39 and Wayland/X11/audio/graphics libraries.' \
             'KDE agent requires kdotool, Plasma 6 Wayland and X_ENABLE_EXPERIMENTAL_KDE=1.' \
             'Not an installer, .deb, .rpm, or signed stable release.' \
             > dist/README-preview.txt
@@ -128,10 +133,10 @@ jobs:
           cat > notes.md <<EOF
           **Experimental X Linux x64 preview, not a stable packaged release.**
 
-          Commit $GITHUB_SHA passed Rustfmt, x-agent tests and an ELF startup
-          check on Ubuntu 24.04. The SHA256SUMS asset is verified before upload.
-          The binary targets modern Linux distributions with compatible
-          runtime libraries, including glibc 2.39 or newer.
+          Commit $GITHUB_SHA passed Rustfmt, x-agent tests and the headless
+          service lifecycle test on Ubuntu 24.04. The SHA256SUMS asset is
+          verified before upload. The binary needs an x86-64-v3 CPU (including
+          AVX2) and compatible runtime libraries, including glibc 2.39 or newer.
 
           KDE Plasma 6 Wayland control is **experimental and untested live**:
           install kdotool and explicitly enable X_ENABLE_EXPERIMENTAL_KDE=1
