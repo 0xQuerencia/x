@@ -121,6 +121,7 @@ fn phase_label(phase: Phase) -> &'static str {
 fn step_glyph(status: &str) -> &'static str {
     match status {
         "running" => "▸",
+        "delivered" => "→",
         "launched" | "done" => "✓",
         "failed" => "✕",
         _ => "○",
@@ -699,6 +700,9 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             _ => p.text(),
         };
         let mut line = format!("{}  {}", step_glyph(&step.status), step.title);
+        if step.status == "delivered" {
+            line.push_str(" · Delivery confirmed; code not verified");
+        }
         if !step.risk.is_empty() && step.status == "pending" {
             line.push_str(&format!("  ·  {}", step.risk));
         }
