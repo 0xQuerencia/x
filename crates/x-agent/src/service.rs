@@ -1153,9 +1153,6 @@ impl Service {
         if let Some([Action::Session { goal }]) = preset.as_deref() {
             return self.plan_session(goal, options);
         }
-        if matches!(preset.as_deref(), Some([Action::Computer { .. }])) {
-            self.check_screen_may_leave()?;
-        }
         let task = self.plan_task(text, mode, preset, options)?;
         self.emit(
             "timing",
@@ -1223,6 +1220,10 @@ impl Service {
             let actions = preset.or_else(|| tools::plan_rules(text)).ok_or(
                 "Not understood. Try 'open Firefox' or 'search YouTube for ...'. Nothing was run.",
             )?;
+            tools::validate_sequence(&actions)?;
+            if actions.iter().any(|a| matches!(a, Action::Computer { .. })) {
+                self.check_screen_may_leave()?;
+            }
             let standalone = actions.len() == 1;
             actions
                 .into_iter()
@@ -1561,7 +1562,25 @@ impl Service {
             let action = &request.action;
             self.emit("action", &action.describe());
             if let Action::Computer { app, goal } = action {
-                return self.run_computer(app, goal, stop.child());
+                match self.run_computer(app, goal, stop.child()) {
+                    crate::computer::Outcome::Done(note) => {
+                        self.set_step(i, "done");
+                        self.emit("result", &note);
+                        verified += 1;
+                        if actions.len() == 1 {
+                            return self.finish(Phase::Completed, None, Some(note), None);
+                        }
+                    }
+                    crate::computer::Outcome::Cancelled => {
+                        self.set_step(i, "cancelled");
+                        return self.finish(Phase::Cancelled, None, Some("Stopped".into()), None);
+                    }
+                    crate::computer::Outcome::Failed(why) => {
+                        self.set_step(i, "failed");
+                        return self.finish(Phase::Failed, Some(why), None, None);
+                    }
+                }
+                continue;
             }
             let execution_started = Instant::now();
             let result = match action {
@@ -1651,7 +1670,7 @@ impl Service {
         self.finish(Phase::Completed, None, Some(note), None);
     }
 
-    fn run_computer(&self, app: &str, goal: &str, stop: Cancellation) {
+    fn run_computer(&self, app: &str, goal: &str, stop: Cancellation) -> crate::computer::Outcome {
         struct Link<'a>(&'a Service, Cancellation);
         impl crate::computer::Host for Link<'_> {
             fn emit(&self, kind: &str, text: &str) {
@@ -1671,19 +1690,17 @@ impl Service {
             }
         }
         if let Err(why) = self.check_screen_may_leave() {
-            self.set_step(0, "failed");
-            return self.finish(Phase::Failed, Some(why), None, None);
+            return crate::computer::Outcome::Failed(why);
         }
         let Some(planner) = self.planner.lock().ok().and_then(|p| p.clone()) else {
-            self.set_step(0, "failed");
-            return self.finish(Phase::Failed, Some("No model is set".into()), None, None);
+            return crate::computer::Outcome::Failed("No model is set".into());
         };
         let desktop = self
             .desktop
             .lock()
             .map(|d| d.clone())
             .unwrap_or_else(|p| p.into_inner().clone());
-        let outcome = crate::computer::run_with(
+        crate::computer::run_with(
             app,
             goal,
             desktop.as_ref(),
@@ -1707,21 +1724,7 @@ impl Service {
             },
             &Link(self, stop),
             &crate::computer::Limits::default(),
-        );
-        use crate::computer::Outcome;
-        match outcome {
-            Outcome::Done(note) => {
-                self.set_step(0, "done");
-                self.finish(Phase::Completed, None, Some(note), None);
-            }
-            Outcome::Cancelled => {
-                self.finish(Phase::Cancelled, None, Some("Stopped".into()), None);
-            }
-            Outcome::Failed(why) => {
-                self.set_step(0, "failed");
-                self.finish(Phase::Failed, Some(why), None, None);
-            }
-        }
+        )
     }
 
     fn run_work(&self, task: &Task, stop: &Cancellation) {
