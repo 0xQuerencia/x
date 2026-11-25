@@ -174,8 +174,10 @@ impl Grants {
             .lock()
             .map_err(|_| "Grant storage is unavailable")?;
         let grant = entries.get_mut(&receipt.id).ok_or("Approval is missing")?;
-        if !matches!(permission, Permission::QueueHarness | Permission::QueueTests)
-            || grant.permission != permission
+        if !matches!(
+            permission,
+            Permission::QueueHarness | Permission::QueueTests
+        ) || grant.permission != permission
             || &grant.scope != scope
             || grant.remaining != 1
             || Instant::now() >= grant.expires_at
@@ -194,15 +196,17 @@ impl Grants {
         scope: &Scope,
     ) -> bool {
         self.grants.lock().is_ok_and(|entries| {
-            entries.get(&receipt.id).is_some_and(|grant| {
-                Self::renewable_at(grant, permission, scope, Instant::now())
-            })
+            entries
+                .get(&receipt.id)
+                .is_some_and(|grant| Self::renewable_at(grant, permission, scope, Instant::now()))
         })
     }
 
     fn renewable_at(grant: &Grant, permission: Permission, scope: &Scope, now: Instant) -> bool {
-        matches!(permission, Permission::QueueHarness | Permission::QueueTests)
-            && grant.permission == permission
+        matches!(
+            permission,
+            Permission::QueueHarness | Permission::QueueTests
+        ) && grant.permission == permission
             && &grant.scope == scope
             && grant.remaining == 1
             && grant.renewal_available
@@ -433,7 +437,10 @@ impl Grants {
         guard.retain(|_, grant| {
             grant.remaining > 0 && (grant.expires_at > now || grant.renewal_available)
         });
-        Ok(guard.values().filter(|grant| grant.expires_at > now).count())
+        Ok(guard
+            .values()
+            .filter(|grant| grant.expires_at > now)
+            .count())
     }
 
     /// Clear all pending receipts when a workflow is stopped or its owner
