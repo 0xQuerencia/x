@@ -350,3 +350,11 @@ fn dropping_a_run_stops_its_owned_process() {
     // SAFETY: signal 0 only checks process existence.
     assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
 }
+
+#[test]
+fn forced_exit_after_output_closes_is_not_completion() {
+    let f = fixture();
+    let result = f.run("trap 'exit 0' TERM\nexec 1>&- 2>&-\nwhile :; do sleep 1; done");
+    assert_eq!(result.status, RunStatus::Failed);
+    assert!(result.errors.iter().any(|error| error.contains("did not exit")));
+}
