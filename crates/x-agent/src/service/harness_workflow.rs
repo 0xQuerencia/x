@@ -187,7 +187,11 @@ impl Service {
                     kind.label(),
                     project.root.display()
                 ),
-                "shares the goal with the harness and uses a separate Git worktree",
+                if adapter.descriptor().supports_workspace_write() {
+                    "shares the goal and allows edits in a separate Git worktree"
+                } else {
+                    "shares the goal for tool-free analysis; no workspace edits"
+                },
             );
             steps.push(preview);
             jobs.push(PlannedJob {
