@@ -295,7 +295,7 @@ impl Executor for ApprovedHarnessExecutor {
             match delivery.outcome {
                 VerifiedOutcome::Failed => Outcome::Failed,
                 VerifiedOutcome::Verified if evidence_id.is_some() => match &assignment.proof {
-                    Proof::DeliveryOnly => Outcome::Verified,
+                    Proof::DeliveryOnly => Outcome::Delivered,
                     Proof::ChangedFile(path) => {
                         match Verification::required_git_change(
                             &node.id,
@@ -316,6 +316,7 @@ impl Executor for ApprovedHarnessExecutor {
             }
         };
         let persisted = match outcome {
+            Outcome::Delivered => State::Delivered,
             Outcome::Verified => State::Verified,
             Outcome::Failed => State::Failed,
             Outcome::Cancelled => State::Cancelled,
@@ -606,7 +607,7 @@ mod tests {
             result
                 .nodes
                 .iter()
-                .all(|node| node.outcome == Outcome::Verified)
+                .all(|node| node.outcome == Outcome::Delivered)
         );
         // Receipts are consumed before delivery; a replay cannot pass preflight.
         assert!(
@@ -765,7 +766,7 @@ mod tests {
             result
                 .nodes
                 .iter()
-                .any(|node| node.outcome == Outcome::Verified)
+                .any(|node| node.outcome == Outcome::Delivered)
         );
     }
 }
