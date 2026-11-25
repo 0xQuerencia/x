@@ -34,15 +34,15 @@ x agent wake add <another-word>   # Or allow more than one
 
 Trigger words are single words, up to 24 letters or digits. A few reserved words (such as `hey` and `work`) aren't accepted.
 
-It's a spoken command prefix, not an always-listening wake-word detector. You still use your dictation shortcut to start speaking.
+By default, the prefix is recognized after you use your dictation shortcut. Linux also has opt-in hands-free listening, described below; it is off until you enable it.
 
 ## What it does
 
 - **Dictation:** Hex's local speech-to-text, pasted into whichever app you're using.
 - **Desktop:** Open or switch apps, focus windows, move between Hyprland workspaces, and open sites or searches.
 - **Browser:** With permission, inspect accessible page elements, click supported controls, and check what changed.
-- **Work:** Give [OpenCode](https://opencode.ai) a coding task, follow its progress, and stop it when you need to.
-- **Flexible commands:** An optional model can turn loosely worded requests into a small set of permitted actions. It doesn't get to run arbitrary shell commands.
+- **Work:** Review a coding plan, run independent tasks in isolated worktrees, pass committed results to dependent tasks, and run a fixed test suite. Approved coding runs can continue in the background while you use the desktop.
+- **Flexible commands:** The optional Decider chooses among the typed actions X supplies. Generative planners are disabled in the current app.
 
 X waits for the finished transcript before acting. Half a sentence won't launch anything.
 
@@ -74,12 +74,12 @@ A few useful settings:
 ```bash
 x agent voice auto                 # Dictate normally; commands start with "X"
 x agent trust on                   # Skip prompts for allowed basic actions
-x agent planner gemma4:e2b-it-qat  # Optional local Ollama planner
-x agent planner decider-flash      # Free Perplexity Decider routing (OpenRouter key required)
-x agent planner decider-flash      # Free Perplexity Flash 1.3 via OpenRouter (API key required)
-x agent planner decider            # Full Perplexity Decider 1.3 (free tier)
+x agent planner decider-flash      # Choice-only Decider (OpenRouter key required)
+x agent planner decider            # Alternative supported Decider model
+x agent planner off                # Use local rules only
 x agent computer grant chromium    # Let X inspect and operate Chromium
-x agent stop                       # Stop the current task
+x agent stop --foreground          # Stop foreground work; preserve background runs
+x agent stop                       # Emergency Stop for all owned tasks
 ```
 
 Basic launches don't need a model provider. **Work** needs an installed and configured [OpenCode](https://opencode.ai). Chrome and Chromium need `--force-renderer-accessibility` for browser control.
@@ -115,7 +115,7 @@ Three things that make X feel like part of the desktop instead of a text box.
 "X, replace it."  "X, try again."  "X, keep the original."
 ```
 
-Rewrites show a small review card, original, suggestion and a word-level diff, with **Replace / Retry / Cancel**. Nothing changes until you accept. Right before it applies, X refocuses the original window, re-reads the field, and refuses if the text changed while the card was open. "Scratch that" never sends Ctrl+Z: it only removes text it can read back and match, and otherwise asks you to select the text. Changes are made through accessibility, not keystrokes, and read back afterwards. Spacing, bullets, and removing the last sentence or word need no model. Rewrites use your planner; a remote model (Gemini, an OpenAI-compatible endpoint) always asks first, each time, before any text leaves your machine, and prompts are never stored.
+Edits show a review card with the original, suggestion and a word-level diff, with **Replace / Retry / Cancel** where applicable. Nothing changes until you accept. Right before applying an edit, X refocuses the original window, re-reads the field, and refuses if the text changed while the card was open. "Scratch that" only removes text it can read back and match, and otherwise asks you to select the text. Changes use accessibility and are read back afterwards. Spacing, bullets, and removing the last sentence or word need no model. The generative rewrite examples above need a completion-capable planner; the current native app supports choice-only Decider, so free-form rewrites and translation are unavailable through its planner settings.
 
 **Workflows.** Open **Agent -> Workflows** to build one without touching a file: a name, trigger phrases, and steps (open an app, a terminal in a folder, a folder, a web page, focus or move a window, switch workspace, wait for a window, run an X action, or an OpenCode task). Then:
 
@@ -139,7 +139,8 @@ x agent context                    # what X can see right now (never the text)
 | Hyprland / Wayland (Arch), GTK 3 text field | Verified live: context capture (~0.2s), exact selection read, search resolution, verified replace, stale-edit refusal, undo, password field refused |
 | Workflow on Hyprland | Verified live: terminal opened in a folder, found by its new window, moved to workspace 10 and confirmed, then undo left the window open on purpose (X never closes windows) |
 | Everything else in the three features | Unit and integration tests against fake desktops and fake accessibility |
-| KDE Plasma, GNOME, Sway/i3, X11-only | **Not tested.** The window backends exist, but context and workflows are unverified there |
+| Disposable Sway and Xvfb/Openbox sessions | CI exercises actual window operations; this does not establish selection/editing support or physical desktop acceptance |
+| KDE Plasma, GNOME, physical Sway/i3 and other X11 desktops | Broader context, workflow and user acceptance checks remain unverified |
 | VS Code and other Electron apps | **Not verified.** They only expose text to accessibility when accessibility is switched on, and some editors don't expose it at all. When X can't read the selection it says so and does nothing |
 | Qt apps, Firefox/Zen selections | Not tested for selection or editing |
 
@@ -157,7 +158,7 @@ remote planner. A nearby voice or recording can still create a preview. Run
 `x agent listen off` to stop and release the microphone.
 
 
-Known limits: needs `python3` with `python-gobject` and `at-spi2-core` for the selection helper; editing only works in fields that accept edits through accessibility (others are refused rather than typed into); for apps that expose no text to accessibility (browsers, some Electron apps) "search this", "open this link" and "copy this" fall back to the last text you highlighted (the Wayland primary selection, needs `wl-paste`), marked low confidence and always shown for approval even with Trusted Actions on, and never used for edits; `open terminal` supports kitty, foot and alacritty; opening a URL can't be verified; one task (or workflow) at a time; ambiguous windows in a workflow step fail with a message and a `pick` option rather than a chooser.
+Known limits: the selection helper needs `python3`, `python-gobject` and `at-spi2-core`. Editing needs fields that support accessibility edits. For apps that expose no accessible selection, "search this", "open this link" and "copy this" can use the last highlighted Wayland primary selection (`wl-paste` required), marked low confidence and always reviewed; that fallback is never used for edits. `open terminal` supports kitty, foot and alacritty. Opening a URL proves launch only. X allows one foreground task and up to four approved background coding/test runs; mixed desktop workflows remain foreground work. Standalone ambiguous window commands offer a task-scoped choice and a fresh review; ambiguity inside a compound command or saved workflow still needs an explicit target.
 
 ## Open X Quick from any Linux app
 

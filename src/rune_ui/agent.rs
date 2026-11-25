@@ -1117,7 +1117,7 @@ fn task_card(
             ));
         }
     }
-    if snapshot.computer_question.is_some() {
+    if snapshot.computer_question.is_some() || snapshot.window_question.is_some() {
         card = card.child(dialogue::panel(p, pane, snapshot));
     }
     if snapshot.phase == Phase::AwaitingApproval {
@@ -1126,6 +1126,11 @@ fn task_card(
             .computer_question
             .as_ref()
             .map(|question| question.question_id.clone());
+        let window_question = snapshot
+            .window_question
+            .as_ref()
+            .map(|question| question.question_id.clone());
+        let discard_window = window_question.clone();
         card = card.child(
             row()
                 .key("agent-approval")
@@ -1133,7 +1138,9 @@ fn task_card(
                 .child(button(
                     p,
                     "agent-approve",
-                    if question.is_some() {
+                    if window_question.is_some() {
+                        "Approve window action"
+                    } else if question.is_some() {
                         "Approve and resume"
                     } else {
                         tr("Approve and run")
@@ -1141,9 +1148,10 @@ fn task_card(
                     ButtonKind::Primary,
                     move |_: &mut Ui, _| {
                         let service = agent_host::service();
-                        let result = match &question {
-                            Some(token) => service.approve_computer_answer(id, token),
-                            None => service.approve(id),
+                        let result = match (&window_question, &question) {
+                            (Some(token), _) => service.approve_window_answer(id, token),
+                            (_, Some(token)) => service.approve_computer_answer(id, token),
+                            (None, None) => service.approve(id),
                         };
                         if let Err(error) = result {
                             agent_host::service().emit("error", &error);
@@ -1155,8 +1163,15 @@ fn task_card(
                     "agent-discard",
                     tr("Discard"),
                     ButtonKind::Secondary,
-                    |_: &mut Ui, _| {
-                        agent_host::service().cancel_foreground();
+                    move |_: &mut Ui, _| {
+                        let service = agent_host::service();
+                        if let Some(token) = &discard_window {
+                            if let Err(error) = service.cancel_window_question(id, token) {
+                                service.emit("error", &error);
+                            }
+                        } else if let Err(error) = service.cancel_foreground_task(id) {
+                            service.emit("error", &error);
+                        }
                     },
                 )),
         );
@@ -1175,27 +1190,6 @@ fn task_card(
             },
         ));
     }
-    // The Controller keeps stable window IDs for 30 seconds: these labels
-    // never recompute index -> window identity while the user is choosing.
-    if matches!(snapshot.phase, Phase::Failed | Phase::Completed)
-        && let Ok(choices) = ::x_agent::wm::choices()
-    {
-        for (i, choice) in choices.iter().enumerate() {
-            let index = u8::try_from(i + 1).unwrap_or_default();
-            if index == 0 {
-                break;
-            }
-            card = card.child(button(
-                p,
-                &format!("agent-window-choice-{index}"),
-                &format!("{index}. {}", choice.label),
-                ButtonKind::Secondary,
-                move |_: &mut Ui, _| {
-                    agent_host::handle(AgentAction::Choose { index });
-                },
-            ));
-        }
-    }
     if snapshot.phase == Phase::Completed
         && (::x_agent::wm::recent_undo_available() || ::x_agent::sys::recent_undo_available())
     {
@@ -1210,13 +1204,24 @@ fn task_card(
         ));
     }
     if matches!(snapshot.phase, Phase::Running | Phase::WaitingForInput) {
+        let id = task.id;
+        let window_question = snapshot
+            .window_question
+            .as_ref()
+            .map(|question| (question.task_id, question.question_id.clone()));
         card = card.child(button(
             p,
             "agent-stop",
             tr("Stop"),
             ButtonKind::Danger,
-            |_: &mut Ui, _| {
-                agent_host::handle(AgentAction::StopForeground);
+            move |_: &mut Ui, _| {
+                if let Some((id, token)) = &window_question {
+                    if let Err(error) = agent_host::service().cancel_window_question(*id, token) {
+                        agent_host::service().emit("error", &error);
+                    }
+                } else {
+                    agent_host::handle(AgentAction::StopTask { id });
+                }
             },
         ));
     }

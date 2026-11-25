@@ -613,7 +613,7 @@ impl Host for NodeHost<'_> {
             let key = WindowKey::new(win)?;
             let current = key.current(self.inner)?;
             self.stop.check()?;
-            self.inner.focus(&current)?;
+            self.inner.focus_scoped(&current, self.stop)?;
             if self
                 .inner
                 .focused()?
@@ -628,7 +628,7 @@ impl Host for NodeHost<'_> {
     }
     fn switch_workspace(&self, workspace: i64) -> Result<(), String> {
         self.mutation(|| {
-            self.inner.switch_workspace(workspace)?;
+            self.inner.switch_workspace_scoped(workspace, self.stop)?;
             if self.inner.workspace()? == workspace {
                 Ok(())
             } else {
@@ -644,7 +644,8 @@ impl Host for NodeHost<'_> {
             }
             let current = key.current(self.inner)?;
             self.stop.check()?;
-            self.inner.move_window(&current, workspace)?;
+            self.inner
+                .move_window_scoped(&current, workspace, self.stop)?;
             if key.current(self.inner)?.workspace == workspace {
                 Ok(())
             } else {
@@ -657,7 +658,7 @@ impl Host for NodeHost<'_> {
             let key = WindowKey::new(win)?;
             let current = key.current(self.inner)?;
             self.stop.check()?;
-            self.inner.close_window(&current)?;
+            self.inner.close_window_scoped(&current, self.stop)?;
             if self
                 .inner
                 .windows()?

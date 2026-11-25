@@ -121,7 +121,13 @@ impl Service {
             question_token: state
                 .computer_dialogue
                 .as_ref()
-                .map(|pending| pending.question_token()),
+                .map(|pending| pending.question_token())
+                .or_else(|| {
+                    state
+                        .window_dialogue
+                        .as_ref()
+                        .map(|pending| pending.question_token())
+                }),
         })
     }
 

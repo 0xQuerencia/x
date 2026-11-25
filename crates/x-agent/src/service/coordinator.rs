@@ -91,6 +91,7 @@ impl State {
             computer_apps: self.computer_apps.clone(),
             computer_remote: self.computer_remote,
             computer_dialogue: None,
+            window_dialogue: None,
             guard: None,
             edit: None,
             workflow: None,

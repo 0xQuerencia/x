@@ -6,6 +6,11 @@ registry, session picker, workflow validation, owner approval and execution
 service. Creating a draft or preview does not issue job grants, start a
 provider, run tests or allocate worktrees.
 
+For a local Markdown roadmap with stable task IDs, completion markers and
+dependencies, [roadmap proposals](roadmap-import.md) prepare up to three
+independent changes through the same graph review. That entry point currently
+uses the CLI; the native composer remains the single/two-task form described here.
+
 ## Create and review a task
 
 1. Use **Browse projects** and select a registered project. The composer shows

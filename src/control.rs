@@ -264,7 +264,23 @@ pub enum AgentAction {
         id: u64,
         question: String,
     },
+    AnswerWindow {
+        id: u64,
+        question: String,
+        text: String,
+    },
+    ApproveWindowAnswer {
+        id: u64,
+        question: String,
+    },
+    CancelWindowQuestion {
+        id: u64,
+        question: String,
+    },
     StopForeground,
+    StopTask {
+        id: u64,
+    },
     StopRun {
         id: u64,
     },
@@ -272,7 +288,7 @@ pub enum AgentAction {
         id: u64,
         index: usize,
     },
-    /// Select from a pending compositor window choice (one-based index).
+    /// Select from the current task's window list for a new review (one-based).
     Choose {
         index: u8,
     },
@@ -380,7 +396,7 @@ pub enum AgentAction {
         command: String,
         value: String,
     },
-    /// The local Ollama model that plans speech the rules do not understand, or off.
+    /// A supported choice-only Decider provider, or off.
     Planner {
         model: String,
     },

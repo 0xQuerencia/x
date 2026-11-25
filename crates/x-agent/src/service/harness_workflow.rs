@@ -280,6 +280,7 @@ impl Service {
                     return Err("The selected project changed while preparing the workflow".into());
                 }
                 let commit = manager.starting_commit(&project)?;
+                super::roadmap::validate_source(&graph, &project, &commit, &home)?;
                 projects.insert(project_id.clone(), (project, commit));
             }
             let (project, commit) = &projects[project_id];
@@ -341,8 +342,11 @@ impl Service {
             return Err(busy(state.phase));
         }
         state.serial += 1;
+        let source_note = graph.roadmap.as_ref().map_or_else(String::new, |source| {
+            format!(" · Markdown source {} (SHA-256 {}), roadmap {} tasks {}. Completion markers are author-supplied; semantic code/PR matching is not performed.", source.path.display(), source.sha256, source.roadmap_id, source.tasks.iter().map(|task| task.task_id.as_str()).collect::<Vec<_>>().join(", "))
+        });
         let preview = format!(
-            "Run reviewed workflow {} with coding checkouts in {} (queued jobs may start for 30 minutes after approval; desktop steps reacquire input and recheck exact targets)",
+            "Run reviewed workflow {} with coding checkouts in {} (queued jobs may start for 30 minutes after approval; desktop steps reacquire input and recheck exact targets){source_note}",
             graph.name,
             base.display()
         );
@@ -491,6 +495,15 @@ impl Service {
                     || current.git_common_dir != job.project.git_common_dir
                 {
                     return Err("The registered project changed after the workflow preview".into());
+                }
+                if workflow.graph.roadmap.is_some() {
+                    let base = workflow.manager.starting_commit(&current)?;
+                    super::roadmap::validate_source(
+                        &workflow.graph,
+                        &current,
+                        &base,
+                        &workflow.home,
+                    )?;
                 }
             }
         }

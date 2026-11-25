@@ -9,6 +9,7 @@
 pub mod a11y;
 pub mod bundle;
 pub mod commands;
+pub(crate) mod references;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

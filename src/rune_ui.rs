@@ -54,6 +54,7 @@ mod practice;
 mod scenes;
 #[cfg(hex_capture)]
 mod scrawl;
+mod scrolling;
 mod settings;
 mod shortcut_mode;
 mod sidebar;
@@ -67,9 +68,7 @@ mod vocabulary;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rune::{
-    Anim, AppSpec, Cx, El, Icon, ScrollSpec, TextEdit, Tx, Waker, col, el, icon, row, text,
-};
+use rune::{Anim, AppSpec, Cx, El, Icon, TextEdit, Tx, Waker, col, el, icon, row, text};
 
 use crate::agent_host;
 use crate::app_settings::{AppSettings, HotkeyBinding, HotkeyKey, HotkeyModifiers, ModifierSide};
@@ -84,6 +83,7 @@ use controls::{METRICS, Paint};
 use host::{Backend, Request, ShortcutTarget};
 use onboarding_kit::live::Page;
 use scenes::{SCENES, Scene, fixture, mac_fixture, portal_fixture};
+use scrolling::{faded_body, scroll_body};
 use settings::Capture;
 use sidebar::{BuildKind, Pane, sidebar, title_bar};
 
@@ -1480,32 +1480,6 @@ fn pane_header(p: Paint, title: &str, switch: Option<El>, actions: Vec<El>) -> E
         .children(switch.map(|switch| switch.ml(8.0)))
         .child(el().key("header-spacer").grow(1.0))
         .children(actions)
-}
-
-/// How far a scroll body's top and bottom edges fade out.
-const SCROLL_FADE: (f32, f32) = (4.0, 24.0);
-
-/// A vertically scrolling body whose edges fade out. At rest its content
-/// sits clear of the fades, so the first and last borders, rings, and fills
-/// are never cut; content needing room beside the edges (bordered cards)
-/// pads itself horizontally.
-fn scroll_body(key: &str, content: El) -> El {
-    faded_body(key, content, SCROLL_FADE)
-}
-
-/// A [`scroll_body`] with its own top and bottom fades.
-fn faded_body(key: &str, content: El, (top, bottom): (f32, f32)) -> El {
-    col()
-        .key(key)
-        .grow(1.0)
-        .shrink()
-        // Shrinks below its content in a fixed-height parent (#906).
-        .min_h(0.0)
-        .clip_fade(0.0, top, 0.0, bottom)
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
-        .child(col().key("inset").pt(top).pb(bottom).child(content))
 }
 
 #[cfg(all(test, target_os = "linux"))]

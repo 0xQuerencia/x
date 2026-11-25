@@ -6,6 +6,8 @@ use x_agent::service::Service;
 use x_agent::workflows::Store;
 use x_agent::workflows::dag::{Graph, Job};
 
+mod roadmap;
+
 use crate::control::ControlReply;
 
 fn summary(store: &Store) -> serde_json::Value {
@@ -86,6 +88,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
     let need =
         |what: &str| ControlReply::error("usage", format!("agent workflow {command} needs {what}"));
     match command {
+        "roadmap-inspect" | "roadmap-plan" => roadmap::handle(svc, command, value),
         "list" => ControlReply::done(summary(&store).to_string()),
         "dir" => ControlReply::done(store.dir().display().to_string()),
         "show" if value.is_empty() => need("a workflow id"),
@@ -220,6 +223,7 @@ mod tests {
             id: "review".into(),
             name: "Review".into(),
             triggers: vec![],
+            roadmap: None,
             nodes: vec![Node {
                 id: "backend".into(),
                 after: vec![],

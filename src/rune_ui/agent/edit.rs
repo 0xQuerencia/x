@@ -149,8 +149,10 @@ pub(super) fn card(p: Paint, task: &Task, preview: &Preview) -> El {
         "edit-cancel",
         tr("Cancel"),
         ButtonKind::Secondary,
-        |_: &mut Ui, _| {
-            agent_host::service().cancel();
+        move |_: &mut Ui, _| {
+            if let Err(error) = agent_host::service().cancel_foreground_task(id) {
+                agent_host::service().emit("error", &error);
+            }
         },
     ));
     card.child(actions)

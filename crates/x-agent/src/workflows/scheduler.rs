@@ -514,6 +514,7 @@ mod tests {
             id: "parallel-fixture".into(),
             name: "Parallel fixture".into(),
             triggers: vec![],
+            roadmap: None,
             nodes: vec![job("front", first, &[]), job("back", second, &[])],
         }
     }

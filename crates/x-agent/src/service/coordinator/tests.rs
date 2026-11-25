@@ -192,7 +192,9 @@ fn real_background_processes_keep_independent_state_and_foreground_commands_work
     // The cancelled runner has joined its actual shell process before publishing completion.
     assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
     assert!(service.cancel_run(second + 100).is_err());
-    service.cancel_foreground();
+    let preview = service.plan("open firefox", Mode::Actions).unwrap();
+    assert!(service.cancel_foreground_task(desktop.id).is_err());
+    service.cancel_foreground_task(preview.id).unwrap();
     assert_eq!(
         service
             .snapshot(0)
@@ -211,7 +213,7 @@ fn real_background_processes_keep_independent_state_and_foreground_commands_work
             .iter()
             .all(|run| !run.task.phase.is_busy())
     });
-    assert_eq!(service.snapshot(0).phase, Phase::Completed);
+    assert_eq!(service.snapshot(0).phase, Phase::Cancelled);
 }
 
 #[cfg(unix)]

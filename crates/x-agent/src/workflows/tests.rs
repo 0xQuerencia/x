@@ -1123,6 +1123,7 @@ mod storage {
             id: "coding-graph".into(),
             name: "Review backend".into(),
             triggers: vec![],
+            roadmap: None,
             nodes: vec![Node {
                 id: "backend".into(),
                 after: vec![],

@@ -14,6 +14,15 @@ impl Service {
     }
 
     pub(super) fn approve_from(&self, task_id: u64, approval: Approval) -> Result<(), String> {
+        self.approve_with_window(task_id, approval, None)
+    }
+
+    pub(super) fn approve_with_window(
+        &self,
+        task_id: u64,
+        approval: Approval,
+        question_id: Option<&str>,
+    ) -> Result<(), String> {
         let (
             task,
             actions,
@@ -37,6 +46,20 @@ impl Service {
                     ),
                     Approval::Automatic => Ok(()),
                 };
+            }
+            match (&s.window_dialogue, question_id) {
+                (Some(pending), Some(question_id)) => pending.approved(&s, task_id, question_id)?,
+                (Some(_), None) => {
+                    return match approval {
+                        Approval::User => Err(
+                            "Choose and review the window with its current task and question token"
+                                .into(),
+                        ),
+                        Approval::Automatic => Ok(()),
+                    };
+                }
+                (None, Some(_)) => return Err("That window question is no longer current".into()),
+                (None, None) => {}
             }
             let matches_task = s.task.as_ref().is_some_and(|t| t.id == task_id);
             if !matches_task || s.phase != Phase::AwaitingApproval {
@@ -67,6 +90,7 @@ impl Service {
                 emit(&mut s, "approval", &format!("approved task {task_id}"));
             }
             set_phase(&mut s, Phase::Running);
+            s.window_dialogue = None;
             s.stop = Cancellation::default();
             s.active_graph_stops = s
                 .graph_workflow
@@ -185,6 +209,16 @@ impl Service {
         };
         if step.request.as_ref().map(|request| request.idempotency_key) != Some(id) {
             return Ok(false);
+        }
+        if state
+            .actions
+            .get(id.step)
+            .and_then(|request| request.reference_expires)
+            .is_some_and(|expires| Instant::now() >= expires)
+        {
+            return Err(
+                "The reviewed window reference expired before dispatch; repeat the request".into(),
+            );
         }
         audit(&state, AuditKind::Claimed, Some(id.step))?;
         if let Some(task) = state.task.as_mut() {

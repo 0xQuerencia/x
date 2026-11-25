@@ -585,7 +585,7 @@ impl Action {
                 target: target.clone(),
                 ws: ws.clone(),
             };
-            return crate::wm::run_with_target(&req, prepared)
+            return crate::wm::run_with_target_scoped(&req, prepared, stop)
                 .map(ExecutionOutcome::from)
                 .map_err(|e| e.to_string());
         }

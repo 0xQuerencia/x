@@ -310,6 +310,7 @@ fn graph_from_request(request: &Request) -> Result<Graph, String> {
             .take(80)
             .collect(),
         triggers: vec![],
+        roadmap: None,
         nodes,
     };
     graph.validate()?;

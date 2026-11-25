@@ -214,6 +214,11 @@ impl Service {
                 .ok_or_else(|| "Stop requested".into());
         }
         if mode == Mode::Actions
+            && let Some(result) = self.answer_current_window_reference(text)
+        {
+            return result;
+        }
+        if mode == Mode::Actions
             && let Some(command) = project_commands::parse(text)
         {
             return self.plan_project_command(command);
@@ -403,11 +408,13 @@ impl Service {
                 .map(|action| {
                     let action = action.validate()?;
                     let target = match &action {
-                        Action::Window {
-                            op: crate::wm::Op::Close,
-                            target,
-                            ..
-                        } if standalone => self.launcher.prepare_close(target)?,
+                        Action::Window { op, target, ws } if standalone => {
+                            self.launcher.prepare_window(&crate::wm::Request {
+                                op: op.clone(),
+                                target: target.clone(),
+                                ws: ws.clone(),
+                            })?
+                        }
                         _ => None,
                     };
                     Ok((action, target))
@@ -424,7 +431,7 @@ impl Service {
             planning.stop.check()?;
         }
         let id = s.serial + 1;
-        let (steps, actions, workspace) = match mode {
+        let (mut steps, actions, workspace) = match mode {
             Mode::Actions => {
                 let actions: Vec<_> = prepared
                     .into_iter()
@@ -507,8 +514,17 @@ impl Service {
                 (steps, vec![], Some(ws.display().to_string()))
             }
         };
+        let window_dialogue = window_dialogue::PendingWindow::from_requests(&actions)?;
+        let phase = if window_dialogue.is_some() {
+            steps[0].status = "waiting_input".into();
+            steps[0].detail = "Choose a displayed window, then review the exact target".into();
+            Phase::WaitingForInput
+        } else {
+            Phase::AwaitingApproval
+        };
         s.serial = id;
         s.review = if mode == Mode::Actions
+            && window_dialogue.is_none()
             && !options.require_review
             && actions
                 .iter()
@@ -523,6 +539,7 @@ impl Service {
         s.guard = options.guard;
         s.edit = None;
         s.computer_dialogue = None;
+        s.window_dialogue = window_dialogue;
         s.workflow = None;
         s.graph_workflow = None;
         s.project_command = None;
@@ -531,7 +548,7 @@ impl Service {
             mode,
             text: text.into(),
             steps,
-            phase: Phase::AwaitingApproval,
+            phase,
             error: None,
             summary: None,
             changed_files: None,
@@ -547,7 +564,7 @@ impl Service {
             blocked: vec![],
             edit: None,
         };
-        s.phase = Phase::AwaitingApproval;
+        s.phase = phase;
         s.actions = actions;
         s.task = Some(task.clone());
         audit_best_effort(&mut s, AuditKind::Planned, None);

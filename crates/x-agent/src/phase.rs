@@ -40,7 +40,7 @@ impl Phase {
                 | (Transcribing, Planning | Idle)
                 | (
                     Planning,
-                    AwaitingApproval | Idle | Completed | Failed | Cancelled
+                    AwaitingApproval | WaitingForInput | Idle | Completed | Failed | Cancelled
                 )
                 | (AwaitingApproval, Running | Failed | Cancelled)
                 | (Running, WaitingForInput | Completed | Failed | Cancelled)

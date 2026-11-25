@@ -38,9 +38,11 @@ mod planning;
 mod policy;
 mod project_commands;
 mod request;
+pub mod roadmap;
 mod session_context;
 mod session_targets;
 mod test_worktree;
+mod window_dialogue;
 mod work;
 mod workflow;
 pub use computer_dialogue::ComputerQuestion;
@@ -54,6 +56,7 @@ pub use policy::AutonomyMode;
 use policy::{Approval, Review};
 pub use request::RequestMetadata;
 use request::{ActionId, ActionRequest};
+pub use window_dialogue::{WindowChoice, WindowQuestion};
 
 /// Human-facing impact is derived from the exact same exhaustive risk model
 /// that gates autonomous execution. A close must never be labelled a launch.
@@ -196,6 +199,8 @@ pub struct Snapshot {
     pub computer_remote: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub computer_question: Option<ComputerQuestion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_question: Option<WindowQuestion>,
 }
 
 /// Turns speech the rules do not understand into registry actions. Its output is only
@@ -258,6 +263,7 @@ struct State {
     computer_apps: Vec<String>,
     computer_remote: bool,
     computer_dialogue: Option<computer_dialogue::PendingComputer>,
+    window_dialogue: Option<window_dialogue::PendingWindow>,
     /// The snapshot a contextual plan was resolved from, rechecked just before it runs.
     guard: Option<Guard>,
     /// The private working state of a pending text edit; never serialized.
@@ -368,6 +374,7 @@ impl Service {
             computer_apps: vec![],
             computer_remote: false,
             computer_dialogue: None,
+            window_dialogue: None,
             guard: None,
             edit: None,
             workflow: None,
@@ -521,6 +528,7 @@ impl Service {
 
     pub fn snapshot(&self, since: u64) -> Snapshot {
         self.expire_computer_question();
+        self.expire_window_question();
         let background_runs = self.background_snapshots();
         // Stop and approved harness issuance acquire State before Grants.
         // Maintain that order here to prevent an Agent poll/Stop deadlock.
@@ -550,6 +558,7 @@ impl Service {
                 .computer_dialogue
                 .as_ref()
                 .map(|pending| pending.preview()),
+            window_question: s.window_dialogue.as_ref().map(|pending| pending.preview()),
             opencode_found: self.harness.is_some(),
             harness: self.harness.as_ref().map(|adapter| adapter.descriptor()),
             selected_session: s.selected_session.clone(),

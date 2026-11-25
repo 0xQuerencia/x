@@ -553,46 +553,20 @@ pub fn intercept(mode: VoiceMode, text: &str) -> bool {
     plan_spoken(mode, &command)
 }
 
-/// A bare numbered answer is treated as a choice only during a pending
-/// owner-approved window disambiguation. Ordinary dictation stays untouched.
-fn spoken_window_number(text: &str) -> Option<usize> {
-    let lower = text
-        .trim()
-        .trim_end_matches(['.', '!', '?'])
-        .to_ascii_lowercase();
-    let index = match lower.as_str() {
-        "1" | "one" | "first" | "number one" => 1,
-        "2" | "two" | "second" | "number two" => 2,
-        "3" | "three" | "third" | "number three" => 3,
-        "4" | "four" | "fourth" | "number four" => 4,
-        "5" | "five" | "fifth" | "number five" => 5,
-        "6" | "six" | "sixth" | "number six" => 6,
-        "7" | "seven" | "seventh" | "number seven" => 7,
-        "8" | "eight" | "eighth" | "number eight" => 8,
-        "9" | "nine" | "ninth" | "number nine" => 9,
-        "10" | "ten" | "tenth" | "number ten" => 10,
-        _ => return None,
-    };
-    Some(index)
-}
-
+/// Raw references resolve only within the currently displayed task list.
+/// A recognized answer creates a new review; it never invokes global wm::choose.
 fn follow_up_window_choice(text: &str) -> Option<Result<String, String>> {
-    let index = spoken_window_number(text)?;
-    let choices = x_agent::wm::choices().ok()?;
-    if choices.is_empty() {
-        return None;
-    }
-    Some(service().with_desktop_control(|| {
-        x_agent::wm::choose(index)
-            .map_err(|e| e.to_string())
-            .and_then(|out| {
-                if out.effect == x_agent::wm::Effect::Unverified {
-                    Err(out.message)
+    service()
+        .answer_current_window_reference(text)
+        .map(|result| {
+            result.map(|task| {
+                if task.phase == x_agent::phase::Phase::Cancelled {
+                    "Window choice cancelled".into()
                 } else {
-                    Ok(out.message)
+                    "Window selected. Review the exact target and approve in X.".into()
                 }
             })
-    }))
+        })
 }
 
 /// Plans a spoken command. True when X took it; false when it was not a command X knows
@@ -777,6 +751,10 @@ pub fn handle(action: AgentAction) -> ControlReply {
             svc.cancel_foreground();
             ControlReply::done("Foreground Stop requested")
         }
+        AgentAction::StopTask { id } => match svc.cancel_foreground_task(id) {
+            Ok(()) => ControlReply::done("Task Stop requested"),
+            Err(error) => ControlReply::error("refused", error),
+        },
         AgentAction::StopRun { id } => match svc.cancel_run(id) {
             Ok(()) => ControlReply::done("Run Stop requested"),
             Err(error) => ControlReply::error("refused", error),
@@ -797,22 +775,38 @@ pub fn handle(action: AgentAction) -> ControlReply {
                 Err(error) => ControlReply::error("refused", error),
             }
         }
-        AgentAction::Choose { index } => match svc.with_desktop_control(|| {
-            x_agent::wm::choose(usize::from(index)).map_err(|error| error.to_string())
-        }) {
-            Ok(outcome) if outcome.effect == x_agent::wm::Effect::Unverified => {
-                svc.emit("error", &outcome.message);
-                ControlReply::error("unverified", outcome.message)
+        AgentAction::Choose { index } => {
+            let Some(question) = svc.snapshot(0).window_question else {
+                return ControlReply::error(
+                    "refused",
+                    "No task window choice is waiting. Repeat the window command on its own to get a fresh list.",
+                );
+            };
+            match svc.answer_window(question.task_id, &question.question_id, &index.to_string()) {
+                Ok(_) => snapshot(0),
+                Err(error) => ControlReply::error("refused", error),
             }
-            Ok(outcome) => {
-                svc.emit("result", &outcome.message);
-                ControlReply::done(outcome.message)
+        }
+        AgentAction::AnswerWindow { id, question, text } => {
+            match svc.answer_window(id, &question, &text) {
+                Ok(_) => snapshot(0),
+                Err(error) => ControlReply::error("refused", error),
             }
-            Err(error) => {
-                svc.emit("error", &error.to_string());
-                ControlReply::error("refused", error.to_string())
+        }
+        AgentAction::ApproveWindowAnswer { id, question } => {
+            match svc.approve_window_answer(id, &question) {
+                Ok(()) => ControlReply::done(
+                    "Window action approved; running against the reviewed identity",
+                ),
+                Err(error) => ControlReply::error("refused", error),
             }
-        },
+        }
+        AgentAction::CancelWindowQuestion { id, question } => {
+            match svc.cancel_window_question(id, &question) {
+                Ok(()) => ControlReply::done("Window choice cancelled"),
+                Err(error) => ControlReply::error("refused", error),
+            }
+        }
         AgentAction::Undo => {
             let result = svc.with_desktop_control(|| {
                 use x_agent::wm::{Op, Request, Target};
@@ -1035,20 +1029,6 @@ mod tests {
         assert_eq!(report["ready"], ready);
         assert!(report["desktop"]["capabilities"].is_array());
         assert!(lines.contains("running X service"));
-    }
-
-    #[test]
-    fn spoken_choice_only_accepts_a_bare_number_not_prose() {
-        assert_eq!(spoken_window_number("two"), Some(2));
-        assert_eq!(spoken_window_number("number three."), Some(3));
-        assert_eq!(spoken_window_number("second"), Some(2));
-        for text in [
-            "the number two",
-            "I saw two terminals",
-            "close the second window",
-        ] {
-            assert_eq!(spoken_window_number(text), None);
-        }
     }
 
     #[test]
