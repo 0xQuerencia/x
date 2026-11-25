@@ -32,6 +32,7 @@ mod harness_workflow;
 mod integration;
 mod launch;
 mod ledger;
+mod mixed_proposal;
 mod lifecycle;
 mod notices;
 mod planning;
