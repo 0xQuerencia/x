@@ -358,3 +358,15 @@ fn forced_exit_after_output_closes_is_not_completion() {
     assert_eq!(result.status, RunStatus::Failed);
     assert!(result.errors.iter().any(|error| error.contains("did not exit")));
 }
+
+#[test]
+fn fresh_runs_cannot_switch_acknowledged_session_identity() {
+    let f = fixture();
+    let result = f.run(concat!(
+        "echo '{\"type\":\"step_start\",\"sessionID\":\"ses_first\",\"part\":{\"type\":\"step-start\"}}'\n",
+        "echo '{\"type\":\"text\",\"sessionID\":\"ses_other\",\"part\":{\"text\":\"unrelated output\"}}'\n",
+    ));
+    assert_eq!(result.status, RunStatus::Failed);
+    assert_eq!(result.accepted_session.unwrap().as_str(), "ses_first");
+    assert!(result.errors.iter().any(|error| error.contains("different session")));
+}
