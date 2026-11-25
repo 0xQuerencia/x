@@ -89,6 +89,41 @@ fn drive(screens: Vec<Observation>, replies: &[&str]) -> (Outcome, Vec<UiAct>) {
 }
 
 #[test]
+fn already_cancelled_computer_run_does_not_touch_desktop() {
+    struct Stopped;
+    impl Host for Stopped {
+        fn emit(&self, _: &str, _: &str) {}
+        fn stopped(&self) -> bool {
+            true
+        }
+        fn open_app(&self, _: &str) -> Result<(), String> {
+            panic!("cancelled task must not launch")
+        }
+    }
+    struct Untouched;
+    impl Desktop for Untouched {
+        fn find_window(&self, _: &str) -> Result<Win, String> {
+            panic!("cancelled task must not inspect windows")
+        }
+        fn observe(&self, _: &Win) -> Result<Observation, String> {
+            panic!("cancelled task must not observe")
+        }
+        fn act(&self, _: &Win, _: &UiAct) -> Result<(), String> {
+            panic!("cancelled task must not act")
+        }
+    }
+    let outcome = run_with(
+        "chrome",
+        "read status",
+        &Untouched,
+        &|_, _, _, _| panic!("cancelled task must not call model"),
+        &Stopped,
+        &Limits::default(),
+    );
+    assert_eq!(outcome, Outcome::Cancelled);
+}
+
+#[test]
 fn rebinding_never_switches_to_a_different_window_process() {
     struct Changed;
     impl Desktop for Changed {
