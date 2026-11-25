@@ -2145,6 +2145,7 @@ fn work_uses_the_same_adapter_interface_with_a_fake() {
                 errors: Vec::new(),
                 stderr: Vec::new(),
                 changed_files: None,
+                termination: None,
             }
         }
     }

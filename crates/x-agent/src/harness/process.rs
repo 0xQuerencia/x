@@ -3,24 +3,37 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
 use super::evidence::{change_snapshot, diff_snapshots};
-use super::{Event, EventKind, EventSink, RunResult, RunStatus, SessionId};
+use super::{Event, EventKind, EventSink, RunResult, RunStatus, SessionId, TerminationEvidence};
 use crate::cancellation::Cancellation;
 
 const POLL: Duration = Duration::from_millis(200);
 const KILL_GRACE: Duration = Duration::from_secs(5);
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const OUTPUT_QUEUE: usize = 32;
+
+#[cfg(any(windows, test))]
+mod closure;
+#[cfg(unix)]
+mod unix;
+#[cfg(windows)]
+mod windows;
+#[cfg(unix)]
+use unix::ChildGuard;
+#[cfg(windows)]
+use windows::ChildGuard;
+
+struct Finished {
+    exit_code: Option<i32>,
+    termination: Option<TerminationEvidence>,
+    failure: Option<&'static str>,
+}
 
 pub(crate) struct Spec {
     pub name: &'static str,
@@ -63,24 +76,11 @@ impl Run {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(unix)]
-        cmd.process_group(0);
-        #[cfg(windows)]
-        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
-        let child = crate::retry_busy(|| {
-            if stop.requested() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Interrupted,
-                    "Stopped",
-                ));
-            }
-            cmd.spawn()
-        })
-        .map_err(|error| format!("Could not start {}: {error}", spec.name))?;
+        let mut owned = ChildGuard::spawn(&mut cmd, &stop, Arc::clone(&on_event))
+            .map_err(|error| format!("Could not start {}: {error}", spec.name))?;
         let child_stop = stop.clone();
-        let mut owned = ChildGuard(child);
         let handle = thread::Builder::new()
-            .spawn(move || supervise(owned.child_mut(), &spec, before, &child_stop, on_event))
+            .spawn(move || supervise(&mut owned, &spec, before, &child_stop, on_event))
             .map_err(|error| format!("Could not start supervisor: {error}"))?;
         Ok(Self {
             canceller: Canceller { stop },
@@ -92,7 +92,7 @@ impl Run {
         self.canceller.clone()
     }
 
-    /// Stop the run: SIGTERM the whole process group, SIGKILL after a grace period.
+    /// Stop the owned Unix process group or private Windows Job.
     pub fn cancel(&self) {
         self.canceller.cancel();
     }
@@ -108,6 +108,7 @@ impl Run {
                 errors: vec!["supervisor thread panicked".into()],
                 stderr: vec![],
                 changed_files: None,
+                termination: None,
             })
     }
 }
@@ -124,77 +125,6 @@ impl Drop for Run {
 impl super::OwnedRun for Run {
     fn join(self: Box<Self>) -> RunResult {
         (*self).join()
-    }
-}
-
-#[cfg(windows)]
-const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-
-/// A polite stop first, then a forced one.
-#[derive(Clone, Copy)]
-enum Signal {
-    Term,
-    Kill,
-}
-
-#[cfg(unix)]
-fn signal_group(pgid: i32, sig: Signal) {
-    if pgid > 0 {
-        let sig = match sig {
-            Signal::Term => libc::SIGTERM,
-            Signal::Kill => libc::SIGKILL,
-        };
-        // SAFETY: plain syscall on a process group we created with process_group(0).
-        unsafe { libc::killpg(pgid, sig) };
-    }
-}
-
-/// Windows has no process-group signals; `taskkill /T` ends the whole process tree.
-#[cfg(windows)]
-fn signal_group(pgid: i32, sig: Signal) {
-    if pgid > 0 {
-        let mut cmd = Command::new("taskkill");
-        cmd.args(["/PID", &pgid.to_string(), "/T"]);
-        if matches!(sig, Signal::Kill) {
-            cmd.arg("/F");
-        }
-        let _ = cmd
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
-
-fn terminate(child: &mut Child) {
-    let pgid = child.id() as i32;
-    signal_group(pgid, Signal::Term);
-    let deadline = Instant::now() + KILL_GRACE;
-    while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            signal_group(pgid, Signal::Kill); // reap any stragglers in the group
-            return;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    signal_group(pgid, Signal::Kill);
-    let _ = child.wait();
-}
-
-// Own the spawned process even if thread creation or supervision panics.
-struct ChildGuard(Child);
-
-impl ChildGuard {
-    fn child_mut(&mut self) -> &mut Child {
-        &mut self.0
-    }
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        if !matches!(self.0.try_wait(), Ok(Some(_))) {
-            terminate(&mut self.0);
-        }
     }
 }
 
@@ -253,17 +183,17 @@ fn pump(stream: impl std::io::Read + Send + 'static, out: bool, tx: mpsc::SyncSe
 }
 
 fn supervise(
-    child: &mut Child,
+    owned: &mut ChildGuard,
     cfg: &Spec,
     before: Option<BTreeMap<String, String>>,
     stop: &Cancellation,
     on_event: EventSink,
 ) -> RunResult {
     let (tx, rx) = mpsc::sync_channel(OUTPUT_QUEUE);
-    if let Some(s) = child.stdout.take() {
+    if let Some(s) = owned.child_mut().stdout.take() {
         pump(s, true, tx.clone());
     }
-    if let Some(s) = child.stderr.take() {
+    if let Some(s) = owned.child_mut().stderr.take() {
         pump(s, false, tx.clone());
     }
     drop(tx);
@@ -271,7 +201,35 @@ fn supervise(
     let (mut errors, mut stderr_tail): (Vec<String>, Vec<String>) = (vec![], vec![]);
     let mut accepted_session = None;
     let mut terminal = false;
+    #[cfg(windows)]
+    let mut exited_at = None::<Instant>;
     while open > 0 && !stop.requested() {
+        // An exited root can leave inherited pipe handles in a live descendant.
+        // EOF alone must not keep the supervisor outside its native Job cleanup.
+        // The running provider has no new total deadline; only its post-exit
+        // output drain is bounded. Check even while descendants emit output.
+        #[cfg(windows)]
+        match owned.observe_exit() {
+            Ok(true) => {
+                let ended = exited_at.get_or_insert_with(Instant::now);
+                if ended.elapsed() >= KILL_GRACE {
+                    let message = format!(
+                        "{} left owned processes running with open output after its exit",
+                        cfg.name
+                    );
+                    errors.push(message.clone());
+                    on_event(Event::new(EventKind::Error, message));
+                    break;
+                }
+            }
+            Ok(false) => {}
+            Err(_) => {
+                let message = "Could not observe the owned process exit";
+                errors.push(message.into());
+                on_event(Event::new(EventKind::Error, message));
+                break;
+            }
+        }
         match rx.recv_timeout(POLL) {
             Err(RecvTimeoutError::Timeout) => {
                 if !stalled && last.elapsed() > cfg.stall_after {
@@ -339,24 +297,11 @@ fn supervise(
         }
     }
     drop(rx);
-    let exit_code = if stop.requested() || !errors.is_empty() {
-        terminate(child);
-        child.wait().ok().and_then(|s| s.code())
-    } else {
-        match wait_with_grace(child, stop) {
-            Some(s) => s.code(),
-            None => {
-                if !stop.requested() {
-                    errors.push(format!(
-                        "{} did not exit after closing its output",
-                        cfg.name
-                    ));
-                }
-                terminate(child);
-                child.wait().ok().and_then(|s| s.code())
-            }
-        }
-    };
+    let finished = owned.finish(stop, !errors.is_empty());
+    let exit_code = finished.exit_code;
+    if let Some(failure) = finished.failure {
+        errors.push(format!("{} {failure}", cfg.name));
+    }
     let changed_files = diff_snapshots(before.as_ref(), change_snapshot(&cfg.workspace).as_ref());
     if !stop.requested() && cfg.session.is_some() && accepted_session.is_none() && errors.is_empty()
     {
@@ -386,18 +331,8 @@ fn supervise(
         errors,
         stderr: stderr_tail,
         changed_files,
+        termination: finished.termination,
     }
-}
-
-fn wait_with_grace(child: &mut Child, stop: &Cancellation) -> Option<std::process::ExitStatus> {
-    let deadline = Instant::now() + KILL_GRACE;
-    while Instant::now() < deadline && !stop.requested() {
-        if let Ok(Some(s)) = child.try_wait() {
-            return Some(s);
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    None
 }
 
 #[cfg(test)]
