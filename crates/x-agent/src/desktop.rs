@@ -110,14 +110,19 @@ impl Observation {
         needle.chars().count() >= 3
             && std::iter::once(&self.title)
                 .chain(self.texts.iter())
-                .chain(self.elements.iter().flat_map(|e| [&e.name, &e.value]))
+                .chain(
+                    self.elements
+                        .iter()
+                        .filter(|e| !e.is_secret())
+                        .flat_map(|e| [&e.name, &e.value]),
+                )
                 .any(|text| text.to_lowercase().contains(&needle))
     }
 
     pub fn render(&self) -> String {
         let mut out = format!("window: {:?}\ncontrols:\n", prompt_text(&self.title));
         for e in &self.elements {
-            let value = if e.value.is_empty() {
+            let value = if e.value.is_empty() || e.is_secret() {
                 String::new()
             } else {
                 format!(" value={:?}", prompt_text(&e.value))
@@ -126,7 +131,11 @@ impl Observation {
                 "{} {} {:?}{value}\n",
                 e.id,
                 e.role,
-                prompt_text(&e.name)
+                if e.is_secret() {
+                    "[protected field]".into()
+                } else {
+                    prompt_text(&e.name)
+                }
             ));
         }
         out.push_str("text:\n");
