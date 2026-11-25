@@ -492,6 +492,43 @@ fn screen_access_gating() {
 }
 
 #[test]
+fn reviewed_computer_subtask_does_not_drop_following_actions() {
+    let s = screen_rig(true);
+    let actions = vec![
+        Action::Computer {
+            app: "chrome".into(),
+            goal: "press the button".into(),
+        },
+        Action::App {
+            target: "firefox".into(),
+        },
+    ];
+    let task = s
+        .plan_task(
+            "compound",
+            Mode::Actions,
+            Some(actions.clone()),
+            PlanOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(task.phase, Phase::AwaitingApproval);
+    s.approve(task.id).unwrap();
+    let done = wait_for(&s, |x| !x.phase.is_busy());
+    assert_eq!(done.phase, Phase::Completed);
+    let steps = done.task.unwrap().steps;
+    assert_eq!(steps[0].status, "done");
+    assert_eq!(steps[1].status, "launched");
+
+    let remote = screen_rig(false);
+    assert!(
+        remote
+            .plan_task("compound", Mode::Actions, Some(actions), PlanOptions::default())
+            .is_err()
+    );
+    assert_eq!(remote.snapshot(0).phase, Phase::Idle);
+}
+
+#[test]
 fn remote_needs_opt_in() {
     let s = screen_rig(false);
     s.set_computer_remote(true);
