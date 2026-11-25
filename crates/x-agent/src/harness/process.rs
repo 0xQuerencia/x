@@ -65,7 +65,7 @@ impl Run {
         cmd.process_group(0);
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
-        let mut child = crate::retry_busy(|| {
+        let child = crate::retry_busy(|| {
             if stop.requested() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Interrupted,
@@ -76,8 +76,10 @@ impl Run {
         })
         .map_err(|error| format!("Could not start {}: {error}", spec.name))?;
         let child_stop = stop.clone();
-        let handle =
-            thread::spawn(move || supervise(&mut child, &spec, before, &child_stop, on_event));
+        let mut owned = ChildGuard(child);
+        let handle = thread::Builder::new()
+            .spawn(move || supervise(owned.child_mut(), &spec, before, &child_stop, on_event))
+            .map_err(|error| format!("Could not start supervisor: {error}"))?;
         Ok(Self {
             canceller: Canceller { stop },
             handle: Some(handle),
@@ -110,8 +112,9 @@ impl Run {
 
 impl Drop for Run {
     fn drop(&mut self) {
-        if self.handle.is_some() {
+        if let Some(handle) = self.handle.take() {
             self.cancel();
+            let _ = handle.join();
         }
     }
 }
@@ -174,6 +177,23 @@ fn terminate(child: &mut Child) {
     }
     signal_group(pgid, Signal::Kill);
     let _ = child.wait();
+}
+
+// Own the spawned process even if thread creation or supervision panics.
+struct ChildGuard(Child);
+
+impl ChildGuard {
+    fn child_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if !matches!(self.0.try_wait(), Ok(Some(_))) {
+            terminate(&mut self.0);
+        }
+    }
 }
 
 enum Line {
