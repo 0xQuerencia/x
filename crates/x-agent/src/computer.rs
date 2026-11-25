@@ -180,7 +180,7 @@ Steps:\n\
 {{\"do\":\"navigate\",\"url\":\"https://...\"}}  go to a public https page in this browser\n\
 {{\"do\":\"key\",\"key\":\"address|find|back|forward|reload|newtab|escape|tab|pagedown|pageup|enter\"}}\n\
 {{\"do\":\"scroll\",\"key\":\"pagedown|pageup\"}}\n\
-{{\"done\":true,\"evidence\":\"text that is visible on screen now and proves the goal\",\"summary\":\"...\"}}\n\
+{{\"done\":true,\"evidence\":\"a complete visible text field or control label that proves the goal\",\"summary\":\"...\"}}\n\
 {{\"ask\":\"question\"}} when more than one choice fits and the goal does not say which\n\
 {{\"fail\":\"why it cannot be done\"}}\n\
 Use only ids listed now. Enter works only right after typing in an address or search field. Do not send, \
@@ -424,8 +424,8 @@ pub(crate) fn run_with(
                 std::thread::sleep(Duration::from_millis(750));
                 continue;
             }
-            Step::Done { evidence, summary } => {
-                if !obs.shows(&evidence) {
+            Step::Done { evidence, summary: _ } => {
+                if !obs.shows_exact(&evidence) {
                     p.errors += 1;
                     host.emit("error", "Completion claimed without evidence on screen");
                     p.history
@@ -436,11 +436,7 @@ pub(crate) fn run_with(
                         .push("(done rejected: that was already visible before you acted)".into());
                 } else {
                     host.emit("verify", &format!("Found on screen: {evidence:?}"));
-                    return Outcome::Done(if summary.is_empty() {
-                        format!("Done. Saw {evidence:?}")
-                    } else {
-                        format!("{summary} (saw {evidence:?})")
-                    });
+                    return Outcome::Done(format!("Observed on screen: {evidence:?}"));
                 }
                 if p.errors >= limits.errors {
                     return Outcome::Failed("Stopped: could not verify the result".into());
