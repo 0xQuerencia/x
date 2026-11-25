@@ -74,7 +74,7 @@ impl Assignment {
             return Err("The expected changed file path is unsafe".into());
         }
         let scope = approval_scope(node, project.id, &worktree, &proof)?;
-        grants.check(&receipt, Permission::StartHarness, &scope)?;
+        grants.check(&receipt, Permission::QueueHarness, &scope)?;
         let Scope::Task { intent, .. } = &scope else {
             return Err("A harness assignment requires exact task scope".into());
         };
@@ -187,7 +187,7 @@ impl ApprovedHarnessExecutor {
             .and_then(|scope| {
                 assignment
                     .grants
-                    .check(&assignment.receipt, Permission::StartHarness, &scope)
+                    .check(&assignment.receipt, Permission::QueueHarness, &scope)
             })
             .is_ok())
         .then_some(assignment)
@@ -243,7 +243,12 @@ impl Executor for ApprovedHarnessExecutor {
         }
         if assignment
             .grants
-            .consume(&assignment.receipt, Permission::StartHarness, &scope)
+            .activate_harness(&assignment.receipt, &scope)
+            .and_then(|()| {
+                assignment
+                    .grants
+                    .consume(&assignment.receipt, Permission::StartHarness, &scope)
+            })
             .is_err()
         {
             return Outcome::Failed;
@@ -579,7 +584,7 @@ mod tests {
                 });
                 let receipt = grants
                     .issue(
-                        Permission::StartHarness,
+                        Permission::QueueHarness,
                         approval_scope(node, project.id, &worktree, &Proof::DeliveryOnly).unwrap(),
                         Duration::from_secs(30),
                         1,

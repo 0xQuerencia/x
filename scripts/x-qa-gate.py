@@ -2,6 +2,7 @@
 """Local, privacy-minimal operator record for X's physical release checks."""
 
 import argparse
+from collections.abc import Iterable
 import json
 import os
 from pathlib import Path
@@ -37,8 +38,10 @@ def validate(data):
     if not isinstance(data, dict) or set(data) != {"version", "platform", "source_sha", "cases"}:
         raise ValueError("Invalid X acceptance schema")
     platform = data["platform"]
-    if data["version"] != 1 or platform not in SCENARIOS:
-        raise ValueError("Unknown acceptance platform/version")
+    if type(data["version"]) is not int or data["version"] != 1:
+        raise ValueError("Unknown acceptance record version")
+    if not isinstance(platform, str) or platform not in SCENARIOS:
+        raise ValueError("Unknown acceptance platform")
     sha = data["source_sha"]
     if not isinstance(sha, str) or not HASH.fullmatch(sha):
         raise ValueError("Record must have an exact source commit SHA")
@@ -105,6 +108,33 @@ def gate(data):
     }
 
 
+def check_release(
+    source_sha: str, records: Iterable[Path],
+) -> dict[str, object]:
+    """Combine operator records for the explicitly selected source commit."""
+    if not HASH.fullmatch(source_sha):
+        raise ValueError("Candidate must have an exact source commit SHA")
+    platforms: dict[str, dict[str, object]] = {}
+    for path in records:
+        record = read(path)
+        platform = record["platform"]
+        if record["source_sha"] != source_sha:
+            raise ValueError(f"{platform} record belongs to a different source commit")
+        if platform in platforms:
+            raise ValueError(f"Duplicate acceptance record for {platform}")
+        platforms[platform] = gate(record)
+
+    missing = [platform for platform in SCENARIOS if platform not in platforms]
+    return {
+        "source_sha": source_sha,
+        "ready": not missing and all(report["ready"] for report in platforms.values()),
+        "missing_platforms": missing,
+        "platforms": platforms,
+        "operator_report_only": True,
+        "release_published": False,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
@@ -118,9 +148,17 @@ def main():
     record.add_argument("--result", choices=RESULTS, required=True)
     check = commands.add_parser("check")
     check.add_argument("--file", required=True)
+    release = commands.add_parser("check-release")
+    release.add_argument("--source-sha", required=True)
+    release.add_argument("records", nargs="+", type=Path)
     args = parser.parse_args()
-    path = Path(args.file)
     try:
+        if args.action == "check-release":
+            result = check_release(args.source_sha, args.records)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0 if result["ready"] else 1
+
+        path = Path(args.file)
         if args.action == "init":
             save(path, {
                 "version": 1, "platform": args.platform, "source_sha": args.source_sha,
@@ -144,4 +182,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

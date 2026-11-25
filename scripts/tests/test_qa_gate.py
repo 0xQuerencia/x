@@ -56,6 +56,8 @@ class QaAcceptanceTests(unittest.TestCase):
         for invalid in [
             {**self.source, "source_sha": "a" * 39},
             {**self.source, "platform": "invalid"},
+            {**self.source, "platform": []},
+            {**self.source, "version": True},
             {**self.source, "cases": {"custom_secret": "pass"}},
             {**self.source, "cases": {"microphone": "great, username=alice"}},
             {**self.source, "secret_key": "should-not-be-stored"},
@@ -86,6 +88,40 @@ class QaAcceptanceTests(unittest.TestCase):
         self.assertFalse(result["release_published"])
         self.assertTrue(result["operator_report_only"])
         self.assertEqual(len(result["missing"]), len(qa.SCENARIOS["windows11"]))
+
+    def complete_records(self, sha):
+        paths = []
+        for platform, scenarios in qa.SCENARIOS.items():
+            path = self.path.with_name(f"{platform}.json")
+            qa.save(path, {
+                "version": 1,
+                "platform": platform,
+                "source_sha": sha,
+                "cases": dict.fromkeys(scenarios, "pass"),
+            })
+            paths.append(path)
+        return paths
+
+    def test_release_requires_every_platform_and_each_case(self):
+        sha = self.source["source_sha"]
+        paths = self.complete_records(sha)
+        self.assertTrue(qa.check_release(sha, paths)["ready"])
+        report = qa.check_release(sha, paths[:-1])
+        self.assertFalse(report["ready"])
+        self.assertEqual(report["missing_platforms"], ["macos"])
+        for result in ("fail", "unsupported"):
+            macos = qa.read(paths[-1])
+            macos["cases"]["screenshot"] = result
+            qa.save(paths[-1], macos)
+            self.assertFalse(qa.check_release(sha, paths)["ready"])
+
+    def test_release_refuses_duplicate_platforms_and_wrong_commit(self):
+        sha = self.source["source_sha"]
+        paths = self.complete_records(sha)
+        with self.assertRaisesRegex(ValueError, "Duplicate acceptance"):
+            qa.check_release(sha, [*paths, paths[0]])
+        with self.assertRaisesRegex(ValueError, "different source commit"):
+            qa.check_release("b" * 40, paths)
 
 
 if __name__ == "__main__":
