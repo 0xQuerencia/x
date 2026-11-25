@@ -3,8 +3,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -300,9 +300,7 @@ pub(crate) fn run_observed_scoped(
                 // renewal. Revocation, changed identity and exhausted approval
                 // remain terminal refusals. No worker or resource is acquired.
                 let authorized = executor.authorized(node);
-                if !authorized
-                    && let Some(first) = stops.wait_for_permission(index)
-                {
+                if !authorized && let Some(first) = stops.wait_for_permission(index) {
                     if first {
                         observe(index, NodeUpdate::WaitingForPermission);
                     }
