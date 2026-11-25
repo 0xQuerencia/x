@@ -299,18 +299,19 @@ pub(crate) fn run_observed_scoped(
                 // Only an exact expired, unspent queued approval can wait for
                 // renewal. Revocation, changed identity and exhausted approval
                 // remain terminal refusals. No worker or resource is acquired.
-                if !executor.authorized(node) {
-                    if let Some(first) = stops.wait_for_permission(index) {
-                        if first {
-                            observe(index, NodeUpdate::WaitingForPermission);
-                        }
-                        waiting_for_permission = true;
-                        continue;
+                let authorized = executor.authorized(node);
+                if !authorized
+                    && let Some(first) = stops.wait_for_permission(index)
+                {
+                    if first {
+                        observe(index, NodeUpdate::WaitingForPermission);
                     }
+                    waiting_for_permission = true;
+                    continue;
                 }
                 // Review can arrive between the two checks. Do not mistake a
                 // successful renewal for revocation, or skip the dispatch gate.
-                if !executor.authorized(node) {
+                if !authorized && !executor.authorized(node) {
                     finished[index] = Some(Outcome::Failed);
                     notes[index] =
                         "Approval expired, was revoked, or no longer matches the job".into();
@@ -550,6 +551,103 @@ mod tests {
             roadmap: None,
             nodes: vec![job("front", first, &[]), job("back", second, &[])],
         }
+    }
+
+    #[test]
+    fn expired_ready_node_waits_for_exact_review_without_replaying_predecessor() {
+        use crate::grants::{Grants, Permission, Receipt, Scope};
+        use uuid::Uuid;
+
+        struct QueueRunner {
+            grants: Arc<Grants>,
+            receipt: Receipt,
+            scope: Scope,
+            ran: Mutex<Vec<String>>,
+        }
+
+        impl Executor for QueueRunner {
+            fn authorized(&self, node: &Node) -> bool {
+                node.id != "back"
+                    || self
+                        .grants
+                        .check(&self.receipt, Permission::QueueHarness, &self.scope)
+                        .is_ok()
+            }
+
+            fn execute(&self, node: Node, _stop: Cancellation) -> Outcome {
+                self.ran.lock().unwrap().push(node.id.clone());
+                if node.id == "front" {
+                    self.grants.expire_for_test(&self.receipt);
+                }
+                Outcome::Verified
+            }
+        }
+
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let mut graph = graph(&first.to_string(), &second.to_string());
+        graph.nodes[1].requires.push("front".into());
+        let stop = Cancellation::default();
+        let stops = JobStops::new(graph.nodes.len(), &stop);
+        let grants = Arc::new(Grants::default());
+        let scope = Scope::Task {
+            project_id: second,
+            run_id: Uuid::new_v4(),
+            node_id: "back".into(),
+            intent: "exact reviewed recipe".into(),
+        };
+        let receipt = grants
+            .issue(
+                Permission::QueueHarness,
+                scope.clone(),
+                Duration::from_secs(30),
+                1,
+                true,
+            )
+            .unwrap();
+        stops
+            .register_renewal(
+                1,
+                Arc::clone(&grants),
+                receipt,
+                Permission::QueueHarness,
+                scope.clone(),
+            )
+            .unwrap();
+        let runner = Arc::new(QueueRunner {
+            grants,
+            receipt,
+            scope,
+            ran: Mutex::new(vec![]),
+        });
+        let mut waited = 0;
+        let report = run_observed_scoped(
+            &graph,
+            Path::new("/tmp"),
+            runner.clone(),
+            &stops,
+            2,
+            |index, update| {
+                if update == NodeUpdate::WaitingForPermission {
+                    assert_eq!(index, 1);
+                    assert_eq!(*runner.ran.lock().unwrap(), ["front"]);
+                    let token = stops.permission_review_token(index).unwrap();
+                    assert!(stops.renew_permission(index, Uuid::new_v4()).is_err());
+                    stops.renew_permission(index, token).unwrap();
+                    assert!(stops.renew_permission(index, token).is_err());
+                    waited += 1;
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(waited, 1);
+        assert_eq!(*runner.ran.lock().unwrap(), ["front", "back"]);
+        assert!(
+            report
+                .nodes
+                .iter()
+                .all(|node| node.outcome == Outcome::Verified)
+        );
     }
 
     #[test]
