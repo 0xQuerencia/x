@@ -587,3 +587,62 @@ fn recovery_inventory_refuses_symlinked_foreign_and_reregistered_checkouts() {
         "unrelated directory"
     );
 }
+
+#[test]
+fn worktree_review_reads_exact_committed_changes_and_distinguishes_stale_tests() {
+    use crate::verification::test_runner::{Suite, TestEvidence};
+
+    let (_dir, project, manager, sha) = fixture();
+    let run = Uuid::new_v4();
+    let mut reservation = Reservation::planned(&project, &sha).unwrap();
+    let owned = manager
+        .allocate(&project, run, "writer", &sha, true)
+        .unwrap();
+    reservation.record_checkout(&owned).unwrap();
+    fs::write(owned.path().join("review.txt"), "reviewed change\n").unwrap();
+    git(owned.path(), &["add", "--", "review.txt"]).unwrap();
+    git(
+        owned.path(),
+        &[
+            "-c",
+            "user.name=X",
+            "-c",
+            "user.email=x@invalid.example",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "review fixture",
+        ],
+    )
+    .unwrap();
+    let head = current_commit(owned.path()).unwrap();
+    let evidence = TestEvidence {
+        suite: Suite::CargoAgent,
+        commit: head.clone(),
+        passed: Some(true),
+        observed_at: 1,
+    };
+    let review = manager
+        .review_reserved(&project, run, "writer", &reservation, Some(&evidence))
+        .unwrap();
+    assert_eq!(review.base_commit, sha);
+    assert_eq!(review.current_commit, head);
+    assert!(review.committed_diff.contains("+reviewed change"));
+    assert_eq!(review.test_matches_checkout, Some(true));
+    assert!(!review.diff_truncated);
+    assert!(!project.root.join("review.txt").exists());
+
+    fs::write(owned.path().join("review.txt"), "uncommitted change\n").unwrap();
+    let dirty = manager
+        .review_reserved(&project, run, "writer", &reservation, Some(&evidence))
+        .unwrap();
+    assert!(!dirty.clean_inputs);
+    assert_eq!(dirty.test_matches_checkout, Some(false));
+    assert!(!dirty.committed_diff.contains("uncommitted change"));
+    assert!(
+        manager
+            .review_reserved(&project, Uuid::new_v4(), "writer", &reservation, None)
+            .is_err()
+    );
+}
