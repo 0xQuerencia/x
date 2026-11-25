@@ -59,6 +59,7 @@ struct Grant {
     permission: Permission,
     expires_at: Instant,
     remaining: u8,
+    renewal_available: bool,
 }
 
 /// No persistence: restarting X always discards delegated authorization.
@@ -138,7 +139,10 @@ impl Grants {
             .lock()
             .map_err(|_| "Grant storage is unavailable")?;
         if guard.len() >= 256 {
-            guard.retain(|_, entry| entry.remaining > 0 && Instant::now() < entry.expires_at);
+            let now = Instant::now();
+            guard.retain(|_, entry| {
+                entry.remaining > 0 && (entry.expires_at > now || entry.renewal_available)
+            });
         }
         if guard.len() >= 256 {
             return Err("Too many outstanding approvals".into());
@@ -150,9 +154,94 @@ impl Grants {
                 permission,
                 expires_at,
                 remaining: uses,
+                renewal_available: false,
             },
         );
         Ok(Receipt { id })
+    }
+
+    /// Native graph setup opts one exact queued coding/test receipt into a
+    /// single renewal. Expired identities are retained only until executor
+    /// revocation; this never makes an expired receipt usable.
+    pub(crate) fn enable_queue_renewal(
+        &self,
+        receipt: &Receipt,
+        permission: Permission,
+        scope: &Scope,
+    ) -> Result<(), String> {
+        let mut entries = self
+            .grants
+            .lock()
+            .map_err(|_| "Grant storage is unavailable")?;
+        let grant = entries.get_mut(&receipt.id).ok_or("Approval is missing")?;
+        if !matches!(permission, Permission::QueueHarness | Permission::QueueTests)
+            || grant.permission != permission
+            || &grant.scope != scope
+            || grant.remaining != 1
+            || Instant::now() >= grant.expires_at
+            || grant.renewal_available
+        {
+            return Err("Cannot register renewal for this exact queued job".into());
+        }
+        grant.renewal_available = true;
+        Ok(())
+    }
+
+    pub(crate) fn expired_renewable(
+        &self,
+        receipt: &Receipt,
+        permission: Permission,
+        scope: &Scope,
+    ) -> bool {
+        self.grants.lock().is_ok_and(|entries| {
+            entries.get(&receipt.id).is_some_and(|grant| {
+                Self::renewable_at(grant, permission, scope, Instant::now())
+            })
+        })
+    }
+
+    fn renewable_at(grant: &Grant, permission: Permission, scope: &Scope, now: Instant) -> bool {
+        matches!(permission, Permission::QueueHarness | Permission::QueueTests)
+            && grant.permission == permission
+            && &grant.scope == scope
+            && grant.remaining == 1
+            && grant.renewal_available
+            && now >= grant.expires_at
+    }
+
+    /// Only the native exact-review handler may call this. Never resurrect a
+    /// revoked, spent, activated, mismatched or already renewed receipt.
+    pub(crate) fn renew_queued(
+        &self,
+        receipt: &Receipt,
+        permission: Permission,
+        scope: &Scope,
+    ) -> Result<(), String> {
+        self.renew_queued_at(receipt, permission, scope, Instant::now())
+    }
+
+    fn renew_queued_at(
+        &self,
+        receipt: &Receipt,
+        permission: Permission,
+        scope: &Scope,
+        now: Instant,
+    ) -> Result<(), String> {
+        let mut entries = self
+            .grants
+            .lock()
+            .map_err(|_| "Grant storage is unavailable")?;
+        let grant = entries
+            .get_mut(&receipt.id)
+            .ok_or("Queued job was revoked or spent")?;
+        if !Self::renewable_at(grant, permission, scope, now) {
+            return Err("The expired queued approval is no longer eligible for renewal".into());
+        }
+        grant.expires_at = now
+            .checked_add(Duration::from_secs(5 * 60))
+            .ok_or("Renewal lifetime is invalid")?;
+        grant.renewal_available = false;
+        Ok(())
     }
 
     /// Checks an exact scope at preflight without spending the approval.
@@ -276,6 +365,7 @@ impl Grants {
             .checked_add(Duration::from_secs(60))
             .ok_or("Dispatch approval lifetime is invalid")?;
         grant.permission = permission;
+        grant.renewal_available = false;
         grant.scope = resolved.clone();
         grant.expires_at = grant.expires_at.min(dispatch_deadline);
         Ok(())
@@ -326,15 +416,18 @@ impl Grants {
     }
 
     /// Count unexpired, unspent receipts without revealing grant IDs or
-    /// task intent. Expired entries are evicted during the read.
+    /// task intent. Only explicitly renewable queued entries retain their
+    /// expired identity; they count as zero authority until reviewed again.
     pub fn pending_count(&self) -> Result<usize, String> {
         let mut guard = self
             .grants
             .lock()
             .map_err(|_| "Grant storage is unavailable")?;
         let now = Instant::now();
-        guard.retain(|_, grant| grant.remaining > 0 && grant.expires_at > now);
-        Ok(guard.len())
+        guard.retain(|_, grant| {
+            grant.remaining > 0 && (grant.expires_at > now || grant.renewal_available)
+        });
+        Ok(guard.values().filter(|grant| grant.expires_at > now).count())
     }
 
     /// Clear all pending receipts when a workflow is stopped or its owner
@@ -885,6 +978,93 @@ mod tests {
             .consume(&c, Permission::InspectProject, &inspection)
             .unwrap();
     }
+    #[test]
+    fn expired_queued_receipt_can_only_be_renewed_once_for_its_original_scope() {
+        let grants = Grants::default();
+        let scope = task();
+        let receipt = grants
+            .issue(
+                Permission::QueueHarness,
+                scope.clone(),
+                Duration::from_secs(30),
+                1,
+                true,
+            )
+            .unwrap();
+        grants
+            .enable_queue_renewal(&receipt, Permission::QueueHarness, &scope)
+            .unwrap();
+        let expired = Instant::now() + Duration::from_secs(31);
+        assert!(
+            grants
+                .renew_queued_at(&receipt, Permission::QueueTests, &scope, expired)
+                .is_err()
+        );
+        assert!(
+            grants
+                .renew_queued_at(&receipt, Permission::QueueHarness, &task(), expired)
+                .is_err()
+        );
+        assert!(
+            grants
+                .renew_queued_at(&receipt, Permission::QueueHarness, &scope, Instant::now())
+                .is_err()
+        );
+        grants
+            .renew_queued_at(&receipt, Permission::QueueHarness, &scope, expired)
+            .unwrap();
+        assert!(
+            grants
+                .renew_queued_at(
+                    &receipt,
+                    Permission::QueueHarness,
+                    &scope,
+                    expired + Duration::from_secs(301),
+                )
+                .is_err()
+        );
+        grants
+            .activate_harness_at(&receipt, &scope, expired)
+            .unwrap();
+        grants
+            .consume_at(&receipt, Permission::StartHarness, &scope, expired)
+            .unwrap();
+        assert!(
+            grants
+                .renew_queued_at(&receipt, Permission::QueueHarness, &scope, expired)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn renewal_cannot_recreate_a_revoked_queued_receipt() {
+        let grants = Grants::default();
+        let scope = task();
+        let receipt = grants
+            .issue(
+                Permission::QueueTests,
+                scope.clone(),
+                Duration::from_secs(30),
+                1,
+                true,
+            )
+            .unwrap();
+        grants
+            .enable_queue_renewal(&receipt, Permission::QueueTests, &scope)
+            .unwrap();
+        assert!(grants.revoke(&receipt).unwrap());
+        assert!(
+            grants
+                .renew_queued_at(
+                    &receipt,
+                    Permission::QueueTests,
+                    &scope,
+                    Instant::now() + Duration::from_secs(31),
+                )
+                .is_err()
+        );
+    }
+
     #[test]
     fn pending_count_omits_expired_and_spent_receipts() {
         let grants = Grants::default();
