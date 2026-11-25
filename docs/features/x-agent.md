@@ -860,7 +860,10 @@ Native Linux process-control tests should run only on an isolated test session.
   editors or file managers. Links and a small set of navigation buttons may be clicked;
   other buttons and consequential controls are refused. Remote models additionally
   require explicit `agent computer remote on`; on-screen context is redacted before
-  transmission.
+  transmission. Reviewed compound Actions plans can include a Computer subtask
+  followed by explicit app/window actions; a failed subtask stops the sequence.
+  Implicit focused typing cannot be combined with Computer steps, and coding
+  sessions still require separate Work approval.
 * **Local audit** records task approval, discard, Stop, and action outcomes in
   `x-action-ledger.ndjson` under X's data directory. The ledger stores task and
   step keys, source, risk, requirements and status. Task text, model output,
