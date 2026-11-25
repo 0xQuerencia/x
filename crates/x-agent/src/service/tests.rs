@@ -522,7 +522,12 @@ fn reviewed_computer_subtask_does_not_drop_following_actions() {
     let remote = screen_rig(false);
     assert!(
         remote
-            .plan_task("compound", Mode::Actions, Some(actions), PlanOptions::default())
+            .plan_task(
+                "compound",
+                Mode::Actions,
+                Some(actions),
+                PlanOptions::default()
+            )
             .is_err()
     );
     assert_eq!(remote.snapshot(0).phase, Phase::Idle);
