@@ -288,7 +288,7 @@ fn wait_for_window(desktop: &dyn Desktop, app: &str, host: &dyn Host) -> Result<
     if host.stopped() {
         return Err("Stopped".into());
     }
-    if let Ok(win) = desktop.find_window(app) {
+    if let Some(win) = desktop.find_window_or_absent(app)? {
         return Ok(win);
     }
     if host.stopped() {
@@ -301,10 +301,12 @@ fn wait_for_window(desktop: &dyn Desktop, app: &str, host: &dyn Host) -> Result<
         if !wait_interruptible(host, Duration::from_millis(500)) {
             return Err("Stopped".into());
         }
-        match desktop.find_window(app) {
-            Ok(win) => return Ok(win),
-            Err(e) if start.elapsed() > Duration::from_secs(12) => return Err(e),
-            Err(_) => {}
+        match desktop.find_window_or_absent(app)? {
+            Some(win) => return Ok(win),
+            None if start.elapsed() > Duration::from_secs(12) => {
+                return Err(format!("No {app} window appeared"));
+            }
+            None => {}
         }
     }
 }
