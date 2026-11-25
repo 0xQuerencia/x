@@ -286,12 +286,12 @@ pub enum AgentCommand {
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "preview", "permissions", "uncertain", "claims", "worktrees", "run", "run-graph", "test-project", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "preview", "permissions", "uncertain", "claims", "worktrees", "correction-preview", "plan-correction", "run", "run-graph", "test-project", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
         command: String,
-        /// A workflow/project id, an optional worktrees run UUID, or an import path.
+        /// Workflow/project id, exact failure run/node, or import path.
         #[arg(default_value = "")]
         value: String,
-        /// Test preset for 'test-project' only.
+        /// Fixed test preset, or quoted correction goal for 'plan-correction'.
         #[arg(default_value = "")]
         suite: String,
         #[command(flatten)]
@@ -644,6 +644,11 @@ pub(super) fn run(command: AgentCommand) -> u8 {
             if command == "test-project" {
                 if value.is_empty() || suite.is_empty() {
                     return fail("Usage: agent workflow test-project <project-id> <suite>");
+                }
+                value = format!("{value} {suite}");
+            } else if command == "plan-correction" {
+                if value.is_empty() || suite.is_empty() {
+                    return fail("Usage: agent workflow plan-correction <run-id>/<node-id> <goal>");
                 }
                 value = format!("{value} {suite}");
             } else if !suite.is_empty() {
