@@ -19,6 +19,47 @@ impl Service {
         self.worktree_inventory(Some(run))
     }
 
+    /// Read a diff only for one explicitly selected, recorded run/node.
+    /// Raw patch text stays in this local operator response; this does not
+    /// authorize a provider request, tests, retry or integration.
+    pub fn coding_worktree_review(
+        &self,
+        run: &str,
+        node: &str,
+    ) -> Result<crate::worktrees::WorktreeReview, String> {
+        let run = Uuid::parse_str(run)
+            .ok()
+            .filter(|run| !run.is_nil())
+            .ok_or("Enter the exact recorded run UUID")?;
+        let (dir, home) = self
+            .workflow_dirs
+            .lock()
+            .map_err(|_| "Workflow storage is unavailable")?
+            .clone()
+            .ok_or("Workflow storage is not configured")?;
+        let support = dir.parent().ok_or("Local data directory is unavailable")?;
+        let journal = Journal::new(support.join("workflow-journal"));
+        let claim = journal
+            .snapshot()?
+            .into_iter()
+            .find(|claim| claim.run_id == run && claim.node_id == node)
+            .ok_or("No matching recorded worktree")?;
+        if claim.state == State::Claimed {
+            return Err("Review is unavailable while this claim may still be running".into());
+        }
+        let reservation = claim.worktree.as_ref().ok_or("No recorded checkout")?;
+        let registry = Registry::new(support.to_path_buf(), home.clone());
+        let project = registry.validated_resolve(&reservation.project_id().to_string())?;
+        let manager = Manager::new(home.join(WORKTREE_FOLDER), home);
+        manager.review_reserved(
+            &project,
+            run,
+            node,
+            reservation,
+            claim.test_evidence.as_ref(),
+        )
+    }
+
     fn worktree_inventory(&self, run: Option<Uuid>) -> Result<serde_json::Value, String> {
         let (dir, home) = self
             .workflow_dirs
