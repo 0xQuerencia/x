@@ -1379,3 +1379,9 @@ X rechecks both window identity and snapshot age. Context older than 15 seconds
 is rejected even when the same window still exists and even after an approval
 prompt temporarily changes focus. The user must issue the command again to
 obtain fresh evidence.
+
+### Review an expired queued coding approval (A05)
+
+A ready coding or fixed-suite test node whose exact queued receipt expired enters `waiting_for_permission` without launching or holding a worker slot. Independent jobs keep running; required dependents still wait. The operator can inspect the original reviewed step using `hex agent workflow permission-waits <task-id>`, then explicitly approve only that unchanged step with `hex agent workflow renew-permission <task-id> <review-token>`. The token expires after ten minutes; renewal grants up to five minutes of queue time once. The original dispatch revalidates project, immutable base, inputs, provider role and the one-use launch receipt. A Stop, revocation, missing receipt, changed identity, stale token or second renewal cannot recreate authority. The foreground or exact background task remains identifiable by its task ID; no restart restores renewal authority.
+
+The first slice covers queued coding and test nodes before worker dispatch, not expired desktop grants or expiry during checkout preparation. The waiting state and existing Stop remain visible in task status; the dedicated native review button and physical delayed-provider acceptance remain separate. Synthetic-clock grants and scheduler fixtures exercise the expiry, one-use renewal and predecessor non-replay boundaries. No test or review token is a general process-launch grant.
