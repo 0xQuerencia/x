@@ -28,6 +28,23 @@ pub(super) struct Bridge {
     pub(super) inner: Arc<dyn Host>,
 }
 
+impl Bridge {
+    fn desktop<T>(&self, action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let (id, stop) = {
+            let state = self.svc.lock();
+            (
+                state.task.as_ref().ok_or("No approved workflow task")?.id,
+                state.stop.clone(),
+            )
+        };
+        let _lease = self
+            .svc
+            .acquire_desktop(id, &stop, std::time::Duration::from_secs(15))?;
+        stop.check()?;
+        action()
+    }
+}
+
 impl Host for Bridge {
     fn windows(&self) -> Result<Vec<WinInfo>, String> {
         self.inner.windows()
@@ -39,8 +56,11 @@ impl Host for Bridge {
         self.inner.workspace()
     }
     fn launch(&self, action: &Action) -> Result<String, String> {
-        self.svc.lock().stop.check()?;
-        self.inner.launch(action)
+        self.desktop(|| self.inner.launch(action))
+    }
+    fn execute_action(&self, action: &Action) -> Result<crate::tools::ExecutionOutcome, String> {
+        let stop = self.svc.lock().stop.clone();
+        self.desktop(|| self.inner.execute_action_scoped(action, &stop))
     }
     fn installed(&self, action: &Action) -> Result<(), String> {
         self.inner.installed(action)
@@ -49,16 +69,16 @@ impl Host for Bridge {
         self.inner.can(cap)
     }
     fn focus(&self, w: &WinInfo) -> Result<(), String> {
-        self.inner.focus(w)
+        self.desktop(|| self.inner.focus(w))
     }
     fn switch_workspace(&self, n: i64) -> Result<(), String> {
-        self.inner.switch_workspace(n)
+        self.desktop(|| self.inner.switch_workspace(n))
     }
     fn move_window(&self, w: &WinInfo, to: i64) -> Result<(), String> {
-        self.inner.move_window(w, to)
+        self.desktop(|| self.inner.move_window(w, to))
     }
     fn close_window(&self, w: &WinInfo) -> Result<(), String> {
-        self.inner.close_window(w)
+        self.desktop(|| self.inner.close_window(w))
     }
     /// The per-step gate. The person approved a snapshot of the workflow; a step runs only
     /// if the task is still approved and running, Stop was not pressed, and the step is one
@@ -146,7 +166,7 @@ impl Service {
         }
     }
 
-    fn machine(&self) -> Arc<dyn Host> {
+    pub(super) fn machine(&self) -> Arc<dyn Host> {
         self.machine
             .lock()
             .map_or_else(|p| p.into_inner().clone(), |m| m.clone())
@@ -164,7 +184,7 @@ impl Service {
         Store::new(dir, home)
     }
 
-    fn workflow_config(&self) -> Config {
+    pub(super) fn workflow_config(&self) -> Config {
         let home = self
             .workflow_dirs
             .lock()
@@ -318,6 +338,7 @@ impl Service {
     pub(super) fn undo_workflow_inner(&self) -> Result<String, String> {
         // Keep the history until the attempt is over, then keep only what failed, so a
         // temporary failure can be retried with the same command.
+        let _desktop = self.try_desktop_control()?;
         let reversals = self.lock().undo.clone();
         if reversals.is_empty() {
             return Err("There is no workflow run to undo".into());

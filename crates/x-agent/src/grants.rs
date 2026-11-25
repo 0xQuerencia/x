@@ -17,6 +17,12 @@ pub enum Permission {
     /// Authorize one reviewed graph node to wait for its dependencies.
     /// This receipt cannot itself authorize a process launch.
     QueueHarness,
+    /// Queue a reviewed test preset whose input is an approved artifact edge.
+    QueueTests,
+    /// Queue one explicitly reviewed desktop graph node.
+    QueueDesktop,
+    /// Execute the exact reviewed desktop step after acquiring the input lease.
+    UseDesktop,
     /// Run one approved test suite in an owned Git worktree.
     RunTests,
     /// Apply only one explicitly reviewed clean Git fast-forward.
@@ -25,6 +31,12 @@ pub enum Permission {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Scope {
+    Desktop {
+        run_id: Uuid,
+        node_id: String,
+        /// Exact action and native target binding; never model-generated authority.
+        intent: String,
+    },
     Project {
         project_id: Uuid,
     },
@@ -73,20 +85,35 @@ impl Grants {
         }
         let limit = match permission {
             Permission::InspectProject => (Duration::from_secs(600), 16),
-            Permission::QueueHarness => (Duration::from_secs(30 * 60), 1),
-            Permission::StartHarness | Permission::RunTests | Permission::IntegrateFastForward => {
-                (Duration::from_secs(60), 1)
+            Permission::QueueHarness | Permission::QueueTests | Permission::QueueDesktop => {
+                (Duration::from_secs(30 * 60), 1)
             }
+            Permission::StartHarness
+            | Permission::RunTests
+            | Permission::IntegrateFastForward
+            | Permission::UseDesktop => (Duration::from_secs(60), 1),
         };
         if duration.is_zero() || duration > limit.0 || uses == 0 || uses > limit.1 {
             return Err("Grant exceeds its permitted lifetime or use count".into());
         }
         match (&permission, &scope) {
+            (
+                Permission::QueueDesktop | Permission::UseDesktop,
+                Scope::Desktop {
+                    run_id,
+                    node_id,
+                    intent,
+                },
+            ) if !run_id.is_nil()
+                && valid_node_id(node_id)
+                && !intent.is_empty()
+                && intent.len() <= 20_000 => {}
             (Permission::InspectProject, Scope::Project { project_id }) if !project_id.is_nil() => {
             }
             (
                 Permission::StartHarness
                 | Permission::QueueHarness
+                | Permission::QueueTests
                 | Permission::RunTests
                 | Permission::IntegrateFastForward,
                 Scope::Task {
@@ -165,6 +192,73 @@ impl Grants {
         scope: &Scope,
         now: Instant,
     ) -> Result<(), String> {
+        self.activate_job_at(receipt, scope, scope, Permission::StartHarness, now)
+    }
+
+    /// Bind a reviewed artifact recipe to its independently resolved checkout.
+    /// Only the native executor may derive this scope. Project, run and node
+    /// identity cannot change, and the queued receipt is spent exactly once.
+    pub(crate) fn activate_job(
+        &self,
+        receipt: &Receipt,
+        reviewed: &Scope,
+        resolved: &Scope,
+        permission: Permission,
+    ) -> Result<(), String> {
+        self.activate_job_at(receipt, reviewed, resolved, permission, Instant::now())
+    }
+
+    fn activate_job_at(
+        &self,
+        receipt: &Receipt,
+        reviewed: &Scope,
+        resolved: &Scope,
+        permission: Permission,
+        now: Instant,
+    ) -> Result<(), String> {
+        let queued = match permission {
+            Permission::StartHarness => Permission::QueueHarness,
+            Permission::RunTests => Permission::QueueTests,
+            Permission::UseDesktop => Permission::QueueDesktop,
+            _ => return Err("Queued authority cannot activate that operation".into()),
+        };
+        match (reviewed, resolved) {
+            (
+                Scope::Desktop {
+                    run_id: r,
+                    node_id: n,
+                    ..
+                },
+                Scope::Desktop {
+                    run_id,
+                    node_id,
+                    intent,
+                },
+            ) if permission == Permission::UseDesktop
+                && r == run_id
+                && n == node_id
+                && !intent.is_empty()
+                && intent.len() <= 20_000 => {}
+            (
+                Scope::Task {
+                    project_id: p,
+                    run_id: r,
+                    node_id: n,
+                    ..
+                },
+                Scope::Task {
+                    project_id,
+                    run_id,
+                    node_id,
+                    intent,
+                },
+            ) if p == project_id
+                && r == run_id
+                && n == node_id
+                && !intent.is_empty()
+                && intent.len() <= 20_000 => {}
+            _ => return Err("Artifact resolution changed the approved task identity".into()),
+        }
         let mut guard = self
             .grants
             .lock()
@@ -175,16 +269,14 @@ impl Grants {
         if now >= grant.expires_at {
             return Err("Queued job approval has expired".into());
         }
-        if grant.permission != Permission::QueueHarness
-            || &grant.scope != scope
-            || grant.remaining != 1
-        {
+        if grant.permission != queued || &grant.scope != reviewed || grant.remaining != 1 {
             return Err("Queued job approval does not cover this exact task".into());
         }
         let dispatch_deadline = now
             .checked_add(Duration::from_secs(60))
             .ok_or("Dispatch approval lifetime is invalid")?;
-        grant.permission = Permission::StartHarness;
+        grant.permission = permission;
+        grant.scope = resolved.clone();
         grant.expires_at = grant.expires_at.min(dispatch_deadline);
         Ok(())
     }
@@ -218,8 +310,10 @@ impl Grants {
             guard.remove(&receipt.id);
             return Err("Approval has expired".into());
         }
-        if permission == Permission::QueueHarness
-            || grant.permission != permission
+        if matches!(
+            permission,
+            Permission::QueueHarness | Permission::QueueTests | Permission::QueueDesktop
+        ) || grant.permission != permission
             || &grant.scope != scope
         {
             return Err("Approval does not cover this target or operation".into());
@@ -260,6 +354,7 @@ impl Grants {
     /// keep their own pending receipts.
     pub fn revoke_project(&self, project_id: Uuid) -> Result<usize, String> {
         self.revoke_where(|scope| match scope {
+            Scope::Desktop { .. } => false,
             Scope::Project { project_id: id } | Scope::Task { project_id: id, .. } => {
                 *id == project_id
             }
@@ -823,5 +918,148 @@ mod tests {
             .consume(&live, Permission::StartHarness, &scope)
             .unwrap();
         assert_eq!(grants.pending_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn queued_tests_resolve_only_the_same_task_once_without_cross_permission() {
+        let grants = Grants::default();
+        let reviewed = task();
+        let receipt = grants
+            .issue(
+                Permission::QueueTests,
+                reviewed.clone(),
+                Duration::from_secs(120),
+                1,
+                true,
+            )
+            .unwrap();
+        let mut actual = reviewed.clone();
+        if let Scope::Task { intent, .. } = &mut actual {
+            *intent = "test:cargo_agent:observed-commit".into();
+        }
+        assert!(
+            grants
+                .consume(&receipt, Permission::RunTests, &reviewed)
+                .is_err()
+        );
+        assert!(
+            grants
+                .activate_job(&receipt, &reviewed, &actual, Permission::StartHarness)
+                .is_err()
+        );
+        assert!(
+            grants
+                .activate_job(&receipt, &reviewed, &task(), Permission::RunTests)
+                .is_err()
+        );
+        grants
+            .activate_job(&receipt, &reviewed, &actual, Permission::RunTests)
+            .unwrap();
+        assert!(
+            grants
+                .consume(&receipt, Permission::RunTests, &reviewed)
+                .is_err()
+        );
+        grants
+            .consume(&receipt, Permission::RunTests, &actual)
+            .unwrap();
+        assert!(
+            grants
+                .activate_job(&receipt, &reviewed, &actual, Permission::RunTests)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn desktop_authority_is_separate_exact_and_activated_only_once_after_waiting() {
+        let grants = Grants::default();
+        let reviewed = Scope::Desktop {
+            run_id: Uuid::new_v4(),
+            node_id: "focus".into(),
+            intent: "exact native source-window recipe".into(),
+        };
+        assert!(
+            grants
+                .issue(
+                    Permission::QueueDesktop,
+                    task(),
+                    Duration::from_secs(120),
+                    1,
+                    true
+                )
+                .is_err()
+        );
+        assert!(
+            grants
+                .issue(
+                    Permission::StartHarness,
+                    reviewed.clone(),
+                    Duration::from_secs(30),
+                    1,
+                    true
+                )
+                .is_err()
+        );
+        let receipt = grants
+            .issue(
+                Permission::QueueDesktop,
+                reviewed.clone(),
+                Duration::from_secs(120),
+                1,
+                true,
+            )
+            .unwrap();
+        assert!(
+            grants
+                .consume(&receipt, Permission::QueueDesktop, &reviewed)
+                .is_err()
+        );
+        assert!(
+            grants
+                .activate_job(&receipt, &reviewed, &task(), Permission::StartHarness)
+                .is_err()
+        );
+        let mut resolved = reviewed.clone();
+        if let Scope::Desktop { intent, .. } = &mut resolved {
+            *intent = "same node; independently observed exact window".into();
+        }
+        let mut foreign = resolved.clone();
+        if let Scope::Desktop { run_id, .. } = &mut foreign {
+            *run_id = Uuid::new_v4();
+        }
+        assert!(
+            grants
+                .activate_job(&receipt, &reviewed, &foreign, Permission::UseDesktop)
+                .is_err()
+        );
+        let dispatch = Instant::now() + Duration::from_secs(61);
+        grants
+            .activate_job_at(
+                &receipt,
+                &reviewed,
+                &resolved,
+                Permission::UseDesktop,
+                dispatch,
+            )
+            .unwrap();
+        assert!(
+            grants
+                .consume_at(&receipt, Permission::UseDesktop, &reviewed, dispatch)
+                .is_err()
+        );
+        grants
+            .consume_at(&receipt, Permission::UseDesktop, &resolved, dispatch)
+            .unwrap();
+        assert!(
+            grants
+                .activate_job_at(
+                    &receipt,
+                    &reviewed,
+                    &resolved,
+                    Permission::UseDesktop,
+                    dispatch
+                )
+                .is_err()
+        );
     }
 }

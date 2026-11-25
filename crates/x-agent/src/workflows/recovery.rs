@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::worktrees::CommittedArtifact;
+use crate::verification::test_runner::TestEvidence;
+use crate::worktrees::{CommittedArtifact, OwnedWorktree, Reservation};
 
 const VERSION: u16 = 1;
 const FILE: &str = "x-job-claims.json";
@@ -42,6 +43,21 @@ pub struct Claim {
     pub evidence_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<CommittedArtifact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_evidence: Option<TestEvidence>,
+    /// Durable preparation intent; historical data never restores run authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<Reservation>,
+    /// Desktop execution is recorded independently of provider delivery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop: Option<DesktopClaim>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesktopClaim {
+    /// None while interrupted/in flight. No saved desktop target restores authority.
+    pub outcome: Option<super::scheduler::Outcome>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,6 +91,46 @@ impl Journal {
         node_id: &str,
         request_fingerprint: &str,
     ) -> Result<Begin, String> {
+        self.begin_with_reservation(run_id, node_id, request_fingerprint, None, false)
+    }
+
+    pub(super) fn begin_desktop(
+        &self,
+        run: Uuid,
+        node: &str,
+        fingerprint: &str,
+    ) -> Result<Begin, String> {
+        self.begin_with_reservation(run, node, fingerprint, None, true)
+    }
+
+    /// Reserve the exact owned checkout before allocation can leave files behind.
+    pub(crate) fn begin_preparation(
+        &self,
+        run_id: Uuid,
+        node_id: &str,
+        request_fingerprint: &str,
+        reservation: Reservation,
+    ) -> Result<Begin, String> {
+        if !reservation.valid() || reservation.resolved_commit().is_some() {
+            return Err("Invalid worktree preparation reservation".into());
+        }
+        self.begin_with_reservation(
+            run_id,
+            node_id,
+            request_fingerprint,
+            Some(reservation),
+            false,
+        )
+    }
+
+    fn begin_with_reservation(
+        &self,
+        run_id: Uuid,
+        node_id: &str,
+        request_fingerprint: &str,
+        worktree: Option<Reservation>,
+        desktop: bool,
+    ) -> Result<Begin, String> {
         validate_key(run_id, node_id, request_fingerprint)?;
         self.update(|data| {
             if let Some(claim) = data
@@ -84,6 +140,17 @@ impl Journal {
             {
                 if claim.request_fingerprint != request_fingerprint {
                     return Err("The approved task fingerprint changed".into());
+                }
+                if desktop != claim.desktop.is_some() {
+                    return Err("The approved job changed its execution domain".into());
+                }
+                if worktree.as_ref().is_some_and(|reservation| {
+                    claim
+                        .worktree
+                        .as_ref()
+                        .is_none_or(|recorded| !recorded.same_plan(reservation))
+                }) {
+                    return Err("The approved worktree reservation changed".into());
                 }
                 return Ok((
                     if claim.state == State::Claimed {
@@ -105,9 +172,61 @@ impl Journal {
                 state: State::Claimed,
                 evidence_id: None,
                 artifact: None,
+                test_evidence: None,
+                worktree,
+                desktop: desktop.then_some(DesktopClaim { outcome: None }),
             };
             data.entries.push(claim.clone());
             Ok((Begin::Fresh(claim), true))
+        })
+    }
+
+    pub(super) fn settle_desktop(
+        &self,
+        attempt: &Claim,
+        outcome: super::scheduler::Outcome,
+    ) -> Result<(), String> {
+        let state = desktop_state(outcome).ok_or("Invalid desktop execution outcome")?;
+        self.update(|data| {
+            let claim = active_attempt(data, attempt)?;
+            let desktop = claim
+                .desktop
+                .as_mut()
+                .ok_or("This is not a desktop attempt")?;
+            if claim.worktree.is_some()
+                || claim.evidence_id.is_some()
+                || claim.test_evidence.is_some()
+                || claim.artifact.is_some()
+            {
+                return Err("Desktop evidence cannot replace coding evidence".into());
+            }
+            desktop.outcome = Some(outcome);
+            claim.state = state;
+            Ok(((), true))
+        })
+    }
+
+    /// Only a verified native checkout can complete its durable preparation.
+    /// If this write fails, the checkout is retained and no job may launch.
+    pub(super) fn record_checkout(
+        &self,
+        attempt: &Claim,
+        checkout: &OwnedWorktree,
+    ) -> Result<(), String> {
+        if checkout.run_id() != attempt.run_id || checkout.task_id() != attempt.node_id {
+            return Err("The prepared checkout belongs to a different attempt".into());
+        }
+        self.update(|data| {
+            let claim = active_attempt(data, attempt)?;
+            if claim.desktop.is_some() {
+                return Err("A desktop node cannot acquire a coding checkout".into());
+            }
+            let reservation = claim
+                .worktree
+                .as_mut()
+                .ok_or("This job has no preparation reservation")?;
+            let changed = reservation.record_checkout(checkout)?;
+            Ok(((), changed))
         })
     }
 
@@ -120,6 +239,9 @@ impl Journal {
     ) -> Result<(), String> {
         self.update(|data| {
             let claim = active_attempt(data, attempt)?;
+            if claim.desktop.is_some() {
+                return Err("A desktop node cannot accept provider delivery".into());
+            }
             if let Some(recorded) = &claim.evidence_id {
                 if recorded != session.as_str() {
                     return Err("A different session already acknowledged this job".into());
@@ -163,6 +285,9 @@ impl Journal {
         }
         self.update(|data| {
             let claim = active_attempt(data, attempt)?;
+            if claim.desktop.is_some() {
+                return Err("A desktop node requires a native desktop outcome".into());
+            }
             match (claim.evidence_id.as_deref(), evidence_id) {
                 (Some(recorded), Some(provided)) if recorded != provided => {
                     return Err("A different session already acknowledged this job".into());
@@ -175,6 +300,40 @@ impl Journal {
             }
             claim.artifact = artifact;
             claim.state = outcome;
+            Ok((claim.clone(), true))
+        })
+    }
+
+    /// Test processes have no provider acknowledgement. Store their exact
+    /// commit/suite evidence atomically with the terminal attempt instead.
+    pub(super) fn settle_test(
+        &self,
+        attempt: &Claim,
+        outcome: State,
+        evidence: TestEvidence,
+        artifact: Option<CommittedArtifact>,
+    ) -> Result<Claim, String> {
+        if !evidence.valid()
+            || matches!(outcome, State::Claimed | State::Delivered)
+            || (outcome == State::Verified
+                && (evidence.passed != Some(true)
+                    || artifact
+                        .as_ref()
+                        .is_none_or(|a| a.commit() != evidence.commit)))
+            || artifact.as_ref().is_some_and(|a| {
+                outcome != State::Verified || !a.valid_for(attempt.run_id, &attempt.node_id)
+            })
+        {
+            return Err("Test evidence does not prove this exact attempt".into());
+        }
+        self.update(|data| {
+            let claim = active_attempt(data, attempt)?;
+            if claim.evidence_id.is_some() {
+                return Err("A provider claim cannot become a test result".into());
+            }
+            claim.state = outcome;
+            claim.artifact = artifact;
+            claim.test_evidence = Some(evidence);
             Ok((claim.clone(), true))
         })
     }
@@ -201,6 +360,9 @@ impl Journal {
             if claim.request_fingerprint != fingerprint {
                 return Err("The approved task fingerprint changed".into());
             }
+            if claim.desktop.is_some() {
+                return Err("Desktop recovery requires a new reviewed plan; provider reconciliation cannot replay desktop effects".into());
+            }
             if !matches!(
                 claim.state,
                 State::Failed | State::Unverified | State::Cancelled
@@ -217,6 +379,10 @@ impl Journal {
             claim.state = State::Claimed;
             claim.evidence_id = None;
             claim.artifact = None;
+            claim.test_evidence = None;
+            if let Some(reservation) = &mut claim.worktree {
+                reservation.reset_preparation();
+            }
             Ok((claim.clone(), true))
         })
     }
@@ -273,10 +439,39 @@ impl Journal {
                         .as_deref()
                         .is_some_and(|id| !valid_evidence(id))
                     || (matches!(claim.state, State::Delivered | State::Verified)
-                        && claim.evidence_id.is_none())
+                        && claim.evidence_id.is_none()
+                        && claim.desktop.is_none()
+                        && !(claim.state == State::Verified
+                            && claim.test_evidence.as_ref().is_some_and(|test| {
+                                test.passed == Some(true)
+                                    && claim
+                                        .artifact
+                                        .as_ref()
+                                        .is_some_and(|a| a.commit() == test.commit)
+                            })))
+                    || claim.test_evidence.as_ref().is_some_and(|test| {
+                        !test.valid()
+                            || claim.evidence_id.is_some()
+                            || matches!(claim.state, State::Claimed | State::Delivered)
+                            || (claim.state == State::Verified && test.passed != Some(true))
+                    })
                     || claim.artifact.as_ref().is_some_and(|artifact| {
                         claim.state != State::Verified
                             || !artifact.valid_for(claim.run_id, &claim.node_id)
+                    })
+                    || claim
+                        .worktree
+                        .as_ref()
+                        .is_some_and(|worktree| !worktree.valid())
+                    || claim.desktop.as_ref().is_some_and(|desktop| {
+                        claim.worktree.is_some()
+                            || claim.evidence_id.is_some()
+                            || claim.artifact.is_some()
+                            || claim.test_evidence.is_some()
+                            || match desktop.outcome {
+                                None => claim.state != State::Claimed,
+                                Some(outcome) => desktop_state(outcome) != Some(claim.state),
+                            }
                     })
                     || !ids.insert((claim.run_id, claim.node_id.as_str()))
             })
@@ -340,6 +535,18 @@ impl Journal {
         unlocked.map_err(|_| "Cannot release job journal lock")?;
         Ok(value)
     }
+}
+
+fn desktop_state(outcome: super::scheduler::Outcome) -> Option<State> {
+    use super::scheduler::Outcome;
+    Some(match outcome {
+        Outcome::Launched => State::Delivered,
+        Outcome::Verified => State::Verified,
+        Outcome::Failed => State::Failed,
+        Outcome::Unverified => State::Unverified,
+        Outcome::Cancelled => State::Cancelled,
+        _ => return None,
+    })
 }
 
 fn active_attempt<'a>(data: &'a mut Data, attempt: &Claim) -> Result<&'a mut Claim, String> {
@@ -553,5 +760,200 @@ mod tests {
             ));
         }
         assert_eq!(journal.uncertain().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn desktop_claims_preserve_uncertainty_and_cannot_use_provider_retry_authority() {
+        use super::super::scheduler::Outcome;
+        let (directory, journal, run, digest) = fixture();
+        let Begin::Fresh(claim) = journal.begin_desktop(run, "focus", &digest).unwrap() else {
+            panic!("expected fresh desktop claim");
+        };
+        let reopened = Journal::new(directory.path().join("state"));
+        assert!(matches!(
+            reopened.begin_desktop(run, "focus", &digest).unwrap(),
+            Begin::RequiresReconciliation(_)
+        ));
+        assert!(reopened.begin(run, "focus", &digest).is_err());
+        assert!(
+            reopened.snapshot().unwrap()[0]
+                .desktop
+                .as_ref()
+                .unwrap()
+                .outcome
+                .is_none()
+        );
+        let session =
+            crate::harness::SessionId::try_from(String::from("ses_not_desktop_proof")).unwrap();
+        assert!(reopened.record_delivery(&claim, &session).is_err());
+        assert!(
+            reopened
+                .settle(&claim, State::Verified, Some(session.as_str()))
+                .is_err()
+        );
+        assert!(reopened.settle_desktop(&claim, Outcome::Delivered).is_err());
+        reopened.settle_desktop(&claim, Outcome::Failed).unwrap();
+        assert!(
+            reopened
+                .approve_retry_after_reconciliation(run, "focus", &digest, true, true)
+                .is_err()
+        );
+        assert_eq!(
+            reopened.snapshot().unwrap()[0]
+                .desktop
+                .as_ref()
+                .unwrap()
+                .outcome,
+            Some(Outcome::Failed)
+        );
+        let Begin::Fresh(second) = reopened.begin_desktop(run, "page", &digest).unwrap() else {
+            panic!("expected fresh page claim");
+        };
+        reopened.settle_desktop(&second, Outcome::Launched).unwrap();
+        assert_eq!(
+            Journal::new(directory.path().join("state"))
+                .snapshot()
+                .unwrap()[1]
+                .state,
+            State::Delivered
+        );
+    }
+
+    #[test]
+    fn preparation_identity_survives_restart_and_cannot_change_under_the_same_claim() {
+        let (directory, journal, run, digest) = fixture();
+        let mut project = crate::projects::Project {
+            id: Uuid::new_v4(),
+            name: "Demo".into(),
+            aliases: vec![],
+            root: directory.path().join("repo"),
+            git_common_dir: Some(directory.path().join("repo/.git")),
+        };
+        let base = "a".repeat(40);
+        let reservation = Reservation::planned(&project, &base).unwrap();
+        let Begin::Fresh(first) = journal
+            .begin_preparation(run, "backend", &digest, reservation.clone())
+            .unwrap()
+        else {
+            panic!("expected a fresh preparation claim");
+        };
+        let reopened = Journal::new(directory.path().join("state"));
+        assert_eq!(reopened.uncertain().unwrap(), vec![first]);
+        assert!(matches!(
+            reopened
+                .begin_preparation(run, "backend", &digest, reservation)
+                .unwrap(),
+            Begin::RequiresReconciliation(_)
+        ));
+        assert!(
+            reopened
+                .begin_preparation(
+                    run,
+                    "backend",
+                    &digest,
+                    Reservation::planned(&project, &"b".repeat(40)).unwrap(),
+                )
+                .is_err()
+        );
+        project.root = directory.path().join("other");
+        assert!(
+            reopened
+                .begin_preparation(
+                    run,
+                    "backend",
+                    &digest,
+                    Reservation::planned(&project, &base).unwrap(),
+                )
+                .is_err()
+        );
+
+        let path = directory.path().join("state").join(FILE);
+        let mut invalid: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        invalid["entries"][0]["worktree"]["approved_base"] = "main".into();
+        let bytes = serde_json::to_vec(&invalid).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        assert!(reopened.snapshot().is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepared_checkout_records_cannot_cross_nodes_or_outlive_their_attempt() {
+        use crate::projects::Registry;
+        use crate::worktrees::Manager;
+
+        let (directory, journal, run, digest) = fixture();
+        let home = directory.path().join("home");
+        let root = home.join("project");
+        let base = home.join("Worktrees");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir(&base).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec![
+                "-c",
+                "user.name=X",
+                "-c",
+                "user.email=x@localhost",
+                "-c",
+                "core.hooksPath=",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "fixture",
+            ],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(&root)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let (project, _) = Registry::new(home.join("state"), home.clone())
+            .register("Demo", root.to_str().unwrap())
+            .unwrap();
+        let manager = Manager::new(base, home);
+        let sha = manager.starting_commit(&project).unwrap();
+        let Begin::Fresh(first) = journal
+            .begin_preparation(
+                run,
+                "first",
+                &digest,
+                Reservation::planned(&project, &sha).unwrap(),
+            )
+            .unwrap()
+        else {
+            panic!("expected a fresh claim");
+        };
+        let tree = manager
+            .allocate(&project, run, "first", &sha, true)
+            .unwrap();
+        let other = manager
+            .allocate(&project, run, "other", &sha, true)
+            .unwrap();
+        assert!(journal.record_checkout(&first, &other).is_err());
+        journal.record_checkout(&first, &tree).unwrap();
+        let recorded = journal.snapshot().unwrap();
+        assert_eq!(
+            recorded[0].worktree.as_ref().unwrap().resolved_commit(),
+            Some(sha.as_str())
+        );
+        journal.settle(&first, State::Failed, None).unwrap();
+        assert!(journal.record_checkout(&first, &tree).is_err());
+        let retry = journal
+            .approve_retry_after_reconciliation(run, "first", &digest, true, true)
+            .unwrap();
+        assert_eq!(retry.attempt, 2);
+        assert_eq!(retry.worktree.as_ref().unwrap().resolved_commit(), None);
+        assert!(journal.record_checkout(&first, &tree).is_err());
+        journal.record_checkout(&retry, &tree).unwrap();
+        assert!(tree.path().is_dir());
     }
 }

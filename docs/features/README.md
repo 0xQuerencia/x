@@ -26,6 +26,10 @@ Hex                                      // macOS release
 
 [Dictation](dictation.md), [Meetings](meetings.md), and [Recovery](recovery.md)
 have detailed maps.
+The X fork's opt-in assistant is documented in [X agent](x-agent.md),
+[native Work composer](work-composer.md), and [task coordination](task-coordination.md).
+These maps distinguish implemented behavior and automated checks from physical
+desktop, microphone and release acceptance.
 Agents can [read retained transcripts](transcript-cli.md) and
 [control the running app](control-cli.md) with the release CLI.
 [Labs](labs.md) is one switch, on by default, for every unfinished feature.

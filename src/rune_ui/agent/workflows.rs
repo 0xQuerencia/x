@@ -559,7 +559,7 @@ fn list(p: Paint, mgr: &Manager) -> El {
             .child(button(
                 p,
                 "wf-graph-import",
-                tr("Import coding graph"),
+                tr("Import graph"),
                 ButtonKind::Secondary,
                 |ui: &mut Ui, _| {
                     let path = ui.agent.workflows.graph_source.text.trim().to_string();
@@ -588,10 +588,10 @@ fn list(p: Paint, mgr: &Manager) -> El {
     }
     if !mgr.graphs.is_empty() {
         list = list
-            .child(section_label(p, "wf-coding-title", tr("Coding workflows")))
+            .child(section_label(p, "wf-coding-title", tr("Workflow graphs")))
             .child(small(
                 "wf-coding-note".into(),
-                "Imported coding graphs are read-only here. Review each job before approval."
+                "Imported graphs are read-only here. Review each desktop action and coding job before approval."
                     .into(),
                 p.muted(),
             ));
@@ -663,15 +663,22 @@ fn graph_card(p: Paint, graph: &GraphEntry, last: Option<&GraphLast>) -> El {
         )
         .child(small(
             format!("wf-graph-{id}-meta"),
-            format!("{} coding jobs · explicit approval required", graph.jobs),
+            format!("{} workflow jobs · explicit approval required", graph.jobs),
             p.muted(),
         ));
     if let Some(last) = last {
         let total = last.nodes.len();
+        let launched = last
+            .nodes
+            .iter()
+            .filter(|node| node.outcome == ::x_agent::workflows::scheduler::Outcome::Launched)
+            .count();
         let color = if last.stopped {
             p.warning()
-        } else if total > 0 && last.verified + last.delivered == total {
+        } else if total > 0 && last.verified == total {
             p.success()
+        } else if total > 0 && last.verified + last.delivered + launched == total {
+            p.warning()
         } else {
             p.danger()
         };
@@ -679,37 +686,29 @@ fn graph_card(p: Paint, graph: &GraphEntry, last: Option<&GraphLast>) -> El {
         card = card.child(small(
             format!("wf-graph-{id}-last"),
             format!(
-                "Last run: {}/{} delivered, {} with additional proof · {state}",
-                last.delivered, total, last.verified
+                "Last run: {total} jobs · {launched} launched · {} delivered · {} with additional proof · {state}",
+                last.delivered, last.verified
             ),
             color,
         ));
     }
-    if graph.coding_only {
-        card = card.child(button(
-            p,
-            &format!("wf-graph-{id}-run"),
-            tr("Review & run"),
-            ButtonKind::Primary,
-            move |ui: &mut Ui, _| {
-                let result = agent_host::service().plan_graph_workflow(&id);
-                note(
-                    ui,
-                    result.is_ok(),
-                    result.map_or_else(
-                        |error| error,
-                        |_| "Planned: review every job above before approving".to_string(),
-                    ),
-                );
-            },
-        ));
-    } else {
-        card = card.child(small(
-            format!("wf-graph-{id}-mixed"),
-            "Mixed or desktop graphs cannot use the coding graph runner.".into(),
-            p.warning(),
-        ));
-    }
+    card = card.child(button(
+        p,
+        &format!("wf-graph-{id}-run"),
+        tr("Review & run"),
+        ButtonKind::Primary,
+        move |ui: &mut Ui, _| {
+            let result = agent_host::service().plan_graph_workflow(&id);
+            note(
+                ui,
+                result.is_ok(),
+                result.map_or_else(
+                    |error| error,
+                    |_| "Planned: review every job above before approving".to_string(),
+                ),
+            );
+        },
+    ));
     card
 }
 

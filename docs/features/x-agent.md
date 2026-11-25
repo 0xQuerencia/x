@@ -60,6 +60,33 @@ idle → listening → transcribing → planning → [approval if required] → 
 
 ## Using it
 
+### What execution results prove
+
+Actions retain typed native evidence through the service boundary. A launch or
+keyboard dispatch is `launched`; it does not prove that the requested page,
+field or application effect occurred. Native window, system and clipboard
+adapters report `confirmed` only after their own postcondition checks. An owned
+screenshot write confirms that file creation. Window enumeration and selected
+accessibility text are `observed`, which does not establish an unrelated UI goal.
+A failed native readback is `unverified` and stops the action sequence. Display
+messages and window titles never determine these outcomes.
+
+Status JSON adds optional `steps[].execution` (`state`, `message`, and typed
+`evidence`) and `action_outcome`. The latter distinguishes `confirmed`,
+`launched`, `observed`, `partial`, `unverified`, `failed` and `cancelled` for
+terminal Actions tasks. Existing phase/status fields remain compatible:
+`completed` means execution ended, and the typed outcome says what was proved.
+An observation keeps the conservative legacy `launched` step status. Mixed
+confirmed and unverified work is not projected as fully confirmed. Stop or
+failure overrides earlier proof in the terminal task projection.
+
+`Action::execute()` and legacy launch adapters retain their string API, but
+those strings provide no native proof. Trusted adapters use
+`Action::execute_outcome()` and the typed Launcher method. Regression tests
+cover successful readback with `still open` in a document title, failed
+readback with different wording, unsupported proof, legacy JSON parsing and
+mixed task outcomes.
+
 ```
 hex agent workspace ~/code/project     # Work only: the folder OpenCode may change
 hex agent toggle --mode work           # start listening; run again to stop and plan
@@ -79,6 +106,17 @@ window, but do not name an application to launch. For example, a terminal's
 `bash` keyword and a settings app's `agent` keyword cannot claim those launch
 requests or shadow a saved workflow. The catalog regression uses both desktop
 entries and keeps exact-name launches available.
+
+Local compound commands keep up to five ordered steps, including app launches,
+window operations and volume/mute controls. Quote text or a search query when it
+contains action words: `open terminal then type "hello and open Firefox"` types
+that literal phrase after the normal focus and approval checks. Words and spaces
+inside straight or curly quotes are preserved; an incomplete quote or an invalid
+step rejects the entire plan. A browser followed by a quoted search keeps that
+browser as its destination. Unquoted standalone text/search payloads keep their
+existing literal behavior. Parser regressions cover quoted action words,
+apostrophes, Unicode, bounds, negation and invalid later steps; they do not replace
+physical typing or focus acceptance.
 
 **Voice routing.** The Agent pane controls the dictation shortcut's mode: Dictate, Actions,
 Work, Auto, or Smart. Auto only routes speech beginning with Friday or X. Smart asks the
@@ -314,12 +352,12 @@ selected excerpt before approving it.
 
 ### Read-only workflow graph preview
 
-Run `hex agent workflow preview <id>` to validate a saved workflow or v2
+Run `hex agent workflow preview <id>` to validate a saved workflow or v2/v3/v4
 graph and print its ordered nodes, dependencies and actions as JSON. The
 response explicitly says `executed: false` and `authorization:
 not_requested`; no desktop action, coding harness, approval or merge is
-triggered by this command. Execution still uses the existing separate
-`workflow run` path with its approval requirements.
+triggered by this command. `workflow run` reviews a legacy sequential workflow;
+`workflow run-graph` reviews a supported typed graph before execution.
 
 ### Workflow DAG schema (development)
 
@@ -386,8 +424,8 @@ require their own explicit action.
 
 ### Crash-safe DAG task claims (development)
 
-The workflow recovery journal stores only run/node identities, a request
-fingerprint, attempt count and evidence references. It does **not** store
+The workflow recovery journal stores run/node identities, a request
+fingerprint, attempt count, exact preparation identities and evidence references. It does **not** store
 prompts or tokens. It atomically claims a node before delivery; if X loses
 contact after the claim, restart reports `RequiresReconciliation` rather than
 silently sending the same work again. A terminal result is immutable.
@@ -399,6 +437,32 @@ structured acknowledgement while the harness is still running. It preserves
 that evidence through a failure or Stop. Settlement applies only to the
 attempt that produced the result.
 
+Before allocating a graph checkout, the same atomic claim records the approved
+project UUID, canonical project/Git directories and base commit. After successful
+preparation, X records the resolved checkout commit before starting a provider or
+test process. A failure to persist that record prevents launch and retains the
+checkout. An interruption between allocation and the second record therefore
+leaves an inspectable reservation rather than an undiscoverable directory.
+
+`hex agent workflow worktrees [run-uuid]` is a read-only recovery inventory.
+It revalidates the registered project identity, generated X path, Git worktree
+registration and base ancestry, then reports the observed HEAD and whether the
+checkout is free of tracked, untracked and ignored files for possible cleanup.
+The recorded outcome is shown separately: inspecting files never turns an
+interrupted claim into success. Missing directories, unsafe or foreign paths,
+and older claims without a recorded reservation remain distinct. The default
+view inspects at most 64 recent preparations and labels older entries as not
+inspected; supplying an exact run UUID inspects that run's entries.
+
+This command does not recreate, retry or delete anything, restore grants, or
+show prompts/provider identifiers. Cleanup still uses the separate approved
+manager operation, which rechecks ownership and refuses dirty or ignored files;
+the inventory's clean flag is not approval. Regression coverage includes a
+failed second allocation after an edited first checkout, restart before the
+prepared-commit record, retained merge conflicts, symlink/foreign paths, ignored
+build output, changed registered project identity, and unchanged journal bytes
+after inventory reads. These are local fixture checks, not physical desktop QA.
+
 ### Proof-based verification (development)
 
 `x_agent::verification` computes `Verified`, `Failed` or `Unverified`
@@ -409,7 +473,7 @@ and exit code 0 are both observed; it does not prove code correctness.
 A separate Git status check reports whether an exact project-relative file
 changed, not whether the resulting code works.
 
-Coding graphs currently use delivery-only evidence. The task and saved report
+Coding graphs without a required proof profile use delivery-only evidence. The task and saved report
 label those nodes Delivered, not code-verified. Older saved coding graph
 summaries are read as delivery-only. Existing v2 requires edges retain their
 historical successful-delivery semantics; they do not establish that a
@@ -427,15 +491,59 @@ Git tree and no tracked or non-ignored uncommitted changes. It records the
 exact base and output commit IDs, project, run and node in the durable claim
 journal. `hex agent workflow claims` exposes that artifact evidence locally
 without revealing provider session IDs or prompts. The receipt binds this
-proof profile. X does not auto-commit, run tests, transfer the artifact to
-a successor's checkout, or merge it; those require separate implementation
-and approvals. Ignored build outputs are not part of the artifact.
+proof profile. The approval preview also lists two exact Git commands that
+this output profile permits: stage changes inside the owned checkout and
+create the node's fixed-message commit with hooks and signing disabled. X
+supplies those commands in the provider request; it does not commit the
+provider's edits silently, grant wildcard Git access, push a branch, or
+advance the primary checkout. Ignored build outputs are not part of the
+artifact.
+
+Version 4 adds `inputs: [{"node":"producer", "proof":"committed"}]` and
+`proof: "tested"`. These refer to reviewed nodes in the same project and run,
+never caller-supplied SHAs or paths. Inputs are dependency edges: a delivery
+receipt or file-change observation cannot substitute for a committed artifact;
+a tested edge requires an actual successful test job. Cycles, missing or
+cross-project producers, incompatible proof types, unknown fields, and more
+than eight inputs are refused before approval.
+
+A ready job gets its worktree lazily. X independently rechecks each source's
+owned checkout, exact commit and clean state. One input starts at that exact
+commit. Multiple inputs are assembled in declared order in a new isolated
+checkout; a conflict stops that node and retains the conflict for inspection.
+The primary checkout, including dirty and untracked owner files, is preserved.
+Skipped or queued-cancelled jobs do not allocate worktrees. Recovery claims
+begin before preparation so a failed preparation is not silently replayed.
+
+A v4 test job is `{"type":"test", "project_id":"<registered UUID>",
+"suite":"cargo_workspace"}` and needs at least one input. Other fixed suites
+are `cargo_agent`, `npm`, `pnpm`, `pytest`, and `go`. The normal approval preview
+identifies the exact input recipe and suite and discloses that repository
+scripts execute with the owner's OS access. Just-in-time one-use permission
+binds the resolved checkout and SHA. The existing bounded test runner runs
+that suite, verifies unchanged tracked/nonignored state and HEAD, and records
+suite, commit, observed time and pass/fail/unknown evidence. Its success is
+**Tested for that suite**, not general code correctness. Failure, cancellation,
+timeout or changed code blocks tested descendants. `workflow claims` exposes
+this evidence and the tested artifact. Restart does not restore any permission.
+
+Only a workspace-capable provider can consume an artifact checkout. The
+current tool-free Claude adapter remains available for goal/explicit-context
+analysis; it is not offered a checkout that it cannot inspect.
+
+Regression coverage uses actual Git branches/worktrees and owned fixture
+provider processes: two independent changes are merged, a real Cargo suite
+passes or fails against the combined commit, and the downstream process sees
+that exact tested tree only after a pass. Negative cases cover foreign/dirty
+artifacts, conflicts, stale scopes, cancellation, missing proof and schema
+forgery. These checks do not establish physical desktop or live commercial
+provider acceptance.
 
 ### Verified worktree scheduling (development)
 
 The DAG scheduler now supports worktree-scoped resource locks. Jobs in the
 same registered project may overlap **only when a trusted executor returns
-two separately verified worktree identities**. Without this proof they keep
+two separately verified worktree identities or native exact allocation reservations**. Without this proof they keep
 the existing one-writer-per-project restriction. Mixed project-wide and
 worktree-scoped jobs still conflict, and the exact lock is preserved through
 the job's lifetime even if the executor's discovery state changes.
@@ -450,8 +558,8 @@ worktree. It rechecks project/worktree identity, uses the crash-safe job
 journal to refuse duplicate sends, and derives completion from structured
 harness delivery and the explicitly chosen verification profile.
 
-Use an explicit version 2 coding graph containing only harness jobs. Each
-job references a registered Git project ID.
+Use a v2/v3 coding graph for existing harness jobs or a v4 graph for artifact
+inputs and test jobs. Each job references a registered Git project ID.
 
 ```sh
 hex agent workflow import-graph ./coding-graph.json
@@ -462,13 +570,69 @@ hex agent stop
 
 The plan shows the exact goal, project, provider, and pinned commit for
 every job. The same task appears in the Agent pane for approval. Approval
-creates separate folders under `~/X Worktrees` and issues one-use grants.
+issues exact queued-job grants; ready jobs create their separate folders
+under `~/X Worktrees` just before execution.
 A dependency can dispatch only while its grant is current and its required
 predecessors have verified delivery.
 
 Tests use isolated real Git worktrees and fixture provider executables to
 check approval, replay refusal, changed configuration, and dirty-checkout
 preservation. Code correctness requires separate verification.
+
+### Reviewed mixed desktop and coding graphs
+
+Imported graphs may combine `desktop`, `harness` and `test` nodes in the same
+DAG and scheduler. `hex agent workflow run-graph <id>` produces one explicit
+review with separate desktop permissions and coding/test scopes. The desktop
+adapter reuses the existing sequential workflow `Host`, preflight checks and
+step implementations. It does not create a second action registry or turn a
+model response into executable instructions.
+
+Desktop nodes support the existing typed app, directory, terminal, URL,
+window-focus/move, workspace, window-wait and run-opened-window-close steps.
+Low-risk `RunAction` phrases remain registry-validated and are pinned to their
+exact parsed actions. Interactive Computer, typing, coding-session and contextual
+window actions cannot enter through that generic phrase path: they need their
+own scoped service plan or an explicit typed window/harness node. A graph's
+legacy `OpencodeTask` desktop step is refused; coding uses the owned harness node.
+
+Existing window targets bind their exact ID, process and class during review.
+A later focus/move may instead bind the window actually observed by one
+unambiguous ancestor opener; graph dependencies, rather than array order,
+establish that relationship. The native review identifies that source. Closed,
+replaced or ambiguous targets fail without selecting another window.
+`CloseOpenedWindow` requires an explicit predecessor opener and retains the
+existing restriction to windows newly opened by this run; reusing an existing
+window does not grant permission to close it.
+
+Every mutation takes the shared service desktop lease, then rechecks the exact
+target and Stop token. Focus, workspace changes, moves and closes require actual
+readback before returning verification. The lease is released during window
+polling and is never held by Git preparation, harness computation or tests.
+The same lease protects foreground Actions and other native mutation paths.
+Mixed graphs remain foreground-only; only coding/test graphs may detach into
+background Work.
+
+Successful browser dispatch is `Launched`, not verified page loading. Ordinary
+`requires` edges may accept that dispatch; `requires_verified` requires observed
+proof. Per-node failures with `on_failure: continue` block their required
+descendants while independent siblings continue. An explicit stop-on-failure
+policy and global Stop retain their existing behavior. Individual Stop reaches
+only the selected node and its dependent consequences.
+
+Desktop nodes use the same durable claim journal, with their native outcome
+separate from provider delivery. Interrupted effects remain unresolved and
+cannot be replayed using provider non-delivery approval. Recovery inventory
+labels desktop nodes as having no coding checkout. Saved results contain typed
+per-node outcomes; native step evidence distinguishes actual window readback
+from a launch with unknown effect.
+
+Local integration tests combine the existing fake desktop host with real owned
+provider subprocesses and Git commits: app → coding artifact → exact-window
+focus/close, a held global input lease while independent Work runs, targeted
+Stop, stale PID refusal, and launch-only proof blocking. These checks do not
+establish physical desktop or commercial-provider acceptance. Authoring a mixed
+graph currently uses import; the native Work composer builds coding/test graphs.
 
 ### Harness ownership and output evidence
 
@@ -496,17 +660,19 @@ window operations; all later reads and observed effects remain required.
 
 After an approved graph run, X saves an outcome-only summary in its private
 workflow directory. Run `hex agent workflow last-graph <id>` to inspect the
-last per-node verified, failed, cancelled or unverified status. Private
+last per-node launched, delivered, verified, tested, failed, cancelled or
+unverified status. Private
 prompts, command output, provider messages and request fingerprints are
-excluded. This is a delivery report, not proof that generated code is correct.
+excluded. Only the recorded proof profile is established; general code
+correctness still requires appropriate verification.
 
 ### Coding workflows in Rune (development)
 
-The Agent pane's Workflows view lists imported v2 coding graphs separately
+The Agent pane's Workflows view lists imported v2/v3/v4 coding graphs separately
 from sequential desktop workflows. Their names and job counts appear without
 private coding goals. "Review & run" opens the existing explicit approval
-preview; it does not start jobs directly. Mixed desktop/harness graphs are
-listed but not launchable by the coding runner. Saving a legacy workflow under
+preview; it does not start jobs directly. Mixed desktop/harness graphs use
+the same review and supported-node preflight. Saving a legacy workflow under
 an existing graph ID is refused rather than overwriting the graph.
 
 ### Interrupted coding jobs (development)
@@ -565,16 +731,17 @@ Go. It revalidates the worktree's ownership and now requires a live, one-use
 `RunTests` receipt matching the exact project, run, task, worktree and test preset
 before launching a process. A boolean flag alone cannot authorize tests. It
 executes without a shell, enforces a 120-second deadline and propagates Stop
-to the owned subprocess. The test runner is not yet wired to the native
-operator approval action, so this hardening alone does not expose a test button. Exit success is **Verified for that
-test suite only**; failure is **Failed**; missing, interrupted or timed-out
+to the owned subprocess. One-off project tests enter the native Work approval
+path; v4 graph test jobs reuse the same runner on their resolved artifact.
+Exit success is **Verified for that test suite only**; failure is **Failed**;
+missing, interrupted or timed-out
 evidence is **Unverified**. No process output or secrets are retained in the
 evidence record.
 
 Project test scripts can run arbitrary code despite fixed arguments, so this
-is a privileged R2 operation. The verifier API is implemented but **not yet
-exposed through a native approval screen or spoken command**; that integration
-remains gated by the P5 approval work.
+is a privileged R2 operation. Every one-off test or graph test requires an
+explicit native preview and approval, including in Autonomous mode. Worktree
+isolation is not an OS or network sandbox.
 
 ### Desktop capability checks
 
@@ -703,7 +870,7 @@ and repeatedly:
 2. Asks the Decider which offered operation and *current element* to use.
 3. Re-checks the decision's probability, target and permission, then acts.
 4. Re-reads the actual interface, checks what changed and repeats.
-5. Stops on verified completion, user Stop, an unsafe action, repeated
+5. Stops on supported visible evidence, user Stop, an unsafe action, repeated
    failure, 15 steps or a three-minute deadline.
 
 When typing, the Decider selects word boundaries in **your own goal**. X copies
@@ -712,8 +879,50 @@ by its current snapshot ID, a public website explicitly named in the goal,
 safe browser keys, scrolling or a visible completion evidence label.
 The executor refuses destructive, security-sensitive, sending, buying,
 deleting, publishing and approval controls, and never runs shell commands.
-`done` requires visible evidence; the claim is rejected if it was
-already present before the task's actions.
+`done` requires an exact visible evidence field; the claim is rejected if it was
+already present before the task's actions. Accepted evidence is reported as
+`observed`, with an explicit limitation that the requested goal was not
+independently verified. A newly visible toast or unrelated label cannot make
+the service report a confirmed Computer effect. Goal-specific independent
+verification remains required before a future Computer executor can report
+confirmed completion.
+
+Control discovery searches the complete bounded accessibility observation,
+ranks permitted controls against the goal and their role, and offers at most
+90 controls. The same original snapshot IDs appear in the decision choices and
+context; ranking does not change target identity. Password and consequential
+controls cannot become actionable through a high match score. The request
+reports omitted controls and an empty permitted set so the chooser can return
+blocked or request another observation. The accessibility collector's own bound
+still applies; this does not provide a full browser DOM or general tree pagination.
+Regression coverage includes a relevant control after the first 90 elements,
+secret-filled observations, and refusal of an omitted target.
+
+When the permitted next target is ambiguous or a user detail is missing, the
+Decider can choose `clarify`. X supplies a fixed question locally. A generative
+planner's question is bounded and redacted before display. The task enters
+`waiting_for_input`; answering requires its exact task ID and opaque question
+token. The answer is limited to 300 plain-text characters and creates an
+`awaiting_approval` review, including in Autonomous mode. It does not grant
+another app or remote model access.
+
+Approval consumes an in-memory continuation of that exact Computer step. X
+rechecks the selected model and remote consent, binds the original window's
+process identity and obtains a fresh observation before its next decision.
+Prior mutations and earlier compound-command steps do not replay; later steps
+still run after completion. Original evidence, action/error counts, the 15-step
+budget and the three-minute deadline survive the pause. Time spent answering
+and reviewing counts toward that deadline. At most three questions can be
+answered in one loop. A pause clears the transient permission to press Enter
+after typing because user interaction may have changed focus. Stop, expiry,
+model changes, missing/replaced windows and revoked remote consent prevent
+resumption. Continuations are not serialized and do not survive restart.
+
+The question picker uses bounded text answers. It does not invent stable tab
+identities or reuse an old `eN` control reference as a clarification choice.
+Synthetic tests cover complete pause/answer/review/resume flows, stale tokens,
+Stop, expiry, model/consent revocation, lease contention, retained budgets and
+non-replay; physical desktop acceptance still requires a live environment.
 
 Enable remote screen context **explicitly**, on top of X's normal Agent
 Labs switch and planner selection:

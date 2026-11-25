@@ -236,6 +236,10 @@ pub enum AgentAction {
         #[serde(default)]
         since: u64,
     },
+    Notifications {
+        mode: String,
+    },
+    ClearActivity,
     /// Start listening, or stop and plan what was said.
     Toggle {
         mode: String,
@@ -247,6 +251,26 @@ pub enum AgentAction {
     },
     Approve {
         id: u64,
+    },
+    ApproveBackground {
+        id: u64,
+    },
+    AnswerComputer {
+        id: u64,
+        question: String,
+        text: String,
+    },
+    ApproveComputerAnswer {
+        id: u64,
+        question: String,
+    },
+    StopForeground,
+    StopRun {
+        id: u64,
+    },
+    StopJob {
+        id: u64,
+        index: usize,
     },
     /// Select from a pending compositor window choice (one-based index).
     Choose {

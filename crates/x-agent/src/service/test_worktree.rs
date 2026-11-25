@@ -25,6 +25,12 @@ pub(super) struct PendingTests {
     registry: Registry,
 }
 
+impl PendingTests {
+    pub(super) fn project_root(&self) -> std::path::PathBuf {
+        self.project.root.clone()
+    }
+}
+
 impl Service {
     /// Only the typed local control command can request this plan. Approval
     /// is always a separate explicit owner interaction, even in Autonomous.

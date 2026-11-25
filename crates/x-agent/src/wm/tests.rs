@@ -352,14 +352,32 @@ fn close_reports_a_window_that_stays_open() {
     fake.0.lock().unwrap().inert = true;
     let out = ask(&mut c, "close this window").unwrap();
     assert!(out.message.contains("still open"), "{}", out.message);
+    assert_eq!(out.effect, Effect::Unverified);
 }
 
 #[test]
 fn close_removes_window_and_is_not_undoable() {
     let (mut c, _) = setup();
     let out = ask(&mut c, "close terminal").unwrap();
+    assert_eq!(out.effect, Effect::Confirmed);
     assert!(!out.undoable);
     assert!(matches!(ask(&mut c, "undo"), Err(WmError::NothingToUndo)));
+}
+
+#[test]
+fn native_readback_is_independent_of_words_in_a_window_title() {
+    let (mut controller, fake) = setup();
+    {
+        let mut state = fake.0.lock().unwrap();
+        for window in &mut state.wins {
+            window.title = "still open — an ordinary document title".into();
+        }
+    }
+    let outcome = ask(&mut controller, "close this window").unwrap();
+    assert!(outcome.message.contains("still open"));
+    assert_eq!(outcome.effect, Effect::Confirmed);
+    let projected = crate::tools::ExecutionOutcome::from(outcome);
+    assert_eq!(projected.state, crate::tools::EffectState::Confirmed);
 }
 
 #[test]

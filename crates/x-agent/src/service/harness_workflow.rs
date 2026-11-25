@@ -5,27 +5,33 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
-use crate::grants::Permission;
 use crate::harness::Adapter;
 use crate::projects::{Project, Registry};
 use crate::workflows::dag::{Graph, Job};
+use crate::workflows::desktop_exec::{self, Prepared};
 use crate::workflows::harness_exec::{
-    ApprovedHarnessExecutor, Assignment, Proof, approval_scope, to_kind,
+    ApprovedHarnessExecutor, Assignment, artifact_commands, planned_scope, proof_for,
+    queue_permission, to_kind,
 };
 use crate::workflows::recovery::{Claim, Journal, State};
 use crate::workflows::scheduler::{self, JobStops, NodeUpdate, Outcome};
-use crate::worktrees::{Manager, OwnedWorktree};
+use crate::worktrees::Manager;
 
 use super::edit::{step, task};
 use super::{AuditKind, Cancellation, Phase, Review, Service, Task, audit_best_effort, busy, emit};
+
+mod inventory;
+mod mixed;
 
 const WORKTREE_FOLDER: &str = "X Worktrees";
 const PARALLEL_WORKERS: usize = 2;
 
 fn node_status(outcome: Outcome) -> &'static str {
     match outcome {
+        Outcome::Launched => "launched",
         Outcome::Delivered => "delivered",
         Outcome::Verified => "done",
+        Outcome::Tested => "tested",
         Outcome::Failed => "failed",
         Outcome::Unverified => "unverified",
         Outcome::Cancelled => "cancelled",
@@ -40,10 +46,30 @@ pub(super) struct PendingGraph {
     manager: Arc<Manager>,
     registry: Registry,
     journal: Arc<Journal>,
-    jobs: Vec<PlannedJob>,
+    jobs: Vec<Option<PlannedJob>>,
+    desktop: Vec<Prepared>,
 }
 
 impl PendingGraph {
+    pub(super) fn project_roots(&self) -> Vec<PathBuf> {
+        let mut roots = self
+            .jobs
+            .iter()
+            .flatten()
+            .map(|job| job.project.root.clone())
+            .collect::<Vec<_>>();
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    pub(super) fn background_capable(&self) -> bool {
+        self.graph
+            .nodes
+            .iter()
+            .all(|node| matches!(node.job, Job::Harness { .. } | Job::Test { .. }))
+    }
+
     pub(super) fn job_stops(&self, root: &Cancellation) -> JobStops {
         JobStops::new(self.graph.nodes.len(), root)
     }
@@ -52,7 +78,7 @@ impl PendingGraph {
 struct PlannedJob {
     project: Project,
     commit: String,
-    adapter: Arc<dyn Adapter>,
+    adapter: Option<Arc<dyn Adapter>>,
 }
 
 fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
@@ -66,9 +92,19 @@ fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
         .map(|claim| {
             let delivery_observed = claim.evidence_id.is_some();
             let status = match claim.state {
+                State::Claimed if claim.desktop.is_some() => "possibly_executed",
                 State::Claimed if delivery_observed => "delivery_observed",
                 State::Claimed => "possibly_delivered",
+                State::Delivered if claim.desktop.is_some() => "launched",
                 State::Delivered => "delivered",
+                State::Verified
+                    if claim
+                        .test_evidence
+                        .as_ref()
+                        .is_some_and(|test| test.passed == Some(true)) =>
+                {
+                    "tested"
+                }
                 State::Verified => "verified",
                 State::Failed => "failed",
                 State::Unverified => "unverified",
@@ -80,9 +116,12 @@ fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
                 "status": status,
                 "attempt": claim.attempt,
                 "evidence_recorded": delivery_observed,
-                "requires_provider_check_before_retry": !delivery_observed,
+                "requires_provider_check_before_retry": !delivery_observed && claim.desktop.is_none(),
+                "requires_new_desktop_review": claim.desktop.is_some(),
                 "retry_blocked_by_delivery": delivery_observed,
                 "artifact": claim.artifact,
+                "test_evidence": claim.test_evidence,
+                "desktop_outcome": claim.desktop.and_then(|desktop| desktop.outcome),
             })
         })
         .collect::<Vec<_>>();
@@ -92,7 +131,7 @@ fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
         "executed": false,
         "retried": false,
         "provider_checked": false,
-        "note": "An acknowledgement confirms receipt, not success. Without an acknowledgement, retry still requires proof of non-delivery and fresh approval.",
+        "note": "A provider acknowledgement confirms receipt, not success. Coding retries require proof of non-delivery and fresh approval. Interrupted desktop effects require observation and a new reviewed plan; they are never replayed from this history.",
     })
 }
 
@@ -110,6 +149,8 @@ fn reconciliation_preview(mut claims: Vec<Claim>) -> serde_json::Value {
                 "node_id": claim.node_id,
                 "status": "requires_reconciliation",
                 "delivery_observed": claim.evidence_id.is_some(),
+                "requires_new_desktop_review": claim.desktop.is_some(),
+                "requires_provider_check_before_retry": claim.desktop.is_none() && claim.evidence_id.is_none(),
             })
         })
         .collect::<Vec<_>>();
@@ -118,13 +159,13 @@ fn reconciliation_preview(mut claims: Vec<Claim>) -> serde_json::Value {
         "jobs": jobs,
         "executed": false,
         "retried": false,
-        "note": "An acknowledged job still needs outcome reconciliation. An unknown job requires proof of non-delivery before any retry.",
+        "note": "An acknowledged coding job still needs outcome reconciliation; unknown delivery requires proof of non-delivery before retry. Interrupted desktop effects require observation and a new reviewed plan, never automatic replay.",
     })
 }
 
 impl Service {
-    /// Read unresolved coding claims without exposing prompts, request hashes or
-    /// provider evidence IDs. This never retries, settles or starts any job.
+    /// Read unresolved workflow claims without exposing prompts, request hashes
+    /// or provider evidence IDs. This never retries, settles or starts any job.
     pub fn uncertain_coding_jobs(&self) -> Result<serde_json::Value, String> {
         let (dir, _) = self
             .workflow_dirs
@@ -156,6 +197,14 @@ impl Service {
     }
 
     pub fn plan_graph_workflow(&self, id: &str) -> Result<Task, String> {
+        self.plan_graph_workflow_pinned(id, None)
+    }
+
+    pub(super) fn plan_graph_workflow_pinned(
+        &self,
+        id: &str,
+        pinned: Option<&Project>,
+    ) -> Result<Task, String> {
         let phase = self.lock().phase;
         if phase.is_busy() {
             return Err(busy(phase));
@@ -176,31 +225,71 @@ impl Service {
         let base = home.join(WORKTREE_FOLDER);
         let manager = Arc::new(Manager::new(base.clone(), home.clone()));
         let registry = Registry::new(support.to_path_buf(), home.clone());
+        let desktop =
+            desktop_exec::prepare(&graph, self.machine().as_ref(), &self.workflow_config())?;
         let mut projects = HashMap::<String, (Project, String)>::new();
         let mut jobs = Vec::with_capacity(graph.nodes.len());
         let mut steps = Vec::with_capacity(graph.nodes.len());
         for node in &graph.nodes {
-            let Job::Harness {
-                harness,
-                project_id,
-                goal,
-            } = &node.job
-            else {
-                return Err("Use the standard workflow runner for desktop actions. Coding graphs require only harness jobs.".into());
+            let (project_id, description, adapter) = match &node.job {
+                Job::Harness {
+                    harness,
+                    project_id,
+                    goal,
+                } => {
+                    let kind = to_kind(*harness);
+                    let adapter = self
+                        .work_adapter(kind)
+                        .cloned()
+                        .ok_or_else(|| format!("{} is unavailable", kind.label()))?;
+                    (
+                        project_id,
+                        format!("{} · {goal}", kind.label()),
+                        Some(adapter),
+                    )
+                }
+                Job::Test { project_id, suite } => {
+                    let (program, args) = suite.command();
+                    (
+                        project_id,
+                        format!(
+                            "Run {program} {} ({}) at the exact input commit (120 second limit)",
+                            args.join(" "),
+                            suite.label()
+                        ),
+                        None,
+                    )
+                }
+                Job::Desktop { action } => {
+                    let prepared = desktop
+                        .iter()
+                        .find(|prepared| prepared.id() == node.id)
+                        .ok_or("The desktop review is missing its exact node")?;
+                    steps.push(step(&prepared.description(), action.risk()));
+                    jobs.push(None);
+                    continue;
+                }
             };
-            let kind = to_kind(*harness);
-            let adapter = self
-                .work_adapter(kind)
-                .cloned()
-                .ok_or_else(|| format!("{} is unavailable", kind.label()))?;
             if !projects.contains_key(project_id) {
                 let project = registry.validated_resolve(project_id)?;
+                if pinned.is_some_and(|expected| {
+                    expected.id != project.id
+                        || expected.root != project.root
+                        || expected.git_common_dir != project.git_common_dir
+                }) {
+                    return Err("The selected project changed while preparing the workflow".into());
+                }
                 let commit = manager.starting_commit(&project)?;
                 projects.insert(project_id.clone(), (project, commit));
             }
             let (project, commit) = &projects[project_id];
-            let proof_note = if node.required_commit {
-                "required committed artifact".to_owned()
+            let proof_note = if matches!(node.job, Job::Test { .. }) {
+                "required successful test process at the exact assembled commit".to_owned()
+            } else if node.required_commit {
+                format!(
+                    "required committed artifact; permits exact commands: {}",
+                    artifact_commands(node).join(" ; ")
+                )
             } else {
                 node.required_change.as_ref().map_or_else(
                     || "delivery only".to_owned(),
@@ -209,32 +298,51 @@ impl Service {
             };
             let preview = step(
                 &format!(
-                    "{} · {} · {} at {commit} · {goal} · {proof_note}",
+                    "{} · {description} · {} at base {commit} · {proof_note}{}",
                     node.id,
-                    kind.label(),
-                    project.root.display()
+                    project.root.display(),
+                    if node.inputs.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            " · assemble approved input commits in order: {}",
+                            node.inputs
+                                .iter()
+                                .map(|input| format!("{} ({:?})", input.node, input.proof))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    }
                 ),
-                if adapter.descriptor().supports_workspace_write() {
+                if matches!(node.job, Job::Test { .. }) {
+                    "runs repository test code with your OS access in an isolated checkout; this is not a sandbox"
+                } else if adapter
+                    .as_ref()
+                    .is_some_and(|adapter| adapter.descriptor().supports_workspace_write())
+                {
                     "shares the goal and allows edits in a separate Git worktree"
                 } else {
                     "shares the goal for tool-free analysis; no workspace edits"
                 },
             );
             steps.push(preview);
-            jobs.push(PlannedJob {
+            jobs.push(Some(PlannedJob {
                 project: project.clone(),
                 commit: commit.clone(),
                 adapter,
-            });
+            }));
         }
 
         let mut state = self.lock();
+        if pinned.is_some_and(|expected| state.workspace.as_ref() != Some(&expected.root)) {
+            return Err("The selected project changed before review".into());
+        }
         if state.phase.is_busy() {
             return Err(busy(state.phase));
         }
         state.serial += 1;
         let preview = format!(
-            "Run coding workflow {} in {} (queued jobs may start for 30 minutes after approval)",
+            "Run reviewed workflow {} with coding checkouts in {} (queued jobs may start for 30 minutes after approval; desktop steps reacquire input and recheck exact targets)",
             graph.name,
             base.display()
         );
@@ -248,6 +356,7 @@ impl Service {
             registry,
             journal: Arc::new(Journal::new(support.join("workflow-journal"))),
             jobs,
+            desktop,
         });
         state.phase = Phase::AwaitingApproval;
         state.review = Review::Required;
@@ -334,9 +443,14 @@ impl Service {
                     .iter()
                     .filter(|node| node.outcome == Outcome::Delivered)
                     .count();
-                let verified = complete - delivered;
+                let launched = report
+                    .nodes
+                    .iter()
+                    .filter(|node| node.outcome == Outcome::Launched)
+                    .count();
+                let verified = complete - delivered - launched;
                 let summary = format!(
-                    "{complete}/{} jobs completed: {delivered} delivery-only, {verified} with additional proof",
+                    "{complete}/{} jobs completed: {launched} launched without effect confirmation, {delivered} delivery-only, {verified} with additional proof",
                     report.nodes.len()
                 );
                 let phase = if report.stopped || stop.requested() {
@@ -367,7 +481,7 @@ impl Service {
             .clone()
             .ok_or("Coding graph cancellation scopes are unavailable")?;
         let mut checked = HashSet::new();
-        for job in &workflow.jobs {
+        for job in workflow.jobs.iter().flatten() {
             if checked.insert(job.project.id) {
                 stop.check()?;
                 let current = workflow
@@ -381,34 +495,23 @@ impl Service {
             }
         }
         stop.check()?;
-        match std::fs::create_dir(&workflow.base) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => {
-                return Err(format!(
-                    "Could not create the approved worktree directory: {error}"
-                ));
+        if workflow.jobs.iter().any(Option::is_some) {
+            match std::fs::create_dir(&workflow.base) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(format!(
+                        "Could not create the approved worktree directory: {error}"
+                    ));
+                }
             }
         }
         let run = Uuid::new_v4();
-        let mut worktrees = Vec::with_capacity(workflow.jobs.len());
-        for (node, job) in workflow.graph.nodes.iter().zip(&workflow.jobs) {
-            stop.check()?;
-            let tree = workflow
-                .manager
-                .allocate(&job.project, run, &node.id, &job.commit, true)?;
-            self.emit(
-                "workflow",
-                &format!("{} worktree: {}", node.id, tree.path().display()),
-            );
-            worktrees.push(tree);
-        }
-
-        let executor = self.approved_graph_executor(workflow, &worktrees, run, stop)?;
-        scheduler::run_observed_scoped(
+        let executor = Arc::new(self.approved_graph_executor(workflow, run, stop)?);
+        let result = scheduler::run_observed_scoped(
             &workflow.graph,
             &workflow.home,
-            Arc::new(executor),
+            executor.clone(),
             &stops,
             PARALLEL_WORKERS,
             |index, update| {
@@ -417,82 +520,18 @@ impl Service {
                     NodeUpdate::Finished(outcome) => node_status(outcome),
                 };
                 self.set_step(index, status);
+                if matches!(update, NodeUpdate::Finished(_))
+                    && let Some(execution) =
+                        executor.desktop.execution(&workflow.graph.nodes[index].id)
+                {
+                    self.record_execution(index, execution);
+                    self.set_step(index, status);
+                }
             },
-        )
-    }
-
-    fn approved_graph_executor(
-        &self,
-        workflow: &PendingGraph,
-        worktrees: &[OwnedWorktree],
-        run: Uuid,
-        stop: &Cancellation,
-    ) -> Result<ApprovedHarnessExecutor, String> {
-        let grants = self.scoped_grants();
-        let result = (|| {
-            let state = self.lock();
-            stop.check()?;
-            let mut assignments = Vec::with_capacity(workflow.jobs.len());
-            for ((node, job), tree) in workflow
-                .graph
-                .nodes
-                .iter()
-                .zip(&workflow.jobs)
-                .zip(worktrees)
-            {
-                let proof = if node.required_commit {
-                    Proof::CommittedArtifact
-                } else {
-                    node.required_change
-                        .as_ref()
-                        .map_or(Proof::DeliveryOnly, |path| Proof::ChangedFile(path.clone()))
-                };
-                let scope = approval_scope(node, job.project.id, tree, &proof)?;
-                let receipt = grants.issue(
-                    Permission::QueueHarness,
-                    scope,
-                    Duration::from_secs(30 * 60),
-                    1,
-                    true,
-                )?;
-                assignments.push(Assignment::from_approved_scope(
-                    node,
-                    job.project.clone(),
-                    tree.clone(),
-                    Arc::clone(&job.adapter),
-                    proof,
-                    Arc::clone(&grants),
-                    receipt,
-                )?);
-            }
-            drop(state);
-            stop.check()?;
-            let service = self.clone();
-            ApprovedHarnessExecutor::new(
-                &workflow.graph,
-                run,
-                assignments,
-                Arc::clone(&workflow.manager),
-                Arc::clone(&workflow.journal),
-            )
-            .map(|executor| {
-                executor.with_activity(Arc::new(move |node, attempt, kind| {
-                    service.emit(
-                        "workflow_activity",
-                        &format!("{run} / {node} / attempt {attempt}: {}", kind.as_str()),
-                    );
-                }))
-            })
-        })();
-        if result.is_err() {
-            for id in workflow
-                .jobs
-                .iter()
-                .map(|job| job.project.id)
-                .collect::<HashSet<_>>()
-            {
-                let _ = grants.revoke_run(id, run);
-            }
+        );
+        let reversals = executor.desktop.reversals();
+        if !reversals.is_empty() {
+            self.lock().undo = reversals;
         }
         result
     }
@@ -515,6 +554,9 @@ mod reconciliation_tests {
                 state: State::Claimed,
                 evidence_id: Some("ses_private_provider_id".into()),
                 artifact: None,
+                test_evidence: None,
+                worktree: None,
+                desktop: None,
             },
             Claim {
                 run_id,
@@ -524,6 +566,9 @@ mod reconciliation_tests {
                 state: State::Claimed,
                 evidence_id: None,
                 artifact: None,
+                test_evidence: None,
+                worktree: None,
+                desktop: None,
             },
         ];
         let preview = reconciliation_preview(claims);
@@ -552,6 +597,9 @@ mod reconciliation_tests {
                 state: State::Failed,
                 evidence_id: Some("ses_private".into()),
                 artifact: None,
+                test_evidence: None,
+                worktree: None,
+                desktop: None,
             },
             Claim {
                 run_id: run,
@@ -561,6 +609,9 @@ mod reconciliation_tests {
                 state: State::Verified,
                 evidence_id: Some("provider_secret".into()),
                 artifact: None,
+                test_evidence: None,
+                worktree: None,
+                desktop: None,
             },
         ];
         let report = claim_status_preview(claims);

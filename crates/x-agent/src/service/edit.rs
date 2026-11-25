@@ -88,7 +88,10 @@ impl Service {
     fn run_direct(&self, text: &str, cmd: &Command) -> Result<Task, String> {
         let engine = self.engine_and_idle()?;
         self.begin_instant(text)?;
-        let result = self.direct(&engine, cmd);
+        let result = self
+            .try_desktop_control()
+            .map_err(EditFail::Failed)
+            .and_then(|_lease| self.direct(&engine, cmd));
         self.end_instant(result.map_err(|e| e.to_string()))
     }
 
@@ -414,7 +417,7 @@ impl Service {
         if accept {
             self.approve(id)?;
         } else {
-            self.cancel();
+            self.cancel_foreground();
         }
         self.lock().task.clone().ok_or_else(|| "no task".into())
     }
@@ -429,7 +432,7 @@ impl Service {
                 .ok_or("There is no edit to retry")?
         };
         let transform = job.transform.clone().ok_or("That edit cannot be retried")?;
-        self.cancel(); // drops the old proposal first
+        self.cancel_foreground(); // drops the old proposal first
         self.transform_target(text, transform, job.target, job.consented)
     }
 
@@ -508,6 +511,7 @@ pub(super) fn step(title: &str, risk: &str) -> Step {
         risk: risk.into(),
         request: None,
         detail: String::new(),
+        execution: None,
     }
 }
 

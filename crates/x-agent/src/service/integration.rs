@@ -38,6 +38,12 @@ fn scope(pending: &PendingIntegration) -> Scope {
     }
 }
 
+impl PendingIntegration {
+    pub(super) fn project_root(&self) -> std::path::PathBuf {
+        self.project.root.clone()
+    }
+}
+
 impl Service {
     /// The exact project/run/task/start commit are supplied through a local
     /// typed command, never interpreted from speech or model output.

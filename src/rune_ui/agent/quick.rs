@@ -163,7 +163,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                                 } else {
                                     ui.agent.pending_process = None;
                                     ui.agent.quick_notice = Some(
-                                        ::x_agent::quick::processes::terminate(info)
+                                        agent_host::service().with_desktop_control(|| ::x_agent::quick::processes::terminate(info))
                                             .unwrap_or_else(|error| error),
                                     );
                                 }
@@ -172,7 +172,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                                 let trigger = trigger.clone();
                                 std::thread::spawn(move || {
                                     match ::x_agent::quick::snippets::expand(&trigger)
-                                        .and_then(|text| ::x_agent::clipboard::copy(&text))
+                                        .and_then(|text| agent_host::service().with_desktop_control(|| ::x_agent::clipboard::copy(&text)))
                                     {
                                         Ok(message) => agent_host::service().emit("info", &message),
                                         Err(error) => agent_host::service().emit("error", &error),
@@ -182,7 +182,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                             Target::CopyResult(value) => {
                                 let value = value.clone();
                                 std::thread::spawn(move || {
-                                    match ::x_agent::clipboard::copy(&value) {
+                                    match agent_host::service().with_desktop_control(|| ::x_agent::clipboard::copy(&value)) {
                                         Ok(message) => agent_host::service().emit("info", &message),
                                         Err(error) => agent_host::service().emit("error", &error),
                                     }
@@ -200,7 +200,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                             Target::OpenFile(path) => {
                                 let path = path.clone();
                                 std::thread::spawn(move || {
-                                    match ::x_agent::quick::files::open(&path) {
+                                    match agent_host::service().with_desktop_control(|| ::x_agent::quick::files::open(&path)) {
                                         Ok(message) => agent_host::service().emit("info", &message),
                                         Err(error) => agent_host::service().emit("error", &error),
                                     }
@@ -208,7 +208,7 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
                             }
                             Target::PickColor => {
                                 std::thread::spawn(move || {
-                                    match ::x_agent::quick::picker::pick() {
+                                    match agent_host::service().with_desktop_control(::x_agent::quick::picker::pick) {
                                         Ok(message) => agent_host::service().emit("info", &message),
                                         Err(error) => agent_host::service().emit("error", &error),
                                     }

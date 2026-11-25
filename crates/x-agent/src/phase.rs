@@ -11,6 +11,7 @@ pub enum Phase {
     Planning,
     AwaitingApproval,
     Running,
+    WaitingForInput,
     Completed,
     Failed,
     Cancelled,
@@ -26,6 +27,7 @@ impl Phase {
                 | Self::Planning
                 | Self::AwaitingApproval
                 | Self::Running
+                | Self::WaitingForInput
         )
     }
 
@@ -40,8 +42,9 @@ impl Phase {
                     Planning,
                     AwaitingApproval | Idle | Completed | Failed | Cancelled
                 )
-                | (AwaitingApproval, Running | Cancelled)
-                | (Running, Completed | Failed | Cancelled)
+                | (AwaitingApproval, Running | Failed | Cancelled)
+                | (Running, WaitingForInput | Completed | Failed | Cancelled)
+                | (WaitingForInput, AwaitingApproval | Failed | Cancelled)
         )
     }
 }
@@ -68,9 +71,25 @@ mod tests {
 
     #[test]
     fn busy_phases_block_new_work() {
-        for busy in [Listening, Transcribing, Planning, AwaitingApproval, Running] {
+        for busy in [
+            Listening,
+            Transcribing,
+            Planning,
+            AwaitingApproval,
+            Running,
+            WaitingForInput,
+        ] {
             assert!(busy.is_busy());
             assert!(!busy.can_move_to(Listening) || busy == Listening || busy == Planning);
         }
+    }
+
+    #[test]
+    fn clarification_requires_a_new_review_before_resuming() {
+        assert!(Running.can_move_to(WaitingForInput));
+        assert!(!WaitingForInput.can_move_to(Running));
+        assert!(WaitingForInput.can_move_to(AwaitingApproval));
+        assert!(WaitingForInput.can_move_to(Cancelled));
+        assert!(WaitingForInput.can_move_to(Failed));
     }
 }

@@ -8,6 +8,17 @@ use serde::Deserialize;
 use crate::desktop::{Desktop, Key, Observation, UiAct, Win};
 use crate::tools;
 
+mod continuation;
+mod loop_run;
+mod readiness;
+pub use continuation::Continuation;
+#[cfg(test)]
+use continuation::MAX_ANSWER;
+use continuation::MAX_CLARIFICATIONS;
+pub(crate) use continuation::check_answer;
+use loop_run::drive;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
     pub steps: usize,
     pub errors: usize,
@@ -35,9 +46,11 @@ pub trait Host: Send + Sync {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Outcome {
-    Done(String),
+    /// The selected text exists; it is not an independent proof of the goal.
+    Observed(String),
     Failed(String),
     Cancelled,
+    Waiting(Box<Continuation>),
 }
 
 const CONSEQUENTIAL: &[&str] = &[
@@ -96,9 +109,10 @@ const CONSEQUENTIAL: &[&str] = &[
 ];
 const MAX_URL_CHARS: &str = ";|&$`()<>\\'\"";
 const MAX_TYPED: usize = 300;
-const SETTLE: Duration = Duration::from_millis(900);
+const CHANGE_WAIT: Duration = Duration::from_millis(900);
+const REQUESTED_WAIT: Duration = Duration::from_millis(750);
 const KEY_GAP: Duration = Duration::from_millis(300);
-const PAGE_LOAD: Duration = Duration::from_millis(2500);
+const NAVIGATION_WAIT: Duration = Duration::from_millis(2500);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -284,33 +298,41 @@ fn wait_interruptible(host: &dyn Host, duration: Duration) -> bool {
     false
 }
 
-fn wait_for_window(desktop: &dyn Desktop, app: &str, host: &dyn Host) -> Result<Win, String> {
-    if host.stopped() {
-        return Err("Stopped".into());
-    }
-    if let Some(win) = desktop.find_window_or_absent(app)? {
+fn wait_for_window(
+    desktop: &dyn Desktop,
+    app: &str,
+    host: &dyn Host,
+    started: Instant,
+    deadline: Duration,
+) -> Result<Win, String> {
+    readiness::check_live(host, started, deadline)?;
+    let found = desktop.find_window_or_absent(app)?;
+    readiness::check_live(host, started, deadline)?;
+    if let Some(win) = found {
         return Ok(win);
-    }
-    if host.stopped() {
-        return Err("Stopped".into());
     }
     host.emit("action", &format!("Open {app}"));
     host.open_app(app)?;
     let start = Instant::now();
     loop {
-        if !wait_interruptible(host, Duration::from_millis(500)) {
-            return Err("Stopped".into());
-        }
-        match desktop.find_window_or_absent(app)? {
+        readiness::check_live(host, started, deadline)?;
+        let found = desktop.find_window_or_absent(app)?;
+        readiness::check_live(host, started, deadline)?;
+        match found {
             Some(win) => return Ok(win),
             None if start.elapsed() > Duration::from_secs(12) => {
                 return Err(format!("No {app} window appeared"));
             }
             None => {}
         }
+        let delay = Duration::from_millis(50).min(deadline.saturating_sub(started.elapsed()));
+        if !wait_interruptible(host, delay) {
+            return Err("Stopped".into());
+        }
     }
 }
 
+#[derive(Eq, PartialEq)]
 struct Progress {
     app: String,
     acts: usize,
@@ -358,12 +380,12 @@ pub(crate) fn run_with(
     limits: &Limits,
 ) -> Outcome {
     let start = Instant::now();
-    let win = match wait_for_window(desktop, app, host) {
+    let win = match wait_for_window(desktop, app, host, start, limits.deadline) {
         Ok(win) => win,
         Err(_) if host.stopped() => return Outcome::Cancelled,
         Err(e) => return Outcome::Failed(e),
     };
-    let mut p = Progress {
+    let progress = Progress {
         app: app.into(),
         acts: 0,
         errors: 0,
@@ -375,142 +397,82 @@ pub(crate) fn run_with(
         prev: Observation::default(),
         last_render: String::new(),
     };
-    let mut stale_retry_used = false;
-    for turn in 0..limits.steps {
-        if host.stopped() {
-            return Outcome::Cancelled;
-        }
-        if start.elapsed() > limits.deadline {
-            return Outcome::Failed("Stopped: the time limit was reached".into());
-        }
-        let win = match rebind(desktop, app, &win, host) {
-            Ok(w) => w,
-            Err(e) => return Outcome::Failed(e),
-        };
-        let obs = match desktop.observe(&win) {
-            Ok(o) => o,
-            Err(e) => return Outcome::Failed(format!("Could not read the window: {e}")),
-        };
-        let render = obs.render();
-        if turn == 0 {
-            p.first = obs.clone();
-        } else if !p.acted_last {
-            p.unchanged = 0;
-        } else if render == p.last_render {
-            p.unchanged += 1;
-            host.emit("verify", "No visible change after the last step");
-        } else {
-            p.unchanged = 0;
-            host.emit("verify", "The screen changed after the last step");
-            let fresh = new_on_screen(&p.prev, &obs);
-            if let Some(last) = p.history.last_mut() {
-                last.push_str(&format!(" => screen changed, new: {fresh}"));
-            }
-        }
-        p.prev = obs.clone();
-        p.last_render = render;
-        host.emit(
-            "observe",
-            &format!("{:?}: {} controls", obs.title, obs.elements.len()),
-        );
-        if p.unchanged >= 2 {
-            return Outcome::Failed("Stopped: two steps in a row changed nothing".into());
-        }
-        p.acted_last = false;
-        if host.stopped() {
-            return Outcome::Cancelled;
-        }
-        let step = decide(goal, app, &obs, &p.history);
-        if host.stopped() {
-            return Outcome::Cancelled;
-        }
-        if start.elapsed() > limits.deadline {
-            return Outcome::Failed("Stopped: the time limit was reached".into());
-        }
-        let step = match step {
-            Ok(step) => step,
-            Err(e) => {
-                p.errors += 1;
-                host.emit("error", &e);
-                p.history.push(format!("(rejected: {e})"));
-                if p.errors >= limits.errors {
-                    return Outcome::Failed(format!("Stopped after repeated failures: {e}"));
-                }
-                continue;
-            }
-        };
-        match step {
-            Step::Ask(q) => return Outcome::Failed(format!("X needs an answer: {q}")),
-            Step::Fail(why) => return Outcome::Failed(format!("Cannot be done: {why}")),
-            Step::Wait => {
-                p.history.push("(waited for the interface to load)".into());
-                if !wait_interruptible(host, Duration::from_millis(750)) {
-                    return Outcome::Cancelled;
-                }
-                continue;
-            }
-            Step::Done {
-                evidence,
-                summary: _,
-            } => {
-                if !obs.shows_exact(&evidence) {
-                    p.errors += 1;
-                    host.emit("error", "Completion claimed without evidence on screen");
-                    p.history
-                        .push("(done rejected: that evidence is not on screen now)".into());
-                } else if p.acts > 0 && p.first.shows(&evidence) {
-                    p.errors += 1;
-                    p.history
-                        .push("(done rejected: that was already visible before you acted)".into());
-                } else {
-                    host.emit("verify", &format!("Found on screen: {evidence:?}"));
-                    return Outcome::Done(format!("Observed on screen: {evidence:?}"));
-                }
-                if p.errors >= limits.errors {
-                    return Outcome::Failed("Stopped: could not verify the result".into());
-                }
-            }
-            action => match act(desktop, &win, &obs, action, &mut p, host, goal) {
-                Ok(()) => {
-                    stale_retry_used = false;
-                    p.acts += 1;
-                    p.acted_last = true;
-                    if !wait_interruptible(host, SETTLE) {
-                        return Outcome::Cancelled;
-                    }
-                }
-                Err(_) if host.stopped() => return Outcome::Cancelled,
-                Err(Refusal::Stop(reason)) => return Outcome::Failed(reason),
-                Err(Refusal::Retry(reason)) => {
-                    p.typed_into_navigation = false;
-                    if reason == "That control changed; observe again" && !stale_retry_used {
-                        // The original element reference is stale. Observe
-                        // afresh and ask for a NEW grounded choice; never
-                        // replay the old reference on an updated screen.
-                        stale_retry_used = true;
-                        p.history
-                            .push("(control changed: re-observing once)".into());
-                        host.emit("info", "A control changed; getting a fresh snapshot");
-                        continue;
-                    }
-                    p.errors += 1;
-                    host.emit("error", &reason);
-                    p.history.push(format!("(failed: {reason})"));
-                    if p.errors >= limits.errors {
-                        return Outcome::Failed(format!(
-                            "Stopped after repeated failures: {reason}"
-                        ));
-                    }
-                }
-            },
-        }
+    drive(
+        Continuation {
+            app: app.into(),
+            goal: goal.into(),
+            window: win,
+            progress,
+            started: start,
+            limits: *limits,
+            next_turn: 0,
+            stale_retry_used: false,
+            question: String::new(),
+            answers: vec![],
+        },
+        desktop,
+        decide,
+        host,
+    )
+}
+
+/// Resume only after the service has reviewed an answer for this exact question.
+/// No app launch or earlier action runs again; the first operation is a fresh
+/// identity rebind and observation inside the original total time/step budget.
+pub(crate) fn resume_with(
+    mut continuation: Continuation,
+    answer: &str,
+    desktop: &dyn Desktop,
+    decide: &DecisionFn<'_>,
+    host: &dyn Host,
+) -> Outcome {
+    if host.stopped() {
+        return Outcome::Cancelled;
     }
-    Outcome::Failed(format!("Stopped: {} steps without finishing", limits.steps))
+    if let Err(why) = continuation.check_live() {
+        return Outcome::Failed(why);
+    }
+    let answer = match check_answer(answer) {
+        Ok(answer) => answer,
+        Err(why) => return Outcome::Failed(why),
+    };
+    if continuation.answers.len() >= MAX_CLARIFICATIONS {
+        return Outcome::Failed("Stopped: the clarification limit was reached".into());
+    }
+    continuation.answers.push(answer);
+    continuation
+        .progress
+        .history
+        .push("(the user answered the pending question; observe again before any action)".into());
+    // Human interaction during a pause invalidates the transient right to press
+    // Enter after an earlier type. Re-observation cannot prove current focus.
+    continuation.progress.typed_into_navigation = false;
+    drive(continuation, desktop, decide, host)
 }
 
 enum Refusal {
     Stop(String),
     Retry(String),
+}
+
+struct ActionScope<'a> {
+    host: &'a dyn Host,
+    started: Instant,
+    deadline: Duration,
+}
+
+impl ActionScope<'_> {
+    fn check_live(&self) -> Result<(), Refusal> {
+        readiness::check_live(self.host, self.started, self.deadline).map_err(Refusal::Stop)
+    }
+
+    fn debounce(&self) -> Result<(), Refusal> {
+        let delay = KEY_GAP.min(self.deadline.saturating_sub(self.started.elapsed()));
+        if !wait_interruptible(self.host, delay) {
+            return Err(Refusal::Stop("Stopped".into()));
+        }
+        self.check_live()
+    }
 }
 
 /// The goal must name the site, and any query or fragment must be spelled out in it.
@@ -548,10 +510,10 @@ fn act(
     obs: &Observation,
     step: Step,
     p: &mut Progress,
-    host: &dyn Host,
+    scope: &ActionScope<'_>,
     goal: &str,
 ) -> Result<(), Refusal> {
-    let retry = |e: String| Refusal::Retry(e);
+    let host = scope.host;
     // Browser navigation shortcuts (including Enter in an address/search
     // bar) are not applicable to file managers or editors. The model cannot
     // turn a supposed browser UI command into a terminal/editor hotkey.
@@ -579,13 +541,12 @@ fn act(
             .ok_or_else(|| Refusal::Retry(format!("No control {id:?} on screen now")))
     };
     let send = |action: &UiAct| {
-        if host.stopped() {
-            return Err("Stopped".into());
-        }
+        scope.check_live()?;
         match host.cancellation() {
             Some(stop) => desktop.act_scoped(win, action, stop),
             None => desktop.act(win, action),
         }
+        .map_err(Refusal::Retry)
     };
     let mut typed_nav = false;
     let described = match &step {
@@ -604,7 +565,7 @@ fn act(
                 )));
             }
             host.emit("act", &format!("click {:?}", e.name));
-            send(&UiAct::Click(e.reference.clone())).map_err(retry)?;
+            send(&UiAct::Click(e.reference.clone()))?;
             format!("clicked {:?}", e.name)
         }
         Step::Type(id, text) => {
@@ -617,8 +578,8 @@ fn act(
             }
             check_text(text).map_err(Refusal::Retry)?;
             host.emit("act", &format!("type into {:?}", e.name));
-            send(&UiAct::Focus(e.reference.clone())).map_err(retry)?;
-            send(&UiAct::Type(text.clone())).map_err(retry)?;
+            send(&UiAct::Focus(e.reference.clone()))?;
+            send(&UiAct::Type(text.clone()))?;
             // Search boxes can safely submit their search with Enter;
             // unrelated text fields cannot send/submit by key.
             typed_nav = e.is_omnibox() || e.role == "searchbox";
@@ -634,7 +595,7 @@ fn act(
                 p.typed_into_navigation = false;
             }
             host.emit("act", &format!("press {key:?}"));
-            send(&UiAct::Key(*key)).map_err(retry)?;
+            send(&UiAct::Key(*key))?;
             format!("pressed {key:?}")
         }
         Step::Navigate(url) => {
@@ -649,13 +610,8 @@ fn act(
                 if host.stopped() {
                     return Err(Refusal::Stop("Stopped".into()));
                 }
-                send(&ui).map_err(retry)?;
-                if !wait_interruptible(host, KEY_GAP) {
-                    return Err(Refusal::Stop("Stopped".into()));
-                }
-            }
-            if !wait_interruptible(host, PAGE_LOAD) {
-                return Err(Refusal::Stop("Stopped".into()));
+                send(&ui)?;
+                scope.debounce()?;
             }
             format!("went to {url}")
         }
@@ -678,3 +634,9 @@ fn check_text(text: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod continuation_tests;
+
+#[cfg(test)]
+mod readiness_tests;

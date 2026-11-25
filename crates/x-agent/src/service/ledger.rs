@@ -12,6 +12,7 @@ const LEGACY: &str = "x-approval-audit.ndjson";
 const HEADER: &[u8] = b"{\"schema\":1}\n";
 const MAX_RECORD: usize = 4096;
 
+#[derive(Clone)]
 pub(super) struct Ledger {
     path: PathBuf,
     instance: String,
@@ -28,6 +29,8 @@ pub(super) enum Kind {
     Claimed,
     StepDone,
     Launched,
+    Observed,
+    Unverified,
     StepFailed,
     Finished,
 }
