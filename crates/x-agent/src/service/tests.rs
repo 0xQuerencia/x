@@ -2465,6 +2465,42 @@ fn native_graph_approval_runs_the_previewed_goals_in_owned_worktrees() {
 }
 
 #[test]
+fn native_individual_job_stop_preserves_an_independent_provider_run() {
+    let (service, directory, _, mut graph) = graph_workflow_fixture();
+    fake_opencode(
+        directory.path(),
+        r#"echo '{"type":"step_start","sessionID":"ses_graph_fixture","part":{"type":"step-start"}}'
+sleep 60"#,
+    );
+    graph.nodes[1].requires.clear();
+    std::fs::write(
+        directory.path().join("state/workflows/coding-graph.json"),
+        serde_json::to_vec(&graph).unwrap(),
+    )
+    .unwrap();
+    let task = service.plan_graph_workflow(&graph.id).unwrap();
+    assert!(service.cancel_coding_job(task.id, 0).is_err());
+    service.approve(task.id).unwrap();
+    let running = wait_for(&service, |snapshot| {
+        snapshot.events.iter().any(|event| {
+            event.kind == "workflow_activity" && event.text.contains("/ inspect / attempt 1: step_start")
+        })
+    });
+    assert!(running.cancellable_coding_jobs.contains(&0));
+    assert!(service.cancel_coding_job(task.id + 1, 0).is_err());
+    assert!(service.cancel_coding_job(task.id, 100).is_err());
+    service.cancel_coding_job(task.id, 0).unwrap();
+    let done = wait_for(&service, |snapshot| !snapshot.phase.is_busy());
+    assert_eq!(done.phase, Phase::Failed);
+    assert!(done.cancellable_coding_jobs.is_empty());
+    let task = done.task.unwrap();
+    assert_eq!(task.steps[0].status, "cancelled");
+    assert_eq!(task.steps[1].status, "delivered");
+    assert!(service.cancel_coding_job(task.id, 1).is_err());
+    assert_eq!(done.pending_job_approvals, Some(0));
+}
+
+#[test]
 fn graph_stop_and_forgotten_projects_prevent_worktree_allocation() {
     let (service, directory, _, graph) = graph_workflow_fixture();
     let home = directory.path();

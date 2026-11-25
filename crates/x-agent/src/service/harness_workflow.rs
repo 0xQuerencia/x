@@ -13,7 +13,7 @@ use crate::workflows::harness_exec::{
     ApprovedHarnessExecutor, Assignment, Proof, approval_scope, to_kind,
 };
 use crate::workflows::recovery::{Claim, Journal, State};
-use crate::workflows::scheduler::{self, NodeUpdate, Outcome};
+use crate::workflows::scheduler::{self, JobStops, NodeUpdate, Outcome};
 use crate::worktrees::{Manager, OwnedWorktree};
 
 use super::edit::{step, task};
@@ -41,6 +41,12 @@ pub(super) struct PendingGraph {
     registry: Registry,
     journal: Arc<Journal>,
     jobs: Vec<PlannedJob>,
+}
+
+impl PendingGraph {
+    pub(super) fn job_stops(&self, root: &Cancellation) -> JobStops {
+        JobStops::new(self.graph.nodes.len(), root)
+    }
 }
 
 struct PlannedJob {
@@ -248,6 +254,37 @@ impl Service {
         Ok(task)
     }
 
+    /// Request Stop for one exact step in the currently approved coding graph.
+    /// A stale panel, non-coding task, or already finished step has no authority.
+    pub fn cancel_coding_job(&self, task_id: u64, index: usize) -> Result<(), String> {
+        let mut state = self.lock();
+        if state.phase != Phase::Running || state.stop.requested() {
+            return Err("No running coding graph".into());
+        }
+        let active = state
+            .task
+            .as_ref()
+            .filter(|task| task.id == task_id)
+            .and_then(|task| task.steps.get(index))
+            .is_some_and(|step| matches!(step.status.as_str(), "pending" | "running"));
+        if !active {
+            return Err("No matching active coding job".into());
+        }
+        let stops = state
+            .active_graph_stops
+            .as_ref()
+            .ok_or("No running coding graph")?;
+        if !stops.request(index)? {
+            return Err("Stop was already requested for this job".into());
+        }
+        if let Some(step) = state.task.as_mut().and_then(|task| task.steps.get_mut(index)) {
+            step.status = "stopping".into();
+        }
+        audit_best_effort(&mut state, AuditKind::StopRequested, Some(index));
+        emit(&mut state, "info", &format!("Stop requested for coding job {}", index + 1));
+        Ok(())
+    }
+
     pub(super) fn run_graph_workflow(&self, workflow: PendingGraph, stop: &Cancellation) {
         let result = self.run_approved_graph(&workflow, stop);
         match result {
@@ -307,6 +344,11 @@ impl Service {
         stop: &Cancellation,
     ) -> Result<scheduler::Report, String> {
         stop.check()?;
+        let stops = self
+            .lock()
+            .active_graph_stops
+            .clone()
+            .ok_or("Coding graph cancellation scopes are unavailable")?;
         let mut checked = HashSet::new();
         for job in &workflow.jobs {
             if checked.insert(job.project.id) {
@@ -346,11 +388,11 @@ impl Service {
         }
 
         let executor = self.approved_graph_executor(workflow, &worktrees, run, stop)?;
-        scheduler::run_observed(
+        scheduler::run_observed_scoped(
             &workflow.graph,
             &workflow.home,
             Arc::new(executor),
-            stop,
+            &stops,
             PARALLEL_WORKERS,
             |index, update| {
                 let status = match update {

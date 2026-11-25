@@ -271,6 +271,14 @@ prevents new dispatch but lets already-running siblings finish. Global Stop
 requests cancellation of every child; workers must cooperate with that token,
 and X does not claim that an unresponsive worker has been terminated.
 
+In the Agent panel, each queued or running coding job has its own Stop
+button. It requests cancellation of that exact reviewed job, not its siblings.
+A job waiting to start will not launch; a running job must acknowledge Stop
+and exit before its resource is released. Success/proof-dependent jobs remain
+blocked when their prerequisite is cancelled. Ordering-only edges can still
+release independent work. Global Stop still cancels the entire graph. A
+partially cancelled graph is not reported as fully completed.
+
 ### Approved Git worktree isolation (development)
 
 The new worktree manager can allocate a detached Git checkout at a verified

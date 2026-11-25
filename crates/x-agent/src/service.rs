@@ -164,6 +164,9 @@ pub struct Snapshot {
     pub autonomy_mode: AutonomyMode,
     /// None means the approval store is unavailable, not that it is empty.
     pub pending_job_approvals: Option<usize>,
+    /// Reviewed graph step indices for which a local Stop request is available.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cancellable_coding_jobs: Vec<usize>,
     pub computer_apps: Vec<String>,
     pub computer_remote: bool,
 }
@@ -298,6 +301,7 @@ struct State {
     /// The saved workflow waiting to run, or running.
     workflow: Option<crate::workflows::Workflow>,
     graph_workflow: Option<harness_workflow::PendingGraph>,
+    active_graph_stops: Option<crate::workflows::scheduler::JobStops>,
     pending_tests: Option<test_worktree::PendingTests>,
     pending_integration: Option<integration::PendingIntegration>,
     project_command: Option<project_commands::Pending>,
@@ -398,6 +402,7 @@ impl Service {
             edit: None,
             workflow: None,
             graph_workflow: None,
+            active_graph_stops: None,
             pending_tests: None,
             pending_integration: None,
             project_command: None,
@@ -561,6 +566,21 @@ impl Service {
             trusted_actions: s.autonomy_mode == AutonomyMode::Autonomous,
             autonomy_mode: s.autonomy_mode,
             pending_job_approvals,
+            cancellable_coding_jobs: if s.phase == Phase::Running
+                && !s.stop.requested()
+                && s.active_graph_stops.is_some()
+            {
+                s.task.as_ref().map_or_else(Vec::new, |task| {
+                    task.steps
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, step)| matches!(step.status.as_str(), "pending" | "running"))
+                        .map(|(index, _)| index)
+                        .collect()
+                })
+            } else {
+                vec![]
+            },
             computer_apps: s.computer_apps.clone(),
             computer_remote: s.computer_remote,
             opencode_found: self.harness.is_some(),
@@ -1417,6 +1437,10 @@ impl Service {
             }
             set_phase(&mut s, Phase::Running);
             s.stop = Cancellation::default();
+            s.active_graph_stops = s
+                .graph_workflow
+                .as_ref()
+                .map(|graph| graph.job_stops(&s.stop));
             (
                 s.task.clone().ok_or("no task")?,
                 s.actions.clone(),
@@ -1920,7 +1944,7 @@ impl Service {
         let Some(step) = s.task.as_mut().and_then(|t| t.steps.get_mut(idx)) else {
             return;
         };
-        if step.status == status {
+        if step.status == status || (step.status == "stopping" && status == "running") {
             return;
         }
         step.status = status.into();
@@ -1955,6 +1979,7 @@ impl Service {
         s.edit = None;
         s.workflow = None;
         s.graph_workflow = None;
+        s.active_graph_stops = None;
         s.pending_tests = None;
         s.pending_integration = None;
         s.project_command = None;
@@ -1994,6 +2019,7 @@ impl Service {
                 s.edit = None;
                 s.workflow = None;
                 s.graph_workflow = None;
+                s.active_graph_stops = None;
                 s.pending_tests = None;
                 s.pending_integration = None;
                 s.project_command = None;

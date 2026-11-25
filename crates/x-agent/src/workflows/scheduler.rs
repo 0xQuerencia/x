@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,7 @@ use super::dag::{Graph, Job, Node};
 use crate::cancellation::Cancellation;
 
 pub const MAX_PARALLEL: usize = 4;
+const STOP_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,6 +108,34 @@ fn resource(node: &Node, executor: &dyn Executor) -> Resource {
     }
 }
 
+/// One cancellation scope per reviewed node, rooted in the graph's Stop token.
+/// A request can arrive before dispatch or while its worker is running.
+#[derive(Clone)]
+pub(crate) struct JobStops {
+    root: Cancellation,
+    nodes: Vec<Cancellation>,
+}
+
+impl JobStops {
+    pub(crate) fn new(count: usize, root: &Cancellation) -> Self {
+        Self {
+            root: root.clone(),
+            nodes: (0..count).map(|_| root.child()).collect(),
+        }
+    }
+
+    pub(crate) fn request(&self, index: usize) -> Result<bool, String> {
+        self.nodes
+            .get(index)
+            .map(Cancellation::request)
+            .ok_or_else(|| "No matching coding job".into())
+    }
+
+    pub(crate) fn requested(&self, index: usize) -> bool {
+        self.nodes.get(index).is_some_and(Cancellation::requested)
+    }
+}
+
 /// Execute a previously user-authorized graph. The runner may only report
 /// `Verified` after collecting independent evidence, never from model text.
 /// One writable job per project is allowed until worktree isolation lands.
@@ -127,9 +157,31 @@ pub(crate) fn run_observed(
     executor: Arc<dyn Executor>,
     stop: &Cancellation,
     parallel: usize,
+    observe: impl FnMut(usize, NodeUpdate),
+) -> Result<Report, String> {
+    run_observed_scoped(
+        graph,
+        home,
+        executor,
+        &JobStops::new(graph.nodes.len(), stop),
+        parallel,
+        observe,
+    )
+}
+
+pub(crate) fn run_observed_scoped(
+    graph: &Graph,
+    home: &Path,
+    executor: Arc<dyn Executor>,
+    stops: &JobStops,
+    parallel: usize,
     mut observe: impl FnMut(usize, NodeUpdate),
 ) -> Result<Report, String> {
     graph.validate_with_home(home)?;
+    if stops.nodes.len() != graph.nodes.len() {
+        return Err("Cancellation scopes do not match the reviewed graph".into());
+    }
+    let stop = &stops.root;
     if !(1..=MAX_PARALLEL).contains(&parallel) {
         return Err(format!("Concurrent workers must be 1-{MAX_PARALLEL}"));
     }
@@ -168,6 +220,13 @@ pub(crate) fn run_observed(
                 if finished[index].is_some() || active.contains_key(&index) {
                     continue;
                 }
+                if stops.requested(index) {
+                    finished[index] = Some(Outcome::Cancelled);
+                    notes[index] = "Individual Stop prevented dispatch".into();
+                    observe(index, NodeUpdate::Finished(Outcome::Cancelled));
+                    progressed = true;
+                    continue;
+                }
                 let all_finished = node
                     .after
                     .iter()
@@ -195,7 +254,7 @@ pub(crate) fn run_observed(
                     continue;
                 }
                 if active.len() >= parallel {
-                    break;
+                    continue;
                 }
                 let owned_resource = resource(node, executor.as_ref());
                 if resources
@@ -218,11 +277,15 @@ pub(crate) fn run_observed(
                 let runner = Arc::clone(&executor);
                 let tx = send.clone();
                 let task = node.clone();
-                let cancellation = stop.child();
+                let cancellation = stops.nodes[index].clone();
                 progressed = true;
                 match thread::Builder::new().spawn(move || {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        runner.execute(task, cancellation)
+                        if cancellation.requested() {
+                            Outcome::Cancelled
+                        } else {
+                            runner.execute(task, cancellation)
+                        }
                     }));
                     let panicked = result.is_err();
                     let _ = tx.send((index, result.unwrap_or(Outcome::Failed), panicked));
@@ -252,12 +315,16 @@ pub(crate) fn run_observed(
             }
             continue;
         }
-        let Ok((index, mut outcome, panicked)) = receive.recv() else {
-            stop.request();
-            for (_, worker) in active.drain() {
-                let _ = worker.join();
+        let (index, mut outcome, panicked) = match receive.recv_timeout(STOP_POLL) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                stop.request();
+                for (_, worker) in active.drain() {
+                    let _ = worker.join();
+                }
+                return Err("The scheduler lost an owned worker".into());
             }
-            return Err("The scheduler lost an owned worker".into());
         };
         // Release the resource only after the worker is reaped, not merely
         // after its result arrives. Never expose the panic payload as evidence.
@@ -279,7 +346,11 @@ pub(crate) fn run_observed(
             stop_new = true;
         }
         if outcome == Outcome::Cancelled {
-            stop_new = true;
+            if stop.requested() || !stops.requested(index) {
+                stop_new = true;
+            } else {
+                notes[index] = "Individual Stop reached the owned worker".into();
+            }
         }
     }
 
@@ -288,7 +359,7 @@ pub(crate) fn run_observed(
         if outcome.is_none() {
             observe(
                 index,
-                NodeUpdate::Finished(if interrupted {
+                NodeUpdate::Finished(if stops.requested(index) {
                     Outcome::Cancelled
                 } else {
                     Outcome::Skipped
@@ -302,7 +373,7 @@ pub(crate) fn run_observed(
         .enumerate()
         .map(|(index, node)| NodeReport {
             id: node.id.clone(),
-            outcome: finished[index].unwrap_or(if interrupted {
+            outcome: finished[index].unwrap_or(if stops.requested(index) {
                 Outcome::Cancelled
             } else {
                 Outcome::Skipped
@@ -311,6 +382,8 @@ pub(crate) fn run_observed(
                 notes[index].clone()
             } else if finished[index].is_none() && interrupted {
                 "Global Stop prevented dispatch".into()
+            } else if finished[index].is_none() && stops.requested(index) {
+                "Individual Stop prevented dispatch".into()
             } else if finished[index].is_none() {
                 "Earlier task stopped the workflow".into()
             } else {
@@ -632,6 +705,42 @@ mod tests {
             report.nodes[0].reason,
             "Worker panicked or did not exit cleanly"
         );
+    }
+
+    #[test]
+    fn individual_stop_does_not_cancel_independent_jobs_or_release_required_edges() {
+        let a = uuid::Uuid::new_v4().to_string();
+        let b = uuid::Uuid::new_v4().to_string();
+        for queued in [true, false] {
+            let mut graph = graph(&a, &b);
+            graph.nodes.push(job("needs-front", &a, &["front"]));
+            let mut ordering = job("after-front", &a, &[]);
+            ordering.after = vec!["front".into()];
+            graph.nodes.push(ordering);
+            let root = Cancellation::default();
+            let stops = JobStops::new(graph.nodes.len(), &root);
+            if queued {
+                assert!(stops.request(0).unwrap());
+            }
+            let report = run_observed_scoped(
+                &graph,
+                Path::new("/tmp"),
+                Arc::new(Mock::new(Outcome::Verified)),
+                &stops,
+                2,
+                |index, update| {
+                    if !queued && index == 0 && update == NodeUpdate::Running {
+                        assert!(stops.request(0).unwrap());
+                    }
+                },
+            )
+            .unwrap();
+            assert!(!report.stopped);
+            assert_eq!(report.nodes[0].outcome, Outcome::Cancelled);
+            assert_eq!(report.nodes[1].outcome, Outcome::Verified);
+            assert_eq!(report.nodes[2].outcome, Outcome::Skipped);
+            assert_eq!(report.nodes[3].outcome, Outcome::Verified);
+        }
     }
 
     #[test]

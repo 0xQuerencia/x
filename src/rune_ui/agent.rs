@@ -121,6 +121,7 @@ fn phase_label(phase: Phase) -> &'static str {
 fn step_glyph(status: &str) -> &'static str {
     match status {
         "running" => "▸",
+        "stopping" => "…",
         "delivered" => "→",
         "launched" | "done" => "✓",
         "failed" => "✕",
@@ -720,6 +721,8 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
         let mut line = format!("{}  {}", step_glyph(&step.status), step.title);
         if step.status == "delivered" {
             line.push_str(" · Delivery confirmed; code not verified");
+        } else if step.status == "stopping" {
+            line.push_str(" · Stop requested");
         }
         if !step.risk.is_empty() && step.status == "pending" {
             line.push_str(&format!("  ·  {}", step.risk));
@@ -733,6 +736,20 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
                 .font(DESCRIPTION)
                 .color(color),
         );
+        if snapshot.cancellable_coding_jobs.contains(&index) {
+            let task_id = task.id;
+            card = card.child(button(
+                p,
+                &format!("stop-coding-job-{index}"),
+                &format!("Stop job {}", index + 1),
+                ButtonKind::Secondary,
+                move |_: &mut Ui, _| {
+                    if let Err(error) = agent_host::service().cancel_coding_job(task_id, index) {
+                        agent_host::service().emit("error", &error);
+                    }
+                },
+            ));
+        }
     }
     if snapshot.phase == Phase::AwaitingApproval {
         let id = task.id;
