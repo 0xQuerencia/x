@@ -17,11 +17,21 @@ pub const MAX_PARALLEL: usize = 4;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
+    /// Provider acknowledged the task and exited cleanly; no artifact/test proof.
+    Delivered,
     Verified,
     Failed,
     Unverified,
     Cancelled,
     Skipped,
+}
+
+impl Outcome {
+    /// Version-2 graphs historically allowed successful delivery to release
+    /// dependencies. Stronger evidence edges must opt in explicitly.
+    pub fn completed(self) -> bool {
+        matches!(self, Self::Delivered | Self::Verified)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,11 +177,11 @@ pub(crate) fn run_observed(
                     continue;
                 }
                 let required_ok = node.requires.iter().all(|dependency| {
-                    finished[ids[dependency.as_str()]] == Some(Outcome::Verified)
+                    finished[ids[dependency.as_str()]].is_some_and(Outcome::completed)
                 });
                 if !required_ok {
                     finished[index] = Some(Outcome::Skipped);
-                    notes[index] = "Required predecessor was not verified".into();
+                    notes[index] = "Required predecessor did not complete".into();
                     observe(index, NodeUpdate::Finished(Outcome::Skipped));
                     progressed = true;
                     continue;
@@ -445,6 +455,24 @@ mod tests {
         .unwrap();
         assert_eq!(report.max_concurrent, 2);
         assert_eq!(mock.peak.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn version_two_dependencies_preserve_delivery_ordering() {
+        let a = uuid::Uuid::new_v4().to_string();
+        let b = uuid::Uuid::new_v4().to_string();
+        let mut graph = graph(&a, &b);
+        graph.nodes[1].requires = vec!["front".into()];
+        let report = run(
+            &graph,
+            Path::new("/tmp"),
+            Arc::new(Mock::new(Outcome::Delivered)),
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
+        assert_eq!(report.nodes[0].outcome, Outcome::Delivered);
+        assert_eq!(report.nodes[1].outcome, Outcome::Delivered);
     }
 
     #[test]
