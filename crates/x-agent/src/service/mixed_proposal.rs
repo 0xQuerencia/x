@@ -40,10 +40,7 @@ fn graph(input: &str, project: &Project) -> Result<Graph, String> {
     } else {
         input
     };
-    if input.chars().count() > 4_096
-        || input.chars().any(char::is_control)
-        || input.contains('"')
-    {
+    if input.chars().count() > 4_096 || input.chars().any(char::is_control) || input.contains('"') {
         return Err("Use a short, unquoted sequence of explicit steps".into());
     }
 
@@ -109,7 +106,9 @@ fn graph(input: &str, project: &Project) -> Result<Graph, String> {
             if tested {
                 return Err("Choose one explicit test suite for this proposal".into());
             }
-            let producer = writer.as_ref().ok_or("Tests need a preceding coding artifact")?;
+            let producer = writer
+                .as_ref()
+                .ok_or("Tests need a preceding coding artifact")?;
             tested = true;
             inputs.push(ArtifactInput {
                 node: producer.clone(),
@@ -124,7 +123,11 @@ fn graph(input: &str, project: &Project) -> Result<Graph, String> {
             id,
             after: vec![],
             requires: vec![],
-            requires_verified: nodes.last().map(|node| node.id.clone()).into_iter().collect(),
+            requires_verified: nodes
+                .last()
+                .map(|node| node.id.clone())
+                .into_iter()
+                .collect(),
             required_change: None,
             required_commit,
             inputs,
@@ -149,24 +152,36 @@ fn graph(input: &str, project: &Project) -> Result<Graph, String> {
 
 impl Service {
     pub(super) fn plan_mixed_proposal(&self, input: &str) -> Result<Task, String> {
-        let workspace = self.workspace_path().ok_or("Select a registered project first")?;
-        let registry = self.session_store().map(|(registry, _)| registry)
+        let workspace = self
+            .workspace_path()
+            .ok_or("Select a registered project first")?;
+        let registry = self
+            .session_store()
+            .map(|(registry, _)| registry)
             .ok_or("Project storage is not configured")?;
-        let projects: Vec<_> = registry.list()?.into_iter()
-            .filter(|project| project.root == workspace).collect();
+        let projects: Vec<_> = registry
+            .list()?
+            .into_iter()
+            .filter(|project| project.root == workspace)
+            .collect();
         let [project] = projects.as_slice() else {
             return Err("Select one unambiguous registered project first".into());
         };
         let project = registry.validated_resolve(&project.id.to_string())?;
         let graph = graph(input, &project)?;
-        let descriptor = self.work_adapter(Kind::OpenCode)
-            .ok_or("OpenCode is unavailable")?.descriptor();
+        let descriptor = self
+            .work_adapter(Kind::OpenCode)
+            .ok_or("OpenCode is unavailable")?
+            .descriptor();
         if !descriptor.supports_workspace_write() {
             return Err("OpenCode must support owned workspace writes".into());
         }
-        let home = self.workflow_dirs.lock()
+        let home = self
+            .workflow_dirs
+            .lock()
             .map_err(|_| "Workflow storage is unavailable")?
-            .as_ref().map(|(_, home)| home.clone())
+            .as_ref()
+            .map(|(_, home)| home.clone())
             .ok_or("Workflow storage is not configured")?;
         graph.validate_with_home(&home)?;
         // The saved graph is only a proposal. The normal planner binds exact
@@ -185,10 +200,14 @@ mod tests {
 
     #[test]
     fn recognizes_only_explicit_mixed_sequences() {
-        assert!(recognizes("open VS Code then ask OpenCode to fix it then run cargo tests"));
+        assert!(recognizes(
+            "open VS Code then ask OpenCode to fix it then run cargo tests"
+        ));
         assert!(!recognizes("open VS Code"));
         assert!(!recognizes("ask OpenCode to fix it then explain the code"));
-        assert!(!recognizes("I will open VS Code then ask OpenCode to fix it"));
+        assert!(!recognizes(
+            "I will open VS Code then ask OpenCode to fix it"
+        ));
     }
 
     #[test]
@@ -196,17 +215,33 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
         std::fs::create_dir(&root).unwrap();
-        let registry = crate::projects::Registry::new(temp.path().join("state"), temp.path().into());
-        let (project, _) = registry.register("Example", root.to_str().unwrap()).unwrap();
+        let registry =
+            crate::projects::Registry::new(temp.path().join("state"), temp.path().into());
+        let (project, _) = registry
+            .register("Example", root.to_str().unwrap())
+            .unwrap();
         let plan = graph(
             "open VS Code then ask OpenCode to fix the UI then run cargo tests then focus VS Code",
             &project,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(plan.nodes.len(), 4);
         assert!(plan.nodes[1].required_commit);
         assert_eq!(plan.nodes[2].inputs[0].node, "step-2");
         assert_eq!(plan.nodes[3].requires_verified, ["step-3"]);
-        assert!(graph("open VS Code then ask OpenCode to fix it then delete everything", &project).is_err());
-        assert!(graph("open VS Code then run cargo tests then ask OpenCode to fix it", &project).is_err());
+        assert!(
+            graph(
+                "open VS Code then ask OpenCode to fix it then delete everything",
+                &project
+            )
+            .is_err()
+        );
+        assert!(
+            graph(
+                "open VS Code then run cargo tests then ask OpenCode to fix it",
+                &project
+            )
+            .is_err()
+        );
     }
 }
