@@ -82,3 +82,9 @@ rune_ui::agent::composer::tests::render_native_work_composer_light_and_dark --
 --ignored --exact` and inspect both images when this form changes. It fails when
 no GPU or software Vulkan adapter is available; it does not silently claim a
 visual pass. These component renders supplement the full Rune golden suite.
+
+## Explicit mixed Actions and Work proposals (C09)
+
+In Actions mode, say or type `open VS Code then ask OpenCode to fix the UI then run cargo tests`, or use the explicit `plan mixed` prefix. X builds a bounded version-4 graph using the selected registered project. It accepts supported open/focus actions, one fresh OpenCode writer and optionally one fixed test suite. Every clause must be understood; an unsupported clause rejects the proposal. Following steps require verified predecessor outcomes, and tests consume the exact committed coding artifact. The ordinary graph review is mandatory even in Autonomous mode. The proposal itself starts no providers, worktrees or desktop actions.
+
+This is a finite local grammar, not arbitrary mixed-goal generation. It does not authorize application input, model-generated commands or reuse of a selected provider session. Parser/graph tests cover recognition, proof edges and rejection; actual mixed desktop/installed-provider acceptance remains separate.
