@@ -273,8 +273,10 @@ Git checkout configuration and filters still require explicit owner consent.
 
 Cleanup **requires a new owner approval**, rechecks ownership and Git identity,
 refuses tracked/untracked/ignored changes and never uses `--force`.
-The coding graph keeps each worktree for inspection after the run. Merging
-and cleanup require their own explicit action.
+The coding graph keeps each worktree for inspection after the run. Before
+launch, it rechecks both the pinned starting commit and clean worktree files;
+queued work does not silently inherit unapproved edits. Merging and cleanup
+require their own explicit action.
 
 ### Crash-safe DAG task claims (development)
 
