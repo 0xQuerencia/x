@@ -22,6 +22,7 @@ use super::{AuditKind, Cancellation, Phase, Review, Service, Task, audit_best_ef
 
 mod inventory;
 mod mixed;
+mod renewal;
 
 const WORKTREE_FOLDER: &str = "X Worktrees";
 const PARALLEL_WORKERS: usize = 2;
@@ -388,7 +389,12 @@ impl Service {
             .as_ref()
             .filter(|task| task.id == task_id)
             .and_then(|task| task.steps.get(index))
-            .is_some_and(|step| matches!(step.status.as_str(), "pending" | "running"));
+            .is_some_and(|step| {
+                matches!(
+                    step.status.as_str(),
+                    "pending" | "running" | "waiting_for_permission"
+                )
+            });
         if !active {
             return Err("No matching active coding job".into());
         }
@@ -520,7 +526,7 @@ impl Service {
             }
         }
         let run = Uuid::new_v4();
-        let executor = Arc::new(self.approved_graph_executor(workflow, run, stop)?);
+        let executor = Arc::new(self.approved_graph_executor(workflow, run, stop, &stops)?);
         let result = scheduler::run_observed_scoped(
             &workflow.graph,
             &workflow.home,
@@ -529,6 +535,7 @@ impl Service {
             PARALLEL_WORKERS,
             |index, update| {
                 let status = match update {
+                    NodeUpdate::WaitingForPermission => "waiting_for_permission",
                     NodeUpdate::Running => "running",
                     NodeUpdate::Finished(outcome) => node_status(outcome),
                 };
