@@ -227,6 +227,22 @@ identity (ID, PID and class) at choice time. Saved workflow `pick` values
 remain **ordinals**, not permanent identities: do not conflate the two.
 The live two-window chooser and late-window-open tests remain a release gate.
 
+## Check the complete candidate
+
+After each operator records their platform results, check the four records
+against the exact candidate commit used to build the artifacts.
+
+```sh
+python3 scripts/x-qa-gate.py check-release --source-sha "$candidate_sha" \
+  hyprland.json kde.json windows11.json macos.json
+```
+
+Every platform must supply a passing record for that commit. The command exits
+1 if a platform or case is missing, failed, or unsupported. It exits 2 for
+invalid input, duplicate platform records, or a different commit. The JSON
+describes operator results. Artifact provenance, signatures and publication
+approval have their own release checks.
+
 ## Release checklist
 
 - [ ] Automated checks pass with a recorded commit SHA and environment

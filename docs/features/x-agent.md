@@ -210,6 +210,18 @@ task checkout. Once Git actually starts, Stop cannot safely interrupt a branch
 update; Stop can cancel the pending approval or stop before the Git call.
 Inspect the primary checkout manually if Git reports an incomplete operation.
 
+### Natural project voice selection
+
+X recognizes deterministic registered-project phrases such as `work on
+project X`, `let's work on project X`, `switch back to project X`,
+`find my project X`, and `show my projects`. They use the same exact
+registered name/alias resolution as `use project X`: ambiguous names
+require an ID; unknown names do not become arbitrary filesystem paths,
+and changing the selected project still enters normal approval.
+
+Parsing is local: no generative planner or paid model is needed.
+Unrestricted requests to invent or register projects are not supported.
+
 ### Read-only workflow graph preview
 
 Run `hex agent workflow preview <id>` to validate a saved workflow or v2
@@ -250,6 +262,14 @@ lock. Unverified outputs never unlock success-dependent tasks.
 
 Approved coding graphs use two workers and require a verified, owned Git
 worktree for each job.
+The task steps reflect scheduler dispatch and each node's terminal outcome
+while other jobs are still running. A skipped dependency never appears as
+running. These states describe job execution, not a percentage of code work.
+The scheduler joins owned workers before releasing their resource locks and
+reports a worker spawn failure or panic as Failed. A stop-on-failure node
+prevents new dispatch but lets already-running siblings finish. Global Stop
+requests cancellation of every child; workers must cooperate with that token,
+and X does not claim that an unresponsive worker has been terminated.
 
 ### Approved Git worktree isolation (development)
 

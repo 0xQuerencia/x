@@ -24,6 +24,12 @@ pub enum Outcome {
     Skipped,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NodeUpdate {
+    Running,
+    Finished(Outcome),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NodeReport {
     pub id: String,
@@ -100,6 +106,19 @@ pub fn run(
     stop: &Cancellation,
     parallel: usize,
 ) -> Result<Report, String> {
+    run_observed(graph, home, executor, stop, parallel, |_, _| {})
+}
+
+/// Updates are emitted by the scheduler, not the model or worker. The index
+/// refers to the reviewed graph's original node order, including skipped jobs.
+pub(crate) fn run_observed(
+    graph: &Graph,
+    home: &Path,
+    executor: Arc<dyn Executor>,
+    stop: &Cancellation,
+    parallel: usize,
+    mut observe: impl FnMut(usize, NodeUpdate),
+) -> Result<Report, String> {
     graph.validate_with_home(home)?;
     if !(1..=MAX_PARALLEL).contains(&parallel) {
         return Err(format!("Concurrent workers must be 1-{MAX_PARALLEL}"));
@@ -117,11 +136,11 @@ pub fn run(
         .collect();
     let count = graph.nodes.len();
     let mut finished: Vec<Option<Outcome>> = vec![None; count];
-    let mut active: HashSet<usize> = HashSet::new();
+    let mut active: HashMap<usize, thread::JoinHandle<()>> = HashMap::new();
     let mut resources: HashSet<Resource> = HashSet::new();
     let mut resource_leases: HashMap<usize, Resource> = HashMap::new();
     let mut notes = vec![String::new(); count];
-    let (send, receive) = mpsc::channel::<(usize, Outcome)>();
+    let (send, receive) = mpsc::channel::<(usize, Outcome, bool)>();
     let mut stop_new = false;
     let mut max_concurrent = 0usize;
 
@@ -136,7 +155,7 @@ pub fn run(
                     stop_new = true;
                     break;
                 }
-                if finished[index].is_some() || active.contains(&index) {
+                if finished[index].is_some() || active.contains_key(&index) {
                     continue;
                 }
                 let all_finished = node
@@ -153,6 +172,7 @@ pub fn run(
                 if !required_ok {
                     finished[index] = Some(Outcome::Skipped);
                     notes[index] = "Required predecessor was not verified".into();
+                    observe(index, NodeUpdate::Finished(Outcome::Skipped));
                     progressed = true;
                     continue;
                 }
@@ -170,28 +190,41 @@ pub fn run(
                 if !executor.authorized(node) {
                     finished[index] = Some(Outcome::Failed);
                     notes[index] = "Approval was revoked before dispatch".into();
+                    observe(index, NodeUpdate::Finished(Outcome::Failed));
                     if node.on_failure == super::model::OnFailure::Stop {
                         stop_new = true;
                     }
                     progressed = true;
                     continue;
                 }
-                resources.insert(owned_resource.clone());
-                resource_leases.insert(index, owned_resource);
-                active.insert(index);
-                max_concurrent = max_concurrent.max(active.len());
-                progressed = true;
                 let runner = Arc::clone(&executor);
                 let tx = send.clone();
                 let task = node.clone();
                 let cancellation = stop.child();
-                thread::spawn(move || {
+                progressed = true;
+                match thread::Builder::new().spawn(move || {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         runner.execute(task, cancellation)
-                    }))
-                    .unwrap_or(Outcome::Failed);
-                    let _ = tx.send((index, result));
-                });
+                    }));
+                    let panicked = result.is_err();
+                    let _ = tx.send((index, result.unwrap_or(Outcome::Failed), panicked));
+                }) {
+                    Ok(worker) => {
+                        resources.insert(owned_resource.clone());
+                        resource_leases.insert(index, owned_resource);
+                        active.insert(index, worker);
+                        max_concurrent = max_concurrent.max(active.len());
+                        observe(index, NodeUpdate::Running);
+                    }
+                    Err(error) => {
+                        finished[index] = Some(Outcome::Failed);
+                        notes[index] = format!("Could not start worker: {}", error.kind());
+                        observe(index, NodeUpdate::Finished(Outcome::Failed));
+                        if node.on_failure == super::model::OnFailure::Stop {
+                            stop_new = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -201,14 +234,27 @@ pub fn run(
             }
             continue;
         }
-        let Ok((index, outcome)) = receive.recv() else {
+        let Ok((index, mut outcome, panicked)) = receive.recv() else {
+            stop.request();
+            for (_, worker) in active.drain() {
+                let _ = worker.join();
+            }
             return Err("The scheduler lost an owned worker".into());
         };
-        active.remove(&index);
+        // Release the resource only after the worker is reaped, not merely
+        // after its result arrives. Never expose the panic payload as evidence.
+        let joined = active
+            .remove(&index)
+            .is_some_and(|worker| worker.join().is_ok());
+        if panicked || !joined {
+            outcome = Outcome::Failed;
+            notes[index] = "Worker panicked or did not exit cleanly".into();
+        }
         if let Some(lease) = resource_leases.remove(&index) {
             resources.remove(&lease);
         }
         finished[index] = Some(outcome);
+        observe(index, NodeUpdate::Finished(outcome));
         if matches!(outcome, Outcome::Failed | Outcome::Unverified)
             && graph.nodes[index].on_failure == super::model::OnFailure::Stop
         {
@@ -220,6 +266,18 @@ pub fn run(
     }
 
     let interrupted = stop.requested();
+    for (index, outcome) in finished.iter().enumerate() {
+        if outcome.is_none() {
+            observe(
+                index,
+                NodeUpdate::Finished(if interrupted {
+                    Outcome::Cancelled
+                } else {
+                    Outcome::Skipped
+                }),
+            );
+        }
+    }
     let nodes = graph
         .nodes
         .iter()
@@ -410,6 +468,60 @@ mod tests {
     }
 
     #[test]
+    fn live_updates_report_dependency_outcomes_before_dispatching_children() {
+        let a = uuid::Uuid::new_v4().to_string();
+        let b = uuid::Uuid::new_v4().to_string();
+        let mut graph = graph(&a, &b);
+        graph.nodes[1].requires = vec!["front".into()];
+        let mut updates = Vec::new();
+        let report = run_observed(
+            &graph,
+            Path::new("/tmp"),
+            Arc::new(Mock::new(Outcome::Unverified)),
+            &Cancellation::default(),
+            2,
+            |index, update| updates.push((index, update)),
+        )
+        .unwrap();
+        assert_eq!(report.nodes[1].outcome, Outcome::Skipped);
+        assert_eq!(
+            updates,
+            vec![
+                (0, NodeUpdate::Running),
+                (0, NodeUpdate::Finished(Outcome::Unverified)),
+                (1, NodeUpdate::Finished(Outcome::Skipped)),
+            ]
+        );
+    }
+
+    #[test]
+    fn live_updates_for_successful_dependencies_are_ordered() {
+        let a = uuid::Uuid::new_v4().to_string();
+        let b = uuid::Uuid::new_v4().to_string();
+        let mut graph = graph(&a, &b);
+        graph.nodes[1].requires = vec!["front".into()];
+        let mut updates = Vec::new();
+        run_observed(
+            &graph,
+            Path::new("/tmp"),
+            Arc::new(Mock::new(Outcome::Verified)),
+            &Cancellation::default(),
+            2,
+            |index, update| updates.push((index, update)),
+        )
+        .unwrap();
+        assert_eq!(
+            updates,
+            vec![
+                (0, NodeUpdate::Running),
+                (0, NodeUpdate::Finished(Outcome::Verified)),
+                (1, NodeUpdate::Running),
+                (1, NodeUpdate::Finished(Outcome::Verified)),
+            ]
+        );
+    }
+
+    #[test]
     fn no_work_starts_without_preflight_approval() {
         struct Deny;
         impl Executor for Deny {
@@ -430,6 +542,38 @@ mod tests {
             2,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_panicked_worker_is_reaped_and_does_not_unlock_required_jobs() {
+        struct PanicWorker;
+        impl Executor for PanicWorker {
+            fn authorized(&self, _node: &Node) -> bool {
+                true
+            }
+            fn execute(&self, node: Node, _stop: Cancellation) -> Outcome {
+                assert_eq!(node.id, "front");
+                panic!("private worker panic fixture");
+            }
+        }
+        let a = uuid::Uuid::new_v4().to_string();
+        let b = uuid::Uuid::new_v4().to_string();
+        let mut graph = graph(&a, &b);
+        graph.nodes[1].requires = vec!["front".into()];
+        let report = run(
+            &graph,
+            Path::new("/tmp"),
+            Arc::new(PanicWorker),
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
+        assert_eq!(report.nodes[0].outcome, Outcome::Failed);
+        assert_eq!(report.nodes[1].outcome, Outcome::Skipped);
+        assert_eq!(
+            report.nodes[0].reason,
+            "Worker panicked or did not exit cleanly"
+        );
     }
 
     #[test]

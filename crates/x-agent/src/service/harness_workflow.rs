@@ -13,7 +13,7 @@ use crate::workflows::harness_exec::{
     ApprovedHarnessExecutor, Assignment, Proof, approval_scope, to_kind,
 };
 use crate::workflows::recovery::{Claim, Journal, State};
-use crate::workflows::scheduler::{self, Outcome};
+use crate::workflows::scheduler::{self, NodeUpdate, Outcome};
 use crate::worktrees::{Manager, OwnedWorktree};
 
 use super::edit::{step, task};
@@ -21,6 +21,16 @@ use super::{AuditKind, Cancellation, Phase, Review, Service, Task, audit_best_ef
 
 const WORKTREE_FOLDER: &str = "X Worktrees";
 const PARALLEL_WORKERS: usize = 2;
+
+fn node_status(outcome: Outcome) -> &'static str {
+    match outcome {
+        Outcome::Verified => "done",
+        Outcome::Failed => "failed",
+        Outcome::Unverified => "unverified",
+        Outcome::Cancelled => "cancelled",
+        Outcome::Skipped => "skipped",
+    }
+}
 
 pub(super) struct PendingGraph {
     graph: Graph,
@@ -245,19 +255,13 @@ impl Service {
                         &format!("Could not save coding workflow outcome: {error}"),
                     );
                 }
-                let mut complete = 0;
-                for (index, node) in report.nodes.iter().enumerate() {
-                    let status = match node.outcome {
-                        Outcome::Verified => {
-                            complete += 1;
-                            "done"
-                        }
-                        Outcome::Failed => "failed",
-                        Outcome::Unverified => "unverified",
-                        Outcome::Cancelled => "cancelled",
-                        Outcome::Skipped => "skipped",
-                    };
-                    self.set_step(index, status);
+                let complete = report
+                    .nodes
+                    .iter()
+                    .filter(|node| node.outcome == Outcome::Verified)
+                    .count();
+                for node in &report.nodes {
+                    let status = node_status(node.outcome);
                     let detail = if node.reason.is_empty() {
                         format!("{}: {status}", node.id)
                     } else {
@@ -330,12 +334,19 @@ impl Service {
         }
 
         let executor = self.approved_graph_executor(workflow, &worktrees, run, stop)?;
-        scheduler::run(
+        scheduler::run_observed(
             &workflow.graph,
             &workflow.home,
             Arc::new(executor),
             stop,
             PARALLEL_WORKERS,
+            |index, update| {
+                let status = match update {
+                    NodeUpdate::Running => "running",
+                    NodeUpdate::Finished(outcome) => node_status(outcome),
+                };
+                self.set_step(index, status);
+            },
         )
     }
 
