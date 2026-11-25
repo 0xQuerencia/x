@@ -3,10 +3,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+
+mod renewal;
+use renewal::Renewal;
 
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +48,7 @@ impl Outcome {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NodeUpdate {
+    WaitingForPermission,
     Running,
     Finished(Outcome),
 }
@@ -125,6 +129,7 @@ fn resource(node: &Node, executor: &dyn Executor) -> Resource {
 pub(crate) struct JobStops {
     root: Cancellation,
     nodes: Vec<Cancellation>,
+    renewals: Arc<Mutex<HashMap<usize, Renewal>>>,
 }
 
 impl JobStops {
@@ -132,6 +137,7 @@ impl JobStops {
         Self {
             root: root.clone(),
             nodes: (0..count).map(|_| root.child()).collect(),
+            renewals: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -219,6 +225,7 @@ pub(crate) fn run_observed_scoped(
 
     loop {
         let mut progressed = false;
+        let mut waiting_for_permission = false;
         if stop.requested() {
             stop_new = true;
         }
@@ -289,10 +296,24 @@ pub(crate) fn run_observed_scoped(
                 {
                     continue;
                 }
-                // Revoked permissions must also be checked right before dispatch.
+                // Only an exact expired, unspent queued approval can wait for
+                // renewal. Revocation, changed identity and exhausted approval
+                // remain terminal refusals. No worker or resource is acquired.
+                if !executor.authorized(node) {
+                    if let Some(first) = stops.wait_for_permission(index) {
+                        if first {
+                            observe(index, NodeUpdate::WaitingForPermission);
+                        }
+                        waiting_for_permission = true;
+                        continue;
+                    }
+                }
+                // Review can arrive between the two checks. Do not mistake a
+                // successful renewal for revocation, or skip the dispatch gate.
                 if !executor.authorized(node) {
                     finished[index] = Some(Outcome::Failed);
-                    notes[index] = "Approval was revoked before dispatch".into();
+                    notes[index] =
+                        "Approval expired, was revoked, or no longer matches the job".into();
                     observe(index, NodeUpdate::Finished(Outcome::Failed));
                     if node.on_failure == super::model::OnFailure::Stop {
                         stop_new = true;
@@ -300,6 +321,7 @@ pub(crate) fn run_observed_scoped(
                     progressed = true;
                     continue;
                 }
+                stops.close_permission_review(index);
                 let runner = Arc::clone(&executor);
                 let tx = send.clone();
                 let task = node.clone();
@@ -335,9 +357,19 @@ pub(crate) fn run_observed_scoped(
             }
         }
 
+        if stop_new {
+            stops.close_permission_reviews();
+        }
         if active.is_empty() {
-            if !progressed || stop_new || finished.iter().all(Option::is_some) {
+            if stop_new || finished.iter().all(Option::is_some) {
                 break;
+            }
+            if !progressed {
+                if waiting_for_permission {
+                    thread::sleep(STOP_POLL);
+                } else {
+                    break;
+                }
             }
             continue;
         }
@@ -390,6 +422,7 @@ pub(crate) fn run_observed_scoped(
         }
     }
 
+    stops.close_permission_reviews();
     let interrupted = stop.requested();
     for (index, outcome) in finished.iter().enumerate() {
         if outcome.is_none() {
