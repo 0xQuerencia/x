@@ -21,6 +21,7 @@ const MAX_ATTEMPTS: u8 = 3;
 #[serde(rename_all = "snake_case")]
 pub enum State {
     Claimed,
+    Delivered,
     Verified,
     Failed,
     Unverified,
@@ -146,7 +147,7 @@ impl Journal {
                     return Err("A different session already acknowledged this job".into());
                 }
                 (None, Some(provided)) => claim.evidence_id = Some(provided.to_owned()),
-                (None, None) if outcome == State::Verified => {
+                (None, None) if matches!(outcome, State::Delivered | State::Verified) => {
                     return Err("Verification requires a durable evidence reference".into());
                 }
                 _ => {}
@@ -248,7 +249,8 @@ impl Journal {
                         .evidence_id
                         .as_deref()
                         .is_some_and(|id| !valid_evidence(id))
-                    || (claim.state == State::Verified && claim.evidence_id.is_none())
+                    || (matches!(claim.state, State::Delivered | State::Verified)
+                        && claim.evidence_id.is_none())
                     || !ids.insert((claim.run_id, claim.node_id.as_str()))
             })
         {
