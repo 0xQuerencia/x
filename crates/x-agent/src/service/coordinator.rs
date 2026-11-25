@@ -257,6 +257,23 @@ impl Service {
             .clone()
     }
 
+    /// Exact current foreground or retained background task, without fallback.
+    pub(super) fn service_for_task(&self, task_id: u64) -> Result<Self, String> {
+        if self
+            .lock()
+            .task
+            .as_ref()
+            .is_some_and(|task| task.id == task_id)
+        {
+            return Ok(self.clone());
+        }
+        self.runs()
+            .into_iter()
+            .find(|run| run.id == task_id)
+            .map(|run| self.for_run(&run))
+            .ok_or_else(|| "No task with that exact ID".into())
+    }
+
     pub(super) fn background_snapshots(&self) -> Vec<BackgroundSnapshot> {
         self.runs()
             .into_iter()
@@ -352,7 +369,12 @@ pub(super) fn cancellable_jobs(state: &State) -> Vec<usize> {
         task.steps
             .iter()
             .enumerate()
-            .filter(|(_, step)| matches!(step.status.as_str(), "pending" | "running"))
+            .filter(|(_, step)| {
+                matches!(
+                    step.status.as_str(),
+                    "pending" | "running" | "waiting_for_permission"
+                )
+            })
             .map(|(index, _)| index)
             .collect()
     })
