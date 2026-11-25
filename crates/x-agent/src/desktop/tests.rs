@@ -76,3 +76,40 @@ fn key_allowlist() {
     assert_eq!(Key::parse("enter"), Some(Key::Enter));
     assert!(Key::parse("ctrl+w").is_none() && Key::parse("super+q").is_none());
 }
+
+#[test]
+fn excluded_subtrees_do_not_supply_controls_or_completion_evidence() {
+    let mut obs = Observation::default();
+    let mut nodes = Vec::new();
+    for state in ["hidden", "disabled", "offscreen"] {
+        nodes.push(serde_json::json!({
+            "role": "group", "states": [state], "children": [
+                {"role": "button", "name": "Unavailable action", "ref_id": "@s:hidden", "available_actions": ["Click"]},
+                {"role": "statictext", "name": "Unavailable evidence"}
+            ]
+        }));
+    }
+    nodes.push(serde_json::json!({
+        "role": "group", "name": "Password", "children": [
+            {"role": "button", "name": "Protected action", "ref_id": "@s:protected", "available_actions": ["Click"]},
+            {"role": "statictext", "name": "Protected value"}
+        ]
+    }));
+    nodes.push(serde_json::json!({
+        "role": "group", "children": [
+            {"role": "button", "name": "Visible action", "ref_id": "@s:visible", "available_actions": ["Click"]},
+            {"role": "statictext", "name": "Visible evidence"}
+        ]
+    }));
+    collect(
+        &serde_json::json!({"role": "frame", "children": nodes}),
+        "",
+        &mut obs,
+    );
+    assert_eq!(obs.elements.len(), 1);
+    assert_eq!(obs.elements[0].reference, "@s:visible");
+    assert_eq!(obs.texts, ["Visible evidence"]);
+    assert!(obs.shows_exact("Visible evidence"));
+    assert!(!obs.shows("Unavailable"));
+    assert!(!obs.shows("Protected value"));
+}
