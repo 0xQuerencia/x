@@ -163,3 +163,91 @@ impl Manager {
         })
     }
 }
+
+/// Local read-only review of the exact recorded checkout. The patch covers
+/// committed changes only; uncommitted inputs are explicitly distinguished.
+#[derive(Debug, Serialize)]
+pub struct WorktreeReview {
+    pub path: PathBuf,
+    pub base_commit: String,
+    pub current_commit: String,
+    pub clean_inputs: bool,
+    pub committed_diff: String,
+    pub diff_truncated: bool,
+    pub test_evidence: Option<crate::verification::test_runner::TestEvidence>,
+    /// None means no test result was recorded. False means it is historical
+    /// evidence only, not evidence for the checkout currently being reviewed.
+    pub test_matches_checkout: Option<bool>,
+}
+
+impl Manager {
+    pub fn review_reserved(
+        &self,
+        project: &Project,
+        run: Uuid,
+        node: &str,
+        reservation: &Reservation,
+        test: Option<&crate::verification::test_runner::TestEvidence>,
+    ) -> Result<WorktreeReview, String> {
+        let Inspection::Owned {
+            path,
+            current_commit: head,
+            ..
+        } = self.inspect_reserved(project, run, node, reservation)?
+        else {
+            return Err("The recorded checkout is not available for review".into());
+        };
+        let owned = self.reattach(project, run, node, &reservation.approved_base)?;
+        let clean_inputs = ensure_clean(&path).is_ok();
+        let diff = git(
+            &path,
+            &[
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--no-renames",
+                &reservation.approved_base,
+                &head,
+                "--",
+            ],
+        )?;
+        self.validate_owned(project, &owned)?;
+        if current_commit(&path)? != head || ensure_clean(&path).is_ok() != clean_inputs {
+            return Err("The checkout changed during review; refresh it".into());
+        }
+        const MAX_DIFF_CHARS: usize = 24_000;
+        let (committed_diff, diff_truncated) = bounded_diff(&diff, MAX_DIFF_CHARS);
+        Ok(WorktreeReview {
+            path,
+            base_commit: reservation.approved_base.clone(),
+            test_matches_checkout: test.map(|test| {
+                clean_inputs && test.valid() && test.passed.is_some() && test.commit == head
+            }),
+            current_commit: head,
+            clean_inputs,
+            committed_diff,
+            diff_truncated,
+            test_evidence: test.cloned(),
+        })
+    }
+}
+
+fn bounded_diff(diff: &str, limit: usize) -> (String, bool) {
+    let end = diff.char_indices().nth(limit).map(|(index, _)| index);
+    match end {
+        Some(end) => (diff[..end].to_owned(), true),
+        None => (diff.to_owned(), false),
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+
+    #[test]
+    fn local_diff_preview_is_unicode_safe_and_explicitly_truncated() {
+        assert_eq!(bounded_diff("ab🦀cd", 3), ("ab🦀".into(), true));
+        assert_eq!(bounded_diff("ab🦀", 3), ("ab🦀".into(), false));
+    }
+}
