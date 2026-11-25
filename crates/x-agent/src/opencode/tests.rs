@@ -329,3 +329,54 @@ fn named_delivery_does_not_fall_back_when_private_session_run_is_unsupported() {
     assert!(Run::start(cfg, Arc::new(|_, _| {})).is_err());
     assert!(!f.repo.join("started").exists());
 }
+
+#[test]
+fn dropping_a_run_stops_its_owned_process() {
+    let f = fixture();
+    let run = f.start("echo $$ > owner.pid\nsleep 60", STALL_AFTER);
+    let pidfile = f.repo.join("owner.pid");
+    for _ in 0..100 {
+        if std::fs::read_to_string(&pidfile).is_ok_and(|s| !s.trim().is_empty()) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let pid: i32 = std::fs::read_to_string(pidfile)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    drop(run);
+    // SAFETY: signal 0 only checks process existence.
+    assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
+}
+
+#[test]
+fn forced_exit_after_output_closes_is_not_completion() {
+    let f = fixture();
+    let result = f.run("trap 'exit 0' TERM\nexec 1>&- 2>&-\nwhile :; do sleep 1; done");
+    assert_eq!(result.status, RunStatus::Failed);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.contains("did not exit"))
+    );
+}
+
+#[test]
+fn fresh_runs_cannot_switch_acknowledged_session_identity() {
+    let f = fixture();
+    let result = f.run(concat!(
+        "echo '{\"type\":\"step_start\",\"sessionID\":\"ses_first\",\"part\":{\"type\":\"step-start\"}}'\n",
+        "echo '{\"type\":\"text\",\"sessionID\":\"ses_other\",\"part\":{\"text\":\"unrelated output\"}}'\n",
+    ));
+    assert_eq!(result.status, RunStatus::Failed);
+    assert_eq!(result.accepted_session.unwrap().as_str(), "ses_first");
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.contains("different session"))
+    );
+}

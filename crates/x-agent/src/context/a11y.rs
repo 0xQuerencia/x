@@ -91,6 +91,10 @@ impl std::fmt::Display for EditError {
 pub trait Accessibility: Send + Sync {
     /// The focused control of the app owning `pid`, read now.
     fn focus(&self, pid: u32) -> Result<Focus, String>;
+    /// Selection from the application's single active accessibility window.
+    fn focus_active_window(&self, _pid: u32) -> Result<Focus, String> {
+        Err("Reading the active accessibility window is unsupported".into())
+    }
     /// Whether selection reading can work at all on this machine.
     fn available(&self) -> Result<(), String>;
     /// `window` characters either side of the caret, plus the text of `range` if given.
@@ -214,6 +218,12 @@ fn run_op(pid: u32, op: &str, params: &serde_json::Value) -> Result<Vec<u8>, Str
 impl Accessibility for Atspi {
     fn focus(&self, pid: u32) -> Result<Focus, String> {
         parse_reply(&run_helper(pid.max(1))?)?
+            .ok_or_else(|| "the accessibility helper did not report a control".into())
+    }
+
+    fn focus_active_window(&self, pid: u32) -> Result<Focus, String> {
+        let parameters = serde_json::json!({ "active_window": true });
+        parse_reply(&run_op(pid.max(1), "selection", &parameters)?)?
             .ok_or_else(|| "the accessibility helper did not report a control".into())
     }
 

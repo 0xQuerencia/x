@@ -98,6 +98,10 @@ impl Accessibility for FakeA11y {
     fn focus(&self, _pid: u32) -> Result<Focus, String> {
         self.0.lock().unwrap().clone()
     }
+    fn focus_active_window(&self, pid: u32) -> Result<Focus, String> {
+        self.focus(pid)
+    }
+
     fn available(&self) -> Result<(), String> {
         self.0.lock().unwrap().clone().map(drop)
     }

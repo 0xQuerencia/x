@@ -43,6 +43,25 @@ fn hides_secrets() {
 }
 
 #[test]
+fn manually_constructed_secret_control_cannot_be_prompt_or_evidence() {
+    let obs = Observation {
+        elements: vec![Element {
+            id: "e1".into(),
+            reference: "@s:e1".into(),
+            role: "password".into(),
+            name: "Password secret-name".into(),
+            value: "secret-value".into(),
+            actions: vec![],
+        }],
+        ..Observation::default()
+    };
+    assert!(!obs.render().contains("secret-value"));
+    assert!(!obs.render().contains("secret-name"));
+    assert!(!obs.shows("secret-value"));
+    assert!(!obs.shows("secret-name"));
+}
+
+#[test]
 fn prompt_text_redacts_email_phone_and_long_tokens() {
     let safe = prompt_text(
         "Contact alice@example.org or 555-123-4567 token abcdefghijklmnopqrstuvwxyz1234567890",

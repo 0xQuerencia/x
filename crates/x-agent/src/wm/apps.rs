@@ -21,8 +21,10 @@ pub struct Entry {
     /// launching is delegated to GLib's desktop-entry implementation, not a shell.
     pub exec: String,
     pub terminal: bool,
-    /// Lowercase things a person may call it: name, generic name, keywords, id, program.
+    /// Exact lowercase launch identities: name, generic name, id, program.
     pub names: Vec<String>,
+    /// Search hints may help identify open windows, but never authorize a launch.
+    pub keywords: Vec<String>,
     /// Lowercase freedesktop categories, such as `webbrowser` or `terminalemulator`.
     pub categories: Vec<String>,
     /// Lowercase window classes this app is expected to use.
@@ -128,7 +130,7 @@ pub fn parse_entry(id: &str, text: &str) -> Option<Entry> {
             "Terminal" => entry.terminal = value.eq_ignore_ascii_case("true"),
             "Hidden" | "NoDisplay" if value.eq_ignore_ascii_case("true") => return None,
             "Name" | "GenericName" => entry.names.push(value.to_ascii_lowercase()),
-            "Keywords" => entry.names.extend(
+            "Keywords" => entry.keywords.extend(
                 value
                     .split(';')
                     .filter(|k| !k.trim().is_empty())
@@ -164,6 +166,8 @@ pub fn parse_entry(id: &str, text: &str) -> Option<Entry> {
     entry.classes.push(id);
     entry.names.sort();
     entry.names.dedup();
+    entry.keywords.sort();
+    entry.keywords.dedup();
     entry.classes.sort();
     entry.classes.dedup();
     Some(entry)
@@ -479,7 +483,7 @@ pub fn evidence(words: &str, entries: &[Entry]) -> Vec<String> {
     let named: Vec<&Entry> = if exact.is_empty() {
         entries
             .iter()
-            .filter(|e| e.names.iter().any(|n| mentions(n, &q)))
+            .filter(|e| e.names.iter().chain(&e.keywords).any(|n| mentions(n, &q)))
             .collect()
     } else {
         exact
@@ -656,6 +660,28 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn search_keywords_do_not_authorize_application_launches() {
+        let mut terminal = parse_entry(
+            "xfce4-terminal.desktop",
+            "[Desktop Entry]\nType=Application\nName=Xfce Terminal\nExec=xfce4-terminal\nKeywords=terminal;bash;shell;\n",
+        )
+        .unwrap();
+        terminal.path = PathBuf::from("/fixture/xfce4-terminal.desktop");
+        let mut settings = parse_entry(
+            "xfce-session-settings.desktop",
+            "[Desktop Entry]\nType=Application\nName=Session Settings\nExec=xfce-session-settings\nKeywords=agent;startup;\n",
+        )
+        .unwrap();
+        settings.path = PathBuf::from("/fixture/xfce-session-settings.desktop");
+        let entries = [terminal.clone(), settings.clone()];
+        assert!(installed_in("bash", &entries).is_none());
+        assert!(installed_in("agent", &entries).is_none());
+        assert_eq!(installed_in("xfce4-terminal", &entries), Some(terminal));
+        assert_eq!(installed_in("Session Settings", &entries), Some(settings));
+        assert!(!evidence("agent", &entries).is_empty());
     }
 
     #[cfg(target_os = "linux")]

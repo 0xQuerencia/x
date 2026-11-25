@@ -248,23 +248,37 @@ mod tests {
             .spawn()
             .expect("xterm available in isolated test session");
         let backend = X11;
-        crate::wm::tests::contract::assert_live_report(&backend);
-        let own = || {
+        let lookup = || {
             backend
                 .windows()
-                .unwrap()
-                .into_iter()
-                .find(|w| w.title == "XWMLiveTest")
+                .map(|windows| windows.into_iter().find(|w| w.title == "XWMLiveTest"))
         };
-        for _ in 0..50 {
-            if own().is_some() {
-                break;
+        // Openbox can advertise itself before its first client has mapped.
+        // wmctrl then fails while _NET_CLIENT_LIST is still absent. Wait for
+        // the owned fixture window before requiring successful window reads;
+        // failures after startup remain failures of the actual operations.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let original = loop {
+            match lookup() {
+                Ok(Some(window)) => break window,
+                result if std::time::Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("isolated test window never became readable: {result:?}");
+                }
+                _ => std::thread::sleep(Duration::from_millis(100)),
             }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        let original = own().expect("isolated test window never appeared");
+        };
+        crate::wm::tests::contract::assert_live_report(&backend);
+        let own = || lookup().expect("window listing failed after fixture startup");
         assert!(original.pid > 0);
         backend.run(&Cmd::Focus(original.id.clone())).unwrap();
+        for _ in 0..20 {
+            if backend.focused().unwrap() == Some(original.id.clone()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
         assert_eq!(backend.focused().unwrap(), Some(original.id.clone()));
 
         backend

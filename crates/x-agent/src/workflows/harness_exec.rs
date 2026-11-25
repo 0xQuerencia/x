@@ -11,7 +11,7 @@ use super::recovery::{Begin, Journal, State};
 use super::scheduler::{Executor, Outcome};
 use crate::cancellation::Cancellation;
 use crate::grants::{Grants, Permission, Receipt, Scope};
-use crate::harness::{Adapter, EventSink, Kind, Request, RunStatus, WorkAccess};
+use crate::harness::{Adapter, EventKind, EventSink, Kind, Request, RunStatus, WorkAccess};
 use crate::projects::Project;
 use crate::verification::{Outcome as VerifiedOutcome, Result as Verification};
 use crate::worktrees::{Manager, OwnedWorktree};
@@ -23,6 +23,8 @@ pub enum Proof {
     DeliveryOnly,
     /// Provider delivery and Git-status evidence for this precise file.
     ChangedFile(String),
+    /// A clean descendant commit whose Git tree differs from the approved base.
+    CommittedArtifact,
 }
 
 /// Constructed only after an exact project, task and worktree scope is
@@ -65,16 +67,21 @@ impl Assignment {
         {
             return Err("The approved harness task or project changed".into());
         }
+        if matches!(&proof, Proof::ChangedFile(_))
+            && !adapter.descriptor().supports_workspace_write()
+        {
+            return Err("The harness cannot satisfy a required file change".into());
+        }
         if let Proof::ChangedFile(path) = &proof
-            && (path.is_empty()
-                || path.starts_with('/')
-                || path.contains("..")
-                || path.chars().any(char::is_control))
+            && !crate::verification::valid_expected_path(path)
         {
             return Err("The expected changed file path is unsafe".into());
         }
+        if matches!(&proof, Proof::CommittedArtifact) && *harness != HarnessKind::OpenCode {
+            return Err("This harness cannot produce a committed artifact".into());
+        }
         let scope = approval_scope(node, project.id, &worktree, &proof)?;
-        grants.check(&receipt, Permission::StartHarness, &scope)?;
+        grants.check(&receipt, Permission::QueueHarness, &scope)?;
         let Scope::Task { intent, .. } = &scope else {
             return Err("A harness assignment requires exact task scope".into());
         };
@@ -95,11 +102,14 @@ impl Assignment {
     }
 }
 
+type JobActivity = Arc<dyn Fn(&str, u8, EventKind) + Send + Sync>;
+
 pub struct ApprovedHarnessExecutor {
     run_id: Uuid,
     assignments: HashMap<String, Assignment>,
     worktrees: Arc<Manager>,
     journal: Arc<Journal>,
+    activity: Option<JobActivity>,
 }
 
 impl ApprovedHarnessExecutor {
@@ -148,7 +158,15 @@ impl ApprovedHarnessExecutor {
             assignments: slots,
             worktrees,
             journal,
+            activity: None,
         })
+    }
+
+    /// Only structured event kinds leave the worker; provider text, session
+    /// IDs and tool arguments are deliberately not forwarded to the UI.
+    pub(crate) fn with_activity(mut self, activity: JobActivity) -> Self {
+        self.activity = Some(activity);
+        self
     }
 
     fn assignment(&self, node: &Node) -> Option<&Assignment> {
@@ -176,7 +194,7 @@ impl ApprovedHarnessExecutor {
             .and_then(|scope| {
                 assignment
                     .grants
-                    .check(&assignment.receipt, Permission::StartHarness, &scope)
+                    .check(&assignment.receipt, Permission::QueueHarness, &scope)
             })
             .is_ok())
         .then_some(assignment)
@@ -232,7 +250,12 @@ impl Executor for ApprovedHarnessExecutor {
         }
         if assignment
             .grants
-            .consume(&assignment.receipt, Permission::StartHarness, &scope)
+            .activate_harness(&assignment.receipt, &scope)
+            .and_then(|()| {
+                assignment
+                    .grants
+                    .consume(&assignment.receipt, Permission::StartHarness, &scope)
+            })
             .is_err()
         {
             return Outcome::Failed;
@@ -252,7 +275,13 @@ impl Executor for ApprovedHarnessExecutor {
             let journal = Arc::clone(&self.journal);
             let claim = claim.clone();
             let observed = Arc::clone(&observed);
+            let activity = self.activity.clone();
+            let node_id = node.id.clone();
+            let attempt = claim.attempt;
             Arc::new(move |event| {
+                if let Some(activity) = &activity {
+                    activity(&node_id, attempt, event.kind);
+                }
                 if let Some(session) = event
                     .accepted_session()
                     .filter(|session| session.kind() == harness_kind)
@@ -265,7 +294,11 @@ impl Executor for ApprovedHarnessExecutor {
             workspace: assignment.worktree.path().to_path_buf(),
             prompt: goal.clone(),
             session: None,
-            access: WorkAccess::Workspace,
+            access: if assignment.adapter.descriptor().supports_workspace_write() {
+                WorkAccess::Workspace
+            } else {
+                WorkAccess::SelectionOnly
+            },
             allow_commands: Vec::new(),
         };
         let owned = match assignment.adapter.start(request, sink, &stop) {
@@ -289,17 +322,33 @@ impl Executor for ApprovedHarnessExecutor {
             .as_ref()
             .filter(|session| session.kind() == harness_kind)
             .map(|session| session.as_str());
+        let mut artifact = None;
         let outcome = if stop.requested() || result.status == RunStatus::Cancelled {
             Outcome::Cancelled
         } else {
             match delivery.outcome {
                 VerifiedOutcome::Failed => Outcome::Failed,
                 VerifiedOutcome::Verified if evidence_id.is_some() => match &assignment.proof {
-                    Proof::DeliveryOnly => Outcome::Verified,
+                    Proof::DeliveryOnly => Outcome::Delivered,
+                    Proof::CommittedArtifact => match self
+                        .worktrees
+                        .committed_artifact(&assignment.project, &assignment.worktree)
+                    {
+                        Ok(Some(proof)) => {
+                            artifact = Some(proof);
+                            Outcome::Verified
+                        }
+                        Ok(None) => Outcome::Failed,
+                        Err(_) => Outcome::Unverified,
+                    },
                     Proof::ChangedFile(path) => {
+                        let changes = self
+                            .worktrees
+                            .changed_paths(&assignment.project, &assignment.worktree)
+                            .ok();
                         match Verification::required_git_change(
                             &node.id,
-                            result.changed_files.as_deref(),
+                            changes.as_deref(),
                             path,
                             unix_now(),
                         ) {
@@ -315,14 +364,24 @@ impl Executor for ApprovedHarnessExecutor {
                 VerifiedOutcome::Unverified | VerifiedOutcome::Verified => Outcome::Unverified,
             }
         };
+        let outcome = if stop.requested() {
+            artifact = None;
+            Outcome::Cancelled
+        } else {
+            outcome
+        };
         let persisted = match outcome {
+            Outcome::Delivered => State::Delivered,
             Outcome::Verified => State::Verified,
             Outcome::Failed => State::Failed,
             Outcome::Cancelled => State::Cancelled,
             Outcome::Unverified | Outcome::Skipped => State::Unverified,
         };
         if (evidence_id.is_none() && observed.get().is_some_and(Result::is_err))
-            || self.journal.settle(&claim, persisted, evidence_id).is_err()
+            || self
+                .journal
+                .settle_with_artifact(&claim, persisted, evidence_id, artifact)
+                .is_err()
         {
             return Outcome::Unverified;
         }
@@ -532,6 +591,9 @@ mod tests {
                 id: id.into(),
                 after: vec![],
                 requires: vec![],
+                requires_verified: vec![],
+                required_change: None,
+                required_commit: false,
                 job: Job::Harness {
                     harness,
                     project_id: project.id.to_string(),
@@ -562,7 +624,7 @@ mod tests {
                 });
                 let receipt = grants
                     .issue(
-                        Permission::StartHarness,
+                        Permission::QueueHarness,
                         approval_scope(node, project.id, &worktree, &Proof::DeliveryOnly).unwrap(),
                         Duration::from_secs(30),
                         1,
@@ -606,7 +668,7 @@ mod tests {
             result
                 .nodes
                 .iter()
-                .all(|node| node.outcome == Outcome::Verified)
+                .all(|node| node.outcome == Outcome::Delivered)
         );
         // Receipts are consumed before delivery; a replay cannot pass preflight.
         assert!(
@@ -740,6 +802,32 @@ mod tests {
     }
 
     #[test]
+    fn parallel_activity_is_node_scoped_and_does_not_expose_provider_text() {
+        let (_directory, graph, runner, _peak, _calls) = fixture(true);
+        let runner = Arc::try_unwrap(runner).ok().unwrap();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = Arc::clone(&events);
+        let runner = Arc::new(runner.with_activity(Arc::new(move |node, attempt, kind| {
+            captured
+                .lock()
+                .unwrap()
+                .push((node.to_owned(), attempt, kind));
+        })));
+        scheduler::run(
+            &graph,
+            Path::new("/tmp"),
+            runner,
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![("back".to_owned(), 1, EventKind::Text)]
+        );
+    }
+
+    #[test]
     fn a_failed_harness_preserves_delivery_without_verifying_the_job() {
         let (_directory, graph, runner, _peak, calls) = fixture(true);
         let result = scheduler::run(
@@ -765,7 +853,7 @@ mod tests {
             result
                 .nodes
                 .iter()
-                .any(|node| node.outcome == Outcome::Verified)
+                .any(|node| node.outcome == Outcome::Delivered)
         );
     }
 }

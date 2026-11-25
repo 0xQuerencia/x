@@ -147,6 +147,16 @@ Run the live checks yourself: `cargo test -p x-agent --test live -- --ignored --
 
 **Hands-free wake word.** `hex agent listen on` keeps the microphone open and runs any speech that starts with a wake word ("Friday, start coding", or "Friday" and then the command within 8 seconds) as an X command, planned and approved exactly like a typed one. Everything else is transcribed locally, checked for a wake word and dropped: never typed, logged, stored or sent. It is off by default, steps aside while a dictation is recording, and `hex agent listen off` closes the microphone again. Linux only; it uses the default microphone and the dictation model, so it needs the model loaded. With Trusted Actions on, anything you say aloud that starts with the wake word and matches an allowed action runs without a prompt, so leave Trusted Actions off if others can speak near your microphone.
 
+**Hands-free Smart listening (Linux).** Run `x agent listen smart`, then say
+“open Firefox” or “switch to workspace three” without a shortcut or wake word.
+Check Agent for the preview and approve it there or with `x agent approve`.
+This opt-in keeps the microphone open, uses the loaded local dictation model,
+and pauses for normal dictation. It previews single app launches and supported
+window controls. Other speech is discarded without pasting or sending it to a
+remote planner. A nearby voice or recording can still create a preview. Run
+`x agent listen off` to stop and release the microphone.
+
+
 Known limits: needs `python3` with `python-gobject` and `at-spi2-core` for the selection helper; editing only works in fields that accept edits through accessibility (others are refused rather than typed into); for apps that expose no text to accessibility (browsers, some Electron apps) "search this", "open this link" and "copy this" fall back to the last text you highlighted (the Wayland primary selection, needs `wl-paste`), marked low confidence and always shown for approval even with Trusted Actions on, and never used for edits; `open terminal` supports kitty, foot and alacritty; opening a URL can't be verified; one task (or workflow) at a time; ambiguous windows in a workflow step fail with a message and a `pick` option rather than a chooser.
 
 ## Open X Quick from any Linux app

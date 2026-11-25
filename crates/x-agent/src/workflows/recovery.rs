@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::worktrees::CommittedArtifact;
+
 const VERSION: u16 = 1;
 const FILE: &str = "x-job-claims.json";
 const LOCK: &str = "x-job-claims.lock";
@@ -21,6 +23,7 @@ const MAX_ATTEMPTS: u8 = 3;
 #[serde(rename_all = "snake_case")]
 pub enum State {
     Claimed,
+    Delivered,
     Verified,
     Failed,
     Unverified,
@@ -37,6 +40,8 @@ pub struct Claim {
     pub state: State,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<CommittedArtifact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -99,6 +104,7 @@ impl Journal {
                 attempt: 1,
                 state: State::Claimed,
                 evidence_id: None,
+                artifact: None,
             };
             data.entries.push(claim.clone());
             Ok((Begin::Fresh(claim), true))
@@ -133,6 +139,22 @@ impl Journal {
         outcome: State,
         evidence_id: Option<&str>,
     ) -> Result<Claim, String> {
+        self.settle_with_artifact(attempt, outcome, evidence_id, None)
+    }
+
+    /// Settle artifact evidence atomically with the matching attempt outcome.
+    pub(super) fn settle_with_artifact(
+        &self,
+        attempt: &Claim,
+        outcome: State,
+        evidence_id: Option<&str>,
+        artifact: Option<CommittedArtifact>,
+    ) -> Result<Claim, String> {
+        if artifact.as_ref().is_some_and(|artifact| {
+            outcome != State::Verified || !artifact.valid_for(attempt.run_id, &attempt.node_id)
+        }) {
+            return Err("Artifact evidence does not belong to this verified attempt".into());
+        }
         if outcome == State::Claimed {
             return Err("An in-flight claim cannot be settled as claimed".into());
         }
@@ -146,11 +168,12 @@ impl Journal {
                     return Err("A different session already acknowledged this job".into());
                 }
                 (None, Some(provided)) => claim.evidence_id = Some(provided.to_owned()),
-                (None, None) if outcome == State::Verified => {
+                (None, None) if matches!(outcome, State::Delivered | State::Verified) => {
                     return Err("Verification requires a durable evidence reference".into());
                 }
                 _ => {}
             }
+            claim.artifact = artifact;
             claim.state = outcome;
             Ok((claim.clone(), true))
         })
@@ -193,6 +216,7 @@ impl Journal {
             claim.attempt += 1;
             claim.state = State::Claimed;
             claim.evidence_id = None;
+            claim.artifact = None;
             Ok((claim.clone(), true))
         })
     }
@@ -248,7 +272,12 @@ impl Journal {
                         .evidence_id
                         .as_deref()
                         .is_some_and(|id| !valid_evidence(id))
-                    || (claim.state == State::Verified && claim.evidence_id.is_none())
+                    || (matches!(claim.state, State::Delivered | State::Verified)
+                        && claim.evidence_id.is_none())
+                    || claim.artifact.as_ref().is_some_and(|artifact| {
+                        claim.state != State::Verified
+                            || !artifact.valid_for(claim.run_id, &claim.node_id)
+                    })
                     || !ids.insert((claim.run_id, claim.node_id.as_str()))
             })
         {

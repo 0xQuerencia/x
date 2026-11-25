@@ -30,6 +30,13 @@ pub(super) struct AgentPane {
     quick_file_preview: Option<String>,
     pending_process: Option<::x_agent::quick::processes::ProcessInfo>,
     workspace: TextEdit,
+    browser_url: TextEdit,
+    browser_title: TextEdit,
+    session_choices: Vec<(String, String)>,
+    session_message: Option<String>,
+    project_choices: Vec<(String, String)>,
+    project_page: usize,
+    project_message: Option<String>,
     test_project: TextEdit,
     test_suite_index: usize,
     recovery_summary: Option<String>,
@@ -57,6 +64,13 @@ impl Default for AgentPane {
             quick_file_preview: None,
             pending_process: None,
             workspace: TextEdit::default(),
+            browser_url: TextEdit::default(),
+            browser_title: TextEdit::default(),
+            session_choices: Vec::new(),
+            session_message: None,
+            project_choices: Vec::new(),
+            project_page: 0,
+            project_message: None,
             test_project: TextEdit::default(),
             test_suite_index: 0,
             recovery_summary: None,
@@ -121,6 +135,8 @@ fn phase_label(phase: Phase) -> &'static str {
 fn step_glyph(status: &str) -> &'static str {
     match status {
         "running" => "▸",
+        "stopping" => "…",
+        "delivered" => "→",
         "launched" | "done" => "✓",
         "failed" => "✕",
         _ => "○",
@@ -415,6 +431,9 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     body = body.child(access_row(p, snapshot));
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
+        body = body.child(registered_projects_row(p, pane, busy));
+        body = body.child(session_picker_row(p, pane, busy));
+        body = body.child(browser_page_handoff_row(p, pane, busy));
         body = body.child(project_tests_row(p, pane, busy));
         body = body.child(recovery_review_row(p, pane));
     }
@@ -544,6 +563,286 @@ fn workspace_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
                 }
             },
         ))
+}
+
+fn browser_page_handoff_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
+    let url = TextInput::new(&pane.browser_url)
+        .placeholder(tr("https://example.com/page"))
+        .width(None)
+        .on_edit(|ui: &mut Ui| &mut ui.agent.browser_url)
+        .build(p.k)
+        .key("agent-browser-url");
+    let title = TextInput::new(&pane.browser_title)
+        .placeholder(tr("Optional page title"))
+        .width(None)
+        .on_edit(|ui: &mut Ui| &mut ui.agent.browser_title)
+        .build(p.k)
+        .key("agent-browser-title");
+    col()
+        .key("agent-browser-handoff")
+        .gap(6.0)
+        .child(text(tr("Share browser page with Work")).font(DESCRIPTION).color(p.text()))
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(url)
+                .child(title),
+        )
+        .child(button(
+            p,
+            "agent-browser-handoff-review",
+            tr("Review page handoff"),
+            if busy {
+                ButtonKind::Secondary
+            } else {
+                ButtonKind::Primary
+            },
+            |ui: &mut Ui, _| {
+                if ui.agent.is_busy() {
+                    return;
+                }
+                let url = ui.agent.browser_url.text.trim().to_owned();
+                let title = ui.agent.browser_title.text.trim().to_owned();
+                if let Err(error) =
+                    agent_host::service().plan_browser_page_to_session(&url, &title)
+                {
+                    agent_host::service().emit("error", &error);
+                }
+            },
+        ))
+        .child(
+            text(tr("Only the URL and title you type are shared with the selected session after approval. X does not read the browser or open the page."))
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        )
+}
+
+fn session_picker_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
+    let mut list = col()
+        .key("agent-opencode-sessions")
+        .gap(6.0)
+        .child(
+            text(tr("OpenCode sessions"))
+                .font(DESCRIPTION)
+                .color(p.text()),
+        )
+        .child(button(
+            p,
+            "agent-find-opencode-sessions",
+            tr("Find sessions"),
+            ButtonKind::Secondary,
+            |ui: &mut Ui, _| {
+                if ui.agent.is_busy() {
+                    return;
+                }
+                match agent_host::handle(AgentAction::Sessions { resume: None }) {
+                    crate::control::ControlReply::AgentSessions { sessions, .. } => {
+                        let total = sessions.len();
+                        ui.agent.session_choices = sessions
+                            .into_iter()
+                            .take(6)
+                            .map(|session| {
+                                let label = session
+                                    .title
+                                    .chars()
+                                    .filter(|ch| !ch.is_control())
+                                    .take(80)
+                                    .collect();
+                                (session.id.as_str().to_owned(), label)
+                            })
+                            .collect();
+                        ui.agent.session_message = if total > 6 {
+                            Some(format!(
+                                "Showing 6 of {total}; use the CLI for the full list"
+                            ))
+                        } else if total == 0 {
+                            Some("No OpenCode sessions in the selected project".into())
+                        } else {
+                            None
+                        };
+                    }
+                    crate::control::ControlReply::Error { message, .. } => {
+                        ui.agent.session_choices.clear();
+                        ui.agent.session_message = Some(message);
+                    }
+                    _ => {
+                        ui.agent.session_message =
+                            Some("The OpenCode session list was unavailable".into());
+                    }
+                }
+            },
+        ));
+    if let Some(message) = &pane.session_message {
+        list = list.child(
+            text(message.clone())
+                .key("agent-session-message")
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    }
+    for (id, title) in &pane.session_choices {
+        let session_id = id.clone();
+        list = list.child(button(
+            p,
+            &format!("agent-session-{id}"),
+            &format!("Select {title}"),
+            ButtonKind::Secondary,
+            move |ui: &mut Ui, _| {
+                if ui.agent.is_busy() {
+                    return;
+                }
+                match agent_host::handle(AgentAction::Sessions {
+                    resume: Some(session_id.clone()),
+                }) {
+                    crate::control::ControlReply::AgentSessions { selected: true, .. } => {
+                        ui.agent.session_message =
+                            Some(format!("Verified and selected {session_id}"));
+                    }
+                    crate::control::ControlReply::Error { message, .. } => {
+                        ui.agent.session_message = Some(message);
+                    }
+                    _ => {
+                        ui.agent.session_message =
+                            Some("This session could not be verified".into());
+                    }
+                }
+            },
+        ));
+    }
+    if busy {
+        list = list.child(
+            text(tr("Finish the current task before selecting a session."))
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    }
+    list
+}
+
+const PROJECT_CHOICES_PER_PAGE: usize = 5;
+
+fn registered_projects_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
+    let mut list = col().key("agent-registered-projects").gap(6.0).child(
+        row()
+            .gap(8.0)
+            .center_y()
+            .child(
+                text(tr("Registered projects"))
+                    .font(DESCRIPTION)
+                    .color(p.text()),
+            )
+            .child(button(
+                p,
+                "agent-list-projects",
+                tr("Browse projects"),
+                ButtonKind::Secondary,
+                |ui: &mut Ui, _| match agent_host::service().list_registered_projects() {
+                    Ok(projects) => {
+                        ui.agent.project_choices = projects
+                            .into_iter()
+                            .map(|project| (project.id.to_string(), project.name))
+                            .collect();
+                        ui.agent.project_page = 0;
+                        ui.agent.project_message = if ui.agent.project_choices.is_empty() {
+                            Some(
+                                "No registered projects. Use x agent projects register to add one."
+                                    .into(),
+                            )
+                        } else {
+                            None
+                        };
+                    }
+                    Err(error) => {
+                        ui.agent.project_choices.clear();
+                        ui.agent.project_page = 0;
+                        ui.agent.project_message = Some(error);
+                    }
+                },
+            )),
+    );
+    if let Some(message) = &pane.project_message {
+        list = list.child(
+            text(message.clone())
+                .key("agent-project-message")
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    }
+    let start = pane
+        .project_page
+        .saturating_mul(PROJECT_CHOICES_PER_PAGE)
+        .min(pane.project_choices.len());
+    let end = (start + PROJECT_CHOICES_PER_PAGE).min(pane.project_choices.len());
+    for (id, name) in &pane.project_choices[start..end] {
+        let project_id = id.clone();
+        let shown = name.clone();
+        list = list.child(button(
+            p,
+            &format!("agent-choose-project-{id}"),
+            &format!("Use {name}"),
+            ButtonKind::Secondary,
+            move |ui: &mut Ui, _| {
+                if ui.agent.is_busy() {
+                    return;
+                }
+                match agent_host::service().select_registered_project(&project_id) {
+                    Ok((project, _)) => {
+                        ui.agent.workspace.text = project.root.display().to_string();
+                        ui.agent.session_choices.clear();
+                        ui.agent.session_message = None;
+                        ui.agent.project_message = Some(format!("Selected {}", project.name));
+                    }
+                    Err(error) => {
+                        ui.agent.project_message = Some(format!("Cannot select {shown}: {error}"));
+                    }
+                }
+            },
+        ));
+    }
+    if pane.project_choices.len() > PROJECT_CHOICES_PER_PAGE {
+        let page = pane.project_page;
+        let pages = pane
+            .project_choices
+            .len()
+            .div_ceil(PROJECT_CHOICES_PER_PAGE);
+        list = list.child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(button(
+                    p,
+                    "agent-project-previous",
+                    tr("Previous"),
+                    ButtonKind::Secondary,
+                    |ui: &mut Ui, _| {
+                        ui.agent.project_page = ui.agent.project_page.saturating_sub(1);
+                    },
+                ))
+                .child(
+                    text(format!("{} / {pages}", page + 1))
+                        .font(DESCRIPTION)
+                        .color(p.muted()),
+                )
+                .child(button(
+                    p,
+                    "agent-project-next",
+                    tr("Next"),
+                    ButtonKind::Secondary,
+                    move |ui: &mut Ui, _| {
+                        ui.agent.project_page = (ui.agent.project_page + 1).min(pages - 1);
+                    },
+                )),
+        );
+    }
+    if busy {
+        list = list.child(
+            text(tr("Finish the current task before switching projects."))
+                .font(DESCRIPTION)
+                .color(p.muted()),
+        );
+    }
+    list
 }
 
 const TEST_SUITES: [(&str, ::x_agent::verification::test_runner::Suite); 6] = [
@@ -717,6 +1016,11 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
             _ => p.text(),
         };
         let mut line = format!("{}  {}", step_glyph(&step.status), step.title);
+        if step.status == "delivered" {
+            line.push_str(" · Delivery confirmed; code not verified");
+        } else if step.status == "stopping" {
+            line.push_str(" · Stop requested");
+        }
         if !step.risk.is_empty() && step.status == "pending" {
             line.push_str(&format!("  ·  {}", step.risk));
         }
@@ -729,6 +1033,20 @@ fn task_card(p: Paint, snapshot: &Snapshot, task: &::x_agent::service::Task) -> 
                 .font(DESCRIPTION)
                 .color(color),
         );
+        if snapshot.cancellable_coding_jobs.contains(&index) {
+            let task_id = task.id;
+            card = card.child(button(
+                p,
+                &format!("stop-coding-job-{index}"),
+                &format!("Stop job {}", index + 1),
+                ButtonKind::Secondary,
+                move |_: &mut Ui, _| {
+                    if let Err(error) = agent_host::service().cancel_coding_job(task_id, index) {
+                        agent_host::service().emit("error", &error);
+                    }
+                },
+            ));
+        }
     }
     if snapshot.phase == Phase::AwaitingApproval {
         let id = task.id;
