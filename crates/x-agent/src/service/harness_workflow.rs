@@ -192,9 +192,13 @@ impl Service {
                 projects.insert(project_id.clone(), (project, commit));
             }
             let (project, commit) = &projects[project_id];
+            let proof_note = node.required_change.as_ref().map_or_else(
+                || "delivery only".to_owned(),
+                |path| format!("required file change: {path}"),
+            );
             let preview = step(
                 &format!(
-                    "{} · {} · {} at {commit} · {goal}",
+                    "{} · {} · {} at {commit} · {goal} · {proof_note}",
                     node.id,
                     kind.label(),
                     project.root.display()
@@ -373,7 +377,10 @@ impl Service {
                 .zip(&workflow.jobs)
                 .zip(worktrees)
             {
-                let proof = Proof::DeliveryOnly;
+                let proof = node
+                    .required_change
+                    .as_ref()
+                    .map_or(Proof::DeliveryOnly, |path| Proof::ChangedFile(path.clone()));
                 let scope = approval_scope(node, job.project.id, tree, &proof)?;
                 let receipt = grants.issue(
                     Permission::StartHarness,
