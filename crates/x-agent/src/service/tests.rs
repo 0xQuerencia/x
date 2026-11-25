@@ -2373,6 +2373,36 @@ echo '{"type":"result","subtype":"success","is_error":false,"session_id":"5e3b19
 }
 
 #[test]
+fn reviewed_file_change_proof_gates_dependent_jobs() {
+    for (path, should_complete) in [("received-args", true), ("absent.txt", false)] {
+        let (service, directory, _, mut graph) = graph_workflow_fixture();
+        graph.version = crate::workflows::dag::PROOF_VERSION;
+        graph.nodes[0].required_change = Some(path.into());
+        graph.nodes[1].requires.clear();
+        graph.nodes[1].requires_verified = vec!["inspect".into()];
+        std::fs::write(
+            directory.path().join("state/workflows/coding-graph.json"),
+            serde_json::to_vec(&graph).unwrap(),
+        )
+        .unwrap();
+        let task = service.plan_graph_workflow(&graph.id).unwrap();
+        assert!(task.steps[0].title.contains(path));
+        service.approve(task.id).unwrap();
+        let snapshot = wait_for(&service, |v| !v.phase.is_busy());
+        let steps = snapshot.task.unwrap().steps;
+        if should_complete {
+            assert_eq!(snapshot.phase, Phase::Completed);
+            assert_eq!(steps[0].status, "done");
+            assert_eq!(steps[1].status, "delivered");
+        } else {
+            assert_eq!(snapshot.phase, Phase::Failed);
+            assert_eq!(steps[0].status, "failed");
+            assert_eq!(steps[1].status, "skipped");
+        }
+    }
+}
+
+#[test]
 fn native_graph_approval_runs_the_previewed_goals_in_owned_worktrees() {
     let (service, directory, repo, mut graph) = graph_workflow_fixture();
     let home = directory.path();
