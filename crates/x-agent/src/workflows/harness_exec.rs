@@ -533,6 +533,7 @@ mod tests {
                 id: id.into(),
                 after: vec![],
                 requires: vec![],
+                requires_verified: vec![],
                 job: Job::Harness {
                     harness,
                     project_id: project.id.to_string(),
