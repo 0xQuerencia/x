@@ -650,7 +650,14 @@ assigns it to a private, unnamed Job with kill-on-close and no breakaway before
 resuming the one freshly validated primary thread. Assignment, thread identity
 or resume failure refuses startup and cleans up the retained process handle.
 Stop uses `TerminateJobObject`, without an external `taskkill` helper or a PID
-lookup. Unix retains its owned process-group termination path.
+lookup. Linux retains the direct child unreaped while checking the owned
+process group and bounding output drain after the root exits. A nonempty group
+is terminated before the worker releases its lease; failed observation keeps
+cleanup pending instead of claiming success. This Linux procfs observation is
+not a kernel Job guarantee, and cannot cover processes that leave the group
+or external services. Other Unix systems retain their existing termination
+path. Linux fixtures check a surviving descendant and independent group Stop;
+actual desktop/provider acceptance remains separate.
 
 Windows closure requires both the direct process to exit and
 `QueryInformationJobObject` to report zero active processes. X closes the
