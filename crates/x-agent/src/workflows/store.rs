@@ -60,6 +60,10 @@ pub struct GraphLast {
     pub graph_id: String,
     pub finished_at: u64,
     pub verified: usize,
+    #[serde(default)]
+    pub delivered: usize,
+    #[serde(default)]
+    proof_version: u8,
     pub stopped: bool,
     pub nodes: Vec<GraphNodeLast>,
 }
@@ -447,6 +451,12 @@ impl Store {
                 .iter()
                 .filter(|node| node.outcome == super::scheduler::Outcome::Verified)
                 .count(),
+            delivered: report
+                .nodes
+                .iter()
+                .filter(|node| node.outcome == super::scheduler::Outcome::Delivered)
+                .count(),
+            proof_version: 1,
             stopped: report.stopped,
             nodes: report
                 .nodes
@@ -470,10 +480,26 @@ impl Store {
             Ok(_) => {}
         }
         let text = Self::read(&path).map_err(|e| format!("Cannot read coding run summary: {e}"))?;
-        let summary: GraphLast =
+        let mut summary: GraphLast =
             serde_json::from_str(&text).map_err(|_| "Coding run summary is invalid")?;
         if summary.graph_id != id {
             return Err("Coding run summary belongs to another workflow".into());
+        }
+        // Historical service graph runs used DeliveryOnly for every job.
+        // They must not be shown as artifact/test-verified after upgrading.
+        if summary.proof_version == 0 {
+            for node in &mut summary.nodes {
+                if node.outcome == super::scheduler::Outcome::Verified {
+                    node.outcome = super::scheduler::Outcome::Delivered;
+                }
+            }
+            summary.delivered = summary
+                .nodes
+                .iter()
+                .filter(|node| node.outcome == super::scheduler::Outcome::Delivered)
+                .count();
+            summary.verified = 0;
+            summary.proof_version = 1;
         }
         Ok(Some(summary))
     }
