@@ -42,6 +42,7 @@ impl Service {
         workflow: &PendingGraph,
         run: Uuid,
         stop: &Cancellation,
+        stops: &JobStops,
     ) -> Result<GraphExecutor, String> {
         let grants = self.scoped_grants();
         let mut issued = Vec::new();
@@ -54,7 +55,7 @@ impl Service {
                 .ok_or("The graph no longer has an approved task")?
                 .id;
             let mut assignments = Vec::new();
-            for (node, job) in workflow.graph.nodes.iter().zip(&workflow.jobs) {
+            for (index, (node, job)) in workflow.graph.nodes.iter().zip(&workflow.jobs).enumerate() {
                 let Some(job) = job else {
                     continue;
                 };
@@ -62,12 +63,19 @@ impl Service {
                 let scope = planned_scope(node, job.project.id, run, &job.commit, &proof)?;
                 let receipt = grants.issue(
                     queue_permission(node),
-                    scope,
+                    scope.clone(),
                     Duration::from_secs(30 * 60),
                     1,
                     true,
                 )?;
                 issued.push(receipt);
+                stops.register_renewal(
+                    index,
+                    Arc::clone(&grants),
+                    receipt,
+                    queue_permission(node),
+                    scope,
+                )?;
                 assignments.push(Assignment::from_planned_scope(
                     node,
                     job.project.clone(),
