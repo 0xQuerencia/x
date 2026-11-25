@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::model::{OnFailure, StepAction, Workflow};
 
 pub const VERSION: u16 = 2;
+pub const PROOF_VERSION: u16 = 3;
 pub const MAX_NODES: usize = 64;
 pub const MAX_DEPENDENCIES: usize = 64;
 
@@ -42,6 +43,15 @@ pub struct Node {
     /// Verification edges: predecessor must finish successfully.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    /// Version 3: require additional proof, not merely successful delivery.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_verified: Vec<String>,
+    /// Version 3: require an observed change to this exact relative Git path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_change: Option<String>,
+    /// Version 3: require a changed, clean descendant commit as an artifact.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub required_commit: bool,
     pub job: Job,
     #[serde(default)]
     pub on_failure: OnFailure,
@@ -80,6 +90,9 @@ impl Graph {
                     id: step.id,
                     after,
                     requires: step.requires,
+                    requires_verified: vec![],
+                    required_change: None,
+                    required_commit: false,
                     job: Job::Desktop {
                         action: step.action,
                     },
@@ -100,7 +113,7 @@ impl Graph {
 
     /// Validate graph structure. This alone does not authorize any operation.
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != VERSION {
+        if !matches!(self.version, VERSION | PROOF_VERSION) {
             return Err("Unsupported workflow graph version".into());
         }
         if !slug(&self.id) || self.name.trim().is_empty() || self.name.chars().count() > 80 {
@@ -114,13 +127,47 @@ impl Graph {
             if !slug(&node.id) || !ids.insert(node.id.as_str()) {
                 return Err("Graph nodes require unique safe IDs".into());
             }
-            if node.after.len() > MAX_DEPENDENCIES || node.requires.len() > MAX_DEPENDENCIES {
+            if node.required_commit
+                && (self.version != PROOF_VERSION
+                    || node.required_change.is_some()
+                    || !matches!(
+                        &node.job,
+                        Job::Harness {
+                            harness: HarnessKind::OpenCode,
+                            ..
+                        }
+                    ))
+            {
+                return Err(
+                    "Commit proof requires a v3 OpenCode job without another proof profile".into(),
+                );
+            }
+            if let Some(path) = &node.required_change
+                && (self.version != PROOF_VERSION
+                    || !matches!(
+                        &node.job,
+                        Job::Harness {
+                            harness: HarnessKind::OpenCode,
+                            ..
+                        }
+                    )
+                    || !crate::verification::valid_expected_path(path))
+            {
+                return Err("Required file change needs a safe v3 OpenCode proof path".into());
+            }
+            if self.version == VERSION && !node.requires_verified.is_empty() {
+                return Err("Verified dependency edges require graph version 3".into());
+            }
+            if node.after.len() > MAX_DEPENDENCIES
+                || node.requires.len() > MAX_DEPENDENCIES
+                || node.requires_verified.len() > MAX_DEPENDENCIES
+            {
                 return Err("Too many dependencies".into());
             }
             if let Job::Harness {
                 project_id, goal, ..
             } = &node.job
-                && (uuid::Uuid::parse_str(project_id).is_err()
+                && (uuid::Uuid::parse_str(project_id).map_or(true, |id| id.is_nil())
                     || goal.trim().is_empty()
                     || goal.chars().count() > 4_096
                     || goal.chars().any(char::is_control))
@@ -129,7 +176,7 @@ impl Graph {
             }
         }
         for node in &self.nodes {
-            for edges in [&node.after, &node.requires] {
+            for edges in [&node.after, &node.requires, &node.requires_verified] {
                 let mut seen = HashSet::new();
                 for required in edges {
                     if required == &node.id {
@@ -192,7 +239,12 @@ impl Graph {
         let mut next = vec![Vec::new(); self.nodes.len()];
         for (index, node) in self.nodes.iter().enumerate() {
             let mut already = HashSet::new();
-            for dep in node.after.iter().chain(&node.requires) {
+            for dep in node
+                .after
+                .iter()
+                .chain(&node.requires)
+                .chain(&node.requires_verified)
+            {
                 if !already.insert(dep.as_str()) {
                     continue;
                 }
@@ -225,6 +277,10 @@ impl Graph {
     }
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn slug(value: &str) -> bool {
     (1..=40).contains(&value.len())
         && value
@@ -233,20 +289,24 @@ fn slug(value: &str) -> bool {
         && value.as_bytes()[0].is_ascii_alphanumeric()
 }
 
-/// Accept a strict v2 graph or convert an existing v1 workflow in memory.
+/// Accept a strict v2 or v3 graph, or convert an existing v1 workflow in memory.
 /// Neither path executes anything, and unknown keys are refused.
 pub fn decode(input: &str, home: &Path) -> Result<Graph, String> {
     let value: serde_json::Value =
         serde_json::from_str(input).map_err(|e| format!("Invalid workflow JSON: {e}"))?;
     match value.get("version") {
         None => {
-            let legacy: Workflow = serde_json::from_value(value)
-                .map_err(|e| format!("Invalid legacy workflow: {e}"))?;
+            let legacy: Workflow =
+                serde_json::from_str(input).map_err(|e| format!("Invalid legacy workflow: {e}"))?;
             Graph::from_legacy(legacy, home)
         }
-        Some(version) if version.as_u64() == Some(u64::from(VERSION)) => {
-            let graph: Graph = serde_json::from_value(value)
-                .map_err(|e| format!("Invalid workflow graph: {e}"))?;
+        Some(version)
+            if version
+                .as_u64()
+                .is_some_and(|v| v == u64::from(VERSION) || v == u64::from(PROOF_VERSION)) =>
+        {
+            let graph: Graph =
+                serde_json::from_str(input).map_err(|e| format!("Invalid workflow graph: {e}"))?;
             graph.validate_with_home(home)?;
             Ok(graph)
         }
@@ -324,6 +384,9 @@ mod tests {
             id: "verify".into(),
             after: vec![],
             requires: vec!["first".into(), "second".into()],
+            requires_verified: vec![],
+            required_change: None,
+            required_commit: false,
             job: Job::Desktop {
                 action: StepAction::SwitchWorkspace { workspace: 4 },
             },
@@ -331,6 +394,41 @@ mod tests {
         });
         graph.validate().unwrap();
         assert_eq!(graph.order().unwrap(), ["first", "second", "verify"]);
+    }
+
+    #[test]
+    fn committed_artifact_requires_a_v3_writer_job() {
+        let mut graph = Graph::from_legacy(legacy(), &home()).unwrap();
+        graph.nodes[0].job = Job::Harness {
+            harness: HarnessKind::OpenCode,
+            project_id: uuid::Uuid::new_v4().to_string(),
+            goal: "commit a fix".into(),
+        };
+        graph.nodes[0].required_commit = true;
+        assert!(graph.validate().is_err());
+        graph.version = PROOF_VERSION;
+        graph.validate().unwrap();
+        graph.nodes[0].required_change = Some("src/main.rs".into());
+        assert!(graph.validate().is_err());
+        graph.nodes[0].required_change = None;
+        if let Job::Harness { harness, .. } = &mut graph.nodes[0].job {
+            *harness = HarnessKind::ClaudeCode;
+        }
+        assert!(graph.validate().is_err());
+    }
+
+    #[test]
+    fn proof_edges_require_v3_and_participate_in_cycle_validation() {
+        let mut graph = Graph::from_legacy(legacy(), &home()).unwrap();
+        graph.nodes[1].requires_verified = vec!["first".into()];
+        assert!(graph.validate().is_err());
+        graph.version = PROOF_VERSION;
+        graph.validate().unwrap();
+        assert_eq!(graph.order().unwrap(), ["first", "second"]);
+        let serialized = serde_json::to_string(&graph).unwrap();
+        assert_eq!(decode(&serialized, &home()).unwrap(), graph);
+        graph.nodes[0].requires_verified = vec!["second".into()];
+        assert!(graph.validate().unwrap_err().contains("cycle"));
     }
 
     #[test]
@@ -349,6 +447,24 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_duplicate_fields_without_value_normalization() {
+        let graph = Graph::from_legacy(legacy(), &home()).unwrap();
+        let json = serde_json::to_string(&graph).unwrap();
+        let duplicated = json.replacen("\"version\":2", "\"version\":2,\"version\":2", 1);
+        assert_ne!(duplicated, json);
+        assert!(decode(&duplicated, &home()).is_err());
+
+        let json = serde_json::to_string(&legacy()).unwrap();
+        let duplicated = json.replacen(
+            "\"id\":\"example\"",
+            "\"id\":\"other\",\"id\":\"example\"",
+            1,
+        );
+        assert_ne!(duplicated, json);
+        assert!(decode(&duplicated, &home()).is_err());
+    }
+
+    #[test]
     fn harness_tasks_require_valid_registered_project_identity() {
         let mut graph = Graph::from_legacy(legacy(), &home()).unwrap();
         graph.nodes[0].job = Job::Harness {
@@ -356,6 +472,10 @@ mod tests {
             project_id: "not-an-id".into(),
             goal: "check tests".into(),
         };
+        assert!(graph.validate().is_err());
+        if let Job::Harness { project_id, .. } = &mut graph.nodes[0].job {
+            *project_id = uuid::Uuid::nil().to_string();
+        }
         assert!(graph.validate().is_err());
         if let Job::Harness { project_id, .. } = &mut graph.nodes[0].job {
             *project_id = uuid::Uuid::new_v4().to_string();

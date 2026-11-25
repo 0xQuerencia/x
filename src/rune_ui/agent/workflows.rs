@@ -670,7 +670,7 @@ fn graph_card(p: Paint, graph: &GraphEntry, last: Option<&GraphLast>) -> El {
         let total = last.nodes.len();
         let color = if last.stopped {
             p.warning()
-        } else if total > 0 && last.verified == total {
+        } else if total > 0 && last.verified + last.delivered == total {
             p.success()
         } else {
             p.danger()
@@ -678,7 +678,10 @@ fn graph_card(p: Paint, graph: &GraphEntry, last: Option<&GraphLast>) -> El {
         let state = if last.stopped { "stopped" } else { "finished" };
         card = card.child(small(
             format!("wf-graph-{id}-last"),
-            format!("Last run: {}/{} verified · {state}", last.verified, total),
+            format!(
+                "Last run: {}/{} delivered, {} with additional proof · {state}",
+                last.delivered, total, last.verified
+            ),
             color,
         ));
     }

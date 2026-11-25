@@ -201,6 +201,9 @@ mod tests {
                 id: "backend".into(),
                 after: vec![],
                 requires: vec![],
+                requires_verified: vec![],
+                required_change: None,
+                required_commit: false,
                 job: Job::Harness {
                     harness: HarnessKind::OpenCode,
                     project_id: "123e4567-e89b-12d3-a456-426614174000".into(),

@@ -217,7 +217,7 @@ impl Host for Fake {
     }
     fn permit(&self, _: &StepAction) -> bool {
         let n = self.permits.fetch_add(1, Ordering::SeqCst);
-        !self.deny_permit && !self.deny_from.is_some_and(|from| n >= from)
+        !self.deny_permit && self.deny_from.is_none_or(|from| n < from)
     }
     fn cancelled(&self) -> bool {
         self.cancel_after_launches
@@ -1122,6 +1122,9 @@ mod storage {
                 id: "backend".into(),
                 after: vec![],
                 requires: vec![],
+                requires_verified: vec![],
+                required_change: None,
+                required_commit: false,
                 job: Job::Harness {
                     harness: HarnessKind::OpenCode,
                     project_id: uuid::Uuid::new_v4().to_string(),
@@ -1280,6 +1283,21 @@ mod storage {
     }
 
     #[test]
+    fn bounded_reads_reject_linked_and_oversized_graph_imports() {
+        let h = home();
+        let s = store(h.path());
+        let large = h.path().join("large.json");
+        std::fs::write(&large, vec![b' '; 64 * 1024 + 1]).unwrap();
+        assert!(s.import_graph(&large).unwrap_err().contains("too large"));
+
+        let actual = h.path().join("actual.json");
+        std::fs::write(&actual, "{}").unwrap();
+        let link = h.path().join("link.json");
+        std::os::unix::fs::symlink(&actual, &link).unwrap();
+        assert!(s.import_graph(&link).unwrap_err().contains("regular file"));
+    }
+
+    #[test]
     fn duplicate_delete_and_import() {
         let h = home();
         let s = store(h.path());
@@ -1310,6 +1328,24 @@ mod storage {
         .unwrap();
         assert!(s.import(&file).is_err());
         assert!(s.get("../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn historical_graph_results_do_not_claim_code_verification() {
+        use crate::workflows::scheduler::Outcome;
+        let h = home();
+        let s = store(h.path());
+        std::fs::create_dir_all(s.dir()).unwrap();
+        let path = s.dir().join("old-graph.last.json");
+        std::fs::write(
+            path,
+            br#"{"graph_id":"old-graph","finished_at":123,"verified":1,"stopped":false,"nodes":[{"id":"backend","outcome":"verified"}]}"#,
+        )
+        .unwrap();
+        let saved = s.last_graph("old-graph").unwrap().unwrap();
+        assert_eq!(saved.verified, 0);
+        assert_eq!(saved.delivered, 1);
+        assert_eq!(saved.nodes[0].outcome, Outcome::Delivered);
     }
 
     #[test]

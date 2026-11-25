@@ -2,7 +2,7 @@
 //! written atomically with owner-only permissions, read with a size cap, and never followed
 //! through symlinks. Nothing secret belongs here and nothing here is ever executed as text.
 
-use std::io::Write;
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
@@ -60,6 +60,10 @@ pub struct GraphLast {
     pub graph_id: String,
     pub finished_at: u64,
     pub verified: usize,
+    #[serde(default)]
+    pub delivered: usize,
+    #[serde(default)]
+    proof_version: u8,
     pub stopped: bool,
     pub nodes: Vec<GraphNodeLast>,
 }
@@ -102,7 +106,32 @@ impl Store {
         if meta.len() > MAX_FILE {
             return Err("file is too large".into());
         }
-        std::fs::read_to_string(path).map_err(|e| e.to_string())
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_FLAG_OPEN_REPARSE_POINT: inspect the link, not its target.
+            options.custom_flags(0x0020_0000);
+        }
+        let file = options.open(path).map_err(|e| e.to_string())?;
+        let opened = file.metadata().map_err(|e| e.to_string())?;
+        if !opened.is_file() || opened.len() > MAX_FILE {
+            return Err("not a bounded regular file".into());
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_FILE + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > MAX_FILE {
+            return Err("file is too large".into());
+        }
+        String::from_utf8(bytes).map_err(|e| e.to_string())
     }
 
     fn ensure_private_dir(&self) -> Result<(), String> {
@@ -194,8 +223,13 @@ impl Store {
             .filter_map(|path| {
                 let text = Self::read(&path).ok()?;
                 let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-                if value.get("version").and_then(serde_json::Value::as_u64)
-                    != Some(u64::from(super::dag::VERSION))
+                if !value
+                    .get("version")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|v| {
+                        v == u64::from(super::dag::VERSION)
+                            || v == u64::from(super::dag::PROOF_VERSION)
+                    })
                 {
                     return None;
                 }
@@ -447,6 +481,12 @@ impl Store {
                 .iter()
                 .filter(|node| node.outcome == super::scheduler::Outcome::Verified)
                 .count(),
+            delivered: report
+                .nodes
+                .iter()
+                .filter(|node| node.outcome == super::scheduler::Outcome::Delivered)
+                .count(),
+            proof_version: 1,
             stopped: report.stopped,
             nodes: report
                 .nodes
@@ -470,10 +510,26 @@ impl Store {
             Ok(_) => {}
         }
         let text = Self::read(&path).map_err(|e| format!("Cannot read coding run summary: {e}"))?;
-        let summary: GraphLast =
+        let mut summary: GraphLast =
             serde_json::from_str(&text).map_err(|_| "Coding run summary is invalid")?;
         if summary.graph_id != id {
             return Err("Coding run summary belongs to another workflow".into());
+        }
+        // Historical service graph runs used DeliveryOnly for every job.
+        // They must not be shown as artifact/test-verified after upgrading.
+        if summary.proof_version == 0 {
+            for node in &mut summary.nodes {
+                if node.outcome == super::scheduler::Outcome::Verified {
+                    node.outcome = super::scheduler::Outcome::Delivered;
+                }
+            }
+            summary.delivered = summary
+                .nodes
+                .iter()
+                .filter(|node| node.outcome == super::scheduler::Outcome::Delivered)
+                .count();
+            summary.verified = 0;
+            summary.proof_version = 1;
         }
         Ok(Some(summary))
     }

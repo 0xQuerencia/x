@@ -1,12 +1,10 @@
-//! Hands-free wake word. Opt-in (`hex agent listen on`), local, and honest about what it
-//! does: while on, the microphone is open and each stretch of speech is transcribed on this
-//! machine. If it starts with a wake word ("Friday, start coding", or "Friday" and then the
-//! command) it becomes an X command, planned and approved exactly like a typed one. Anything
-//! else is dropped on the spot: never typed, never logged, never stored, never sent anywhere.
-//! It steps aside whenever a dictation is recording or transcribing.
+//! Local Linux hands-free speech capture. Wake-word mode routes explicit commands.
+//! Smart listening previews a small set of local actions without a wake word.
+//! Both pause when the dictation shortcut owns the microphone.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use x_agent::service::Mode;
@@ -35,8 +33,6 @@ const PRE_ROLL: Duration = Duration::from_millis(300);
 /// After a bare "Friday", how long the next utterance counts as the command.
 const ARMED_FOR: Duration = Duration::from_secs(8);
 
-static ENABLED: AtomicBool = AtomicBool::new(false);
-static LOADED: AtomicBool = AtomicBool::new(false);
 static STARTED: AtomicBool = AtomicBool::new(false);
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -46,58 +42,87 @@ fn file() -> Option<PathBuf> {
         .map(|dir| dir.join("x-wake-listen"))
 }
 
-pub fn enabled() -> bool {
-    if !LOADED.swap(true, Ordering::AcqRel) {
-        let on = file()
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .is_some_and(|text| text.trim() == "on");
-        ENABLED.store(on, Ordering::Release);
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ListenMode {
+    #[default]
+    Off,
+    Wake,
+    Smart,
+}
+
+impl ListenMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "off" => Some(Self::Off),
+            "on" => Some(Self::Wake),
+            "smart" => Some(Self::Smart),
+            _ => None,
+        }
     }
-    ENABLED.load(Ordering::Acquire)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct Setting {
+    mode: ListenMode,
+    revision: u64,
+}
+
+fn setting() -> MutexGuard<'static, Setting> {
+    static SETTING: OnceLock<Mutex<Setting>> = OnceLock::new();
+    SETTING
+        .get_or_init(|| {
+            let mode = file()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|text| ListenMode::parse(&text))
+                .unwrap_or_default();
+            Mutex::new(Setting { mode, revision: 0 })
+        })
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
 }
 
 pub(super) fn stop() {
     STOP.store(true, Ordering::Release);
 }
 
-/// `hex agent listen on|off|status`.
-pub(super) fn command(mode: &str) -> ControlReply {
-    match mode {
-        "status" => ControlReply::done(describe()),
-        "on" | "off" => {
-            let on = mode == "on";
-            if on && !cfg!(target_os = "linux") {
-                return ControlReply::error(
-                    "unsupported",
-                    "hands-free listening is only available on Linux so far",
-                );
-            }
-            let Some(path) = file() else {
-                return ControlReply::error("failed", "the data folder is unavailable");
-            };
-            if let Err(error) = super::write_private(&path, mode.as_bytes()) {
-                return ControlReply::error(
-                    "failed",
-                    format!("couldn't save the setting: {error}"),
-                );
-            }
-            LOADED.store(true, Ordering::Release);
-            ENABLED.store(on, Ordering::Release);
-            ControlReply::done(describe())
-        }
-        _ => ControlReply::error("usage", "listen is on, off or status"),
+/// `hex agent listen on|smart|off|status`.
+pub(super) fn command(value: &str) -> ControlReply {
+    let mut current = setting();
+    if value == "status" {
+        return ControlReply::done(describe(current.mode));
     }
+    let Some(mode) = ListenMode::parse(value) else {
+        return ControlReply::error("usage", "listen is on, smart, off or status");
+    };
+    if mode != ListenMode::Off && !cfg!(target_os = "linux") {
+        return ControlReply::error(
+            "unsupported",
+            "hands-free listening is only available on Linux",
+        );
+    }
+    let Some(path) = file() else {
+        return ControlReply::error("failed", "the data folder is unavailable");
+    };
+    if let Err(error) = super::write_private(&path, value.trim().as_bytes()) {
+        return ControlReply::error("failed", format!("couldn't save the setting: {error}"));
+    }
+    current.mode = mode;
+    current.revision = current.revision.wrapping_add(1);
+    ControlReply::done(describe(mode))
 }
 
-fn describe() -> String {
-    let words = x_agent::tools::wake_words().join(", ");
-    if enabled() {
-        format!(
-            "Hands-free listening is on: say {words} and a command. The microphone stays open; \
-             other speech is dropped, never typed, stored or sent"
-        )
-    } else {
-        format!("Hands-free listening is off (wake words: {words})")
+fn describe(mode: ListenMode) -> String {
+    match mode {
+        ListenMode::Off => "Hands-free listening is off".into(),
+        ListenMode::Wake => {
+            let words = x_agent::tools::wake_words().join(", ");
+            format!(
+                "Hands-free listening is on: say {words} and a command. Other speech is dropped"
+            )
+        }
+        ListenMode::Smart => "Smart listening is on. The microphone stays open while listening. \
+            Recognized local desktop commands appear in Agent for approval. Other speech is dropped"
+            .into(),
     }
 }
 
@@ -220,7 +245,7 @@ impl Segmenter {
 
 // ---- the listener ---------------------------------------------------------------------
 
-/// Starts the listener thread once. It does nothing until `hex agent listen on`.
+/// Starts the listener thread once. It waits until either listening mode is enabled.
 #[cfg(target_os = "linux")]
 pub(crate) fn start() {
     if STARTED.swap(true, Ordering::AcqRel) {
@@ -248,8 +273,20 @@ fn listen() {
     let mut wake = Wake::default();
     let mut warned = false;
     let mut last_state = "";
+    let mut last_setting = None;
     while !STOP.load(Ordering::Acquire) {
-        let (on, labs, busy) = (enabled(), crate::labs::x_agent(), dictation_busy());
+        let current = *setting();
+        if last_setting != Some(current) {
+            input = None;
+            segmenter.reset();
+            wake = Wake::default();
+            last_setting = Some(current);
+        }
+        let (on, labs, busy) = (
+            current.mode != ListenMode::Off,
+            crate::labs::x_agent(),
+            dictation_busy(),
+        );
         let engine = TranscriptionEngine::shared();
         let state = match (on, labs, busy, engine.is_some()) {
             (false, ..) => "off",
@@ -267,6 +304,7 @@ fn listen() {
             // Off, busy dictating, or the model is not ready: the microphone is released.
             input = None;
             segmenter.reset();
+            wake = Wake::default();
             std::thread::sleep(Duration::from_millis(500));
             continue;
         };
@@ -288,7 +326,7 @@ fn listen() {
                 let rate = open.sample_rate;
                 input = Some(open);
                 if let Some(clip) = segmenter.push(&samples, rate) {
-                    transcribe_and_act(&engine, clip, rate, &mut wake);
+                    transcribe_and_act(&engine, clip, rate, &mut wake, current);
                 }
             }
             AudioInputEvent::Timeout => input = Some(open),
@@ -306,12 +344,13 @@ fn transcribe_and_act(
     clip: Vec<f32>,
     rate: u32,
     wake: &mut Wake,
+    captured: Setting,
 ) {
     let clip = crate::dictation::resample_for_parakeet(&clip, rate);
     let ms = clip.len() / 16;
     let vad = crate::transcription::speech_detector::contains_speech(&clip);
-    // Logged but not used as a gate: the wake word is the filter, and the voice detector
-    // rejected real speech on some microphones.
+    // The voice detector rejected real speech on some microphones. Keep it
+    // diagnostic and let the selected command filter decide what to retain.
     tracing::info!(ms, ?vad, "hands-free utterance");
     let Some(selection) = engine.held_selection() else {
         return;
@@ -336,7 +375,23 @@ fn transcribe_and_act(
             return;
         }
     };
-    // Only what starts with a wake word survives this point. The text itself is never logged.
+    let current = setting();
+    if *current != captured
+        || STOP.load(Ordering::Acquire)
+        || !crate::labs::x_agent()
+        || crate::transcription::engine::dictation_busy()
+    {
+        return;
+    }
+    if current.mode == ListenMode::Smart {
+        // Keep the setting locked through local preview publication so disabling
+        // the listener cannot race a new preview after the command returns.
+        if super::service().preview_ambient_command(&text).is_err() {
+            tracing::debug!("ambient preview declined");
+        }
+        return;
+    }
+    drop(current);
     let heard = wake.hear(&text, Instant::now());
     tracing::info!(
         chars = text.chars().count(),
@@ -459,6 +514,15 @@ mod tests {
     fn at(secs: u64) -> Instant {
         static BASE: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         *BASE.get_or_init(Instant::now) + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn smart_listening_is_an_explicit_mode_and_keeps_existing_wake_settings() {
+        assert_eq!(ListenMode::default(), ListenMode::Off);
+        assert_eq!(ListenMode::parse("on\n"), Some(ListenMode::Wake));
+        assert_eq!(ListenMode::parse("smart"), Some(ListenMode::Smart));
+        assert_eq!(ListenMode::parse("off"), Some(ListenMode::Off));
+        assert_eq!(ListenMode::parse("unknown"), None);
     }
 
     #[test]

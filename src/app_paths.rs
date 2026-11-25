@@ -30,7 +30,9 @@ pub fn is_macos_test_build() -> bool {
 /// The name menus show, so a test build running beside Hex reads as itself.
 #[cfg(target_os = "macos")]
 pub fn app_name() -> &'static str {
-    if is_macos_test_build() {
+    if is_x_build() {
+        "X Preview"
+    } else if is_macos_test_build() {
         "Hex Test"
     } else {
         "Hex"
@@ -135,6 +137,15 @@ fn user_config_dir_in(home: &std::path::Path, test_build: bool) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn x_build_does_not_display_the_upstream_test_name() {
+        if is_x_build() {
+            assert_eq!(app_name(), "X Preview");
+            assert_eq!(support_dir().unwrap().file_name().unwrap(), "x");
+        }
+    }
 
     #[test]
     fn each_build_has_its_own_config_folder() {

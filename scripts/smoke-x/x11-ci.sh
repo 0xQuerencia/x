@@ -7,7 +7,7 @@ for program in Xvfb xvfb-run openbox xterm wmctrl xprop; do
     exit 1
   fi
 done
-xvfb-run -a -s "-screen 0 1280x800x24" bash -ec '
+xvfb-run -a -e /dev/stderr -s "-screen 0 1280x800x24" bash -ec '
   openbox --sm-disable > /tmp/x-smoke-openbox.log 2>&1 &
   wm_pid=$!
   trap "kill $wm_pid 2>/dev/null || true" EXIT

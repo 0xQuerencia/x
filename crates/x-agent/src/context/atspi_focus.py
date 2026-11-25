@@ -33,7 +33,7 @@ try:
     import gi
 
     gi.require_version("Atspi", "2.0")
-    from gi.repository import Atspi
+    from gi.repository import Atspi, GLib
 except Exception as e:  # missing python-gobject or at-spi2-core typelib
     out(error="AT-SPI bindings are not installed (%s)" % type(e).__name__)
 
@@ -62,9 +62,33 @@ SHOWING = Atspi.StateType.SHOWING
 FOCUSED = Atspi.StateType.FOCUSED
 EDITABLE = Atspi.StateType.EDITABLE
 
+roots = apps
+if PARAMS.get("active_window") is True:
+    # Some browsers mark documents in inactive frames as focused too.
+    # Inspect only the application's uniquely active top-level window.
+    roots = []
+    window_roles = (Atspi.Role.FRAME, Atspi.Role.DIALOG, Atspi.Role.WINDOW)
+    try:
+        for app in apps:
+            count = app.get_child_count()
+            if count > MAX_NODES:
+                out(error="the application has too many accessibility windows")
+            for index in range(count):
+                if time.monotonic() >= deadline:
+                    out(error="the active accessibility window could not be checked in time")
+                child = app.get_child_at_index(index)
+                if child is not None and child.get_role() in window_roles:
+                    states = child.get_state_set()
+                    if states.contains(Atspi.StateType.ACTIVE) and states.contains(SHOWING):
+                        roots.append(child)
+    except (AttributeError, TypeError, GLib.Error):
+        out(error="the active accessibility window could not be read")
+    if len(roots) != 1:
+        out(error="the application did not report one active accessibility window")
+
 # nodes[i] = (accessible, parent index, depth); depth-first, children in order.
 nodes = []
-stack = [(app, -1, 0) for app in reversed(apps)]
+stack = [(root, -1, 0) for root in reversed(roots)]
 focused = -1
 while stack and len(nodes) < MAX_NODES and time.monotonic() < deadline:
     node, parent, depth = stack.pop()

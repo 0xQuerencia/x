@@ -180,7 +180,7 @@ Steps:\n\
 {{\"do\":\"navigate\",\"url\":\"https://...\"}}  go to a public https page in this browser\n\
 {{\"do\":\"key\",\"key\":\"address|find|back|forward|reload|newtab|escape|tab|pagedown|pageup|enter\"}}\n\
 {{\"do\":\"scroll\",\"key\":\"pagedown|pageup\"}}\n\
-{{\"done\":true,\"evidence\":\"text that is visible on screen now and proves the goal\",\"summary\":\"...\"}}\n\
+{{\"done\":true,\"evidence\":\"a complete visible text field or control label that proves the goal\",\"summary\":\"...\"}}\n\
 {{\"ask\":\"question\"}} when more than one choice fits and the goal does not say which\n\
 {{\"fail\":\"why it cannot be done\"}}\n\
 Use only ids listed now. Enter works only right after typing in an address or search field. Do not send, \
@@ -272,22 +272,41 @@ fn rebind(desktop: &dyn Desktop, app: &str, win: &Win, host: &dyn Host) -> Resul
     Ok(now)
 }
 
+fn wait_interruptible(host: &dyn Host, duration: Duration) -> bool {
+    let start = Instant::now();
+    while !host.stopped() {
+        let remaining = duration.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            return true;
+        }
+        std::thread::sleep(remaining.min(Duration::from_millis(25)));
+    }
+    false
+}
+
 fn wait_for_window(desktop: &dyn Desktop, app: &str, host: &dyn Host) -> Result<Win, String> {
-    if let Ok(win) = desktop.find_window(app) {
+    if host.stopped() {
+        return Err("Stopped".into());
+    }
+    if let Some(win) = desktop.find_window_or_absent(app)? {
         return Ok(win);
+    }
+    if host.stopped() {
+        return Err("Stopped".into());
     }
     host.emit("action", &format!("Open {app}"));
     host.open_app(app)?;
     let start = Instant::now();
     loop {
-        std::thread::sleep(Duration::from_millis(500));
-        if host.stopped() {
+        if !wait_interruptible(host, Duration::from_millis(500)) {
             return Err("Stopped".into());
         }
-        match desktop.find_window(app) {
-            Ok(win) => return Ok(win),
-            Err(e) if start.elapsed() > Duration::from_secs(12) => return Err(e),
-            Err(_) => {}
+        match desktop.find_window_or_absent(app)? {
+            Some(win) => return Ok(win),
+            None if start.elapsed() > Duration::from_secs(12) => {
+                return Err(format!("No {app} window appeared"));
+            }
+            None => {}
         }
     }
 }
@@ -341,6 +360,7 @@ pub(crate) fn run_with(
     let start = Instant::now();
     let win = match wait_for_window(desktop, app, host) {
         Ok(win) => win,
+        Err(_) if host.stopped() => return Outcome::Cancelled,
         Err(e) => return Outcome::Failed(e),
     };
     let mut p = Progress {
@@ -397,6 +417,9 @@ pub(crate) fn run_with(
             return Outcome::Failed("Stopped: two steps in a row changed nothing".into());
         }
         p.acted_last = false;
+        if host.stopped() {
+            return Outcome::Cancelled;
+        }
         let step = decide(goal, app, &obs, &p.history);
         if host.stopped() {
             return Outcome::Cancelled;
@@ -421,11 +444,16 @@ pub(crate) fn run_with(
             Step::Fail(why) => return Outcome::Failed(format!("Cannot be done: {why}")),
             Step::Wait => {
                 p.history.push("(waited for the interface to load)".into());
-                std::thread::sleep(Duration::from_millis(750));
+                if !wait_interruptible(host, Duration::from_millis(750)) {
+                    return Outcome::Cancelled;
+                }
                 continue;
             }
-            Step::Done { evidence, summary } => {
-                if !obs.shows(&evidence) {
+            Step::Done {
+                evidence,
+                summary: _,
+            } => {
+                if !obs.shows_exact(&evidence) {
                     p.errors += 1;
                     host.emit("error", "Completion claimed without evidence on screen");
                     p.history
@@ -436,11 +464,7 @@ pub(crate) fn run_with(
                         .push("(done rejected: that was already visible before you acted)".into());
                 } else {
                     host.emit("verify", &format!("Found on screen: {evidence:?}"));
-                    return Outcome::Done(if summary.is_empty() {
-                        format!("Done. Saw {evidence:?}")
-                    } else {
-                        format!("{summary} (saw {evidence:?})")
-                    });
+                    return Outcome::Done(format!("Observed on screen: {evidence:?}"));
                 }
                 if p.errors >= limits.errors {
                     return Outcome::Failed("Stopped: could not verify the result".into());
@@ -451,8 +475,11 @@ pub(crate) fn run_with(
                     stale_retry_used = false;
                     p.acts += 1;
                     p.acted_last = true;
-                    std::thread::sleep(SETTLE);
+                    if !wait_interruptible(host, SETTLE) {
+                        return Outcome::Cancelled;
+                    }
                 }
+                Err(_) if host.stopped() => return Outcome::Cancelled,
                 Err(Refusal::Stop(reason)) => return Outcome::Failed(reason),
                 Err(Refusal::Retry(reason)) => {
                     p.typed_into_navigation = false;
@@ -551,9 +578,14 @@ fn act(
         obs.element(id)
             .ok_or_else(|| Refusal::Retry(format!("No control {id:?} on screen now")))
     };
-    let send = |action: &UiAct| match host.cancellation() {
-        Some(stop) => desktop.act_scoped(win, action, stop),
-        None => desktop.act(win, action),
+    let send = |action: &UiAct| {
+        if host.stopped() {
+            return Err("Stopped".into());
+        }
+        match host.cancellation() {
+            Some(stop) => desktop.act_scoped(win, action, stop),
+            None => desktop.act(win, action),
+        }
     };
     let mut typed_nav = false;
     let described = match &step {
@@ -618,9 +650,13 @@ fn act(
                     return Err(Refusal::Stop("Stopped".into()));
                 }
                 send(&ui).map_err(retry)?;
-                std::thread::sleep(KEY_GAP);
+                if !wait_interruptible(host, KEY_GAP) {
+                    return Err(Refusal::Stop("Stopped".into()));
+                }
             }
-            std::thread::sleep(PAGE_LOAD);
+            if !wait_interruptible(host, PAGE_LOAD) {
+                return Err(Refusal::Stop("Stopped".into()));
+            }
             format!("went to {url}")
         }
         Step::Done { .. } | Step::Ask(_) | Step::Fail(_) | Step::Wait => return Ok(()),

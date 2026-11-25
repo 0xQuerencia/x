@@ -73,6 +73,13 @@ hex agent autonomy autonomous          # optional: safe actions run without repe
 The Agent pane in the window (sidebar, while the Labs switch is on) does the same with
 buttons and shows the plan, steps, changed files, and event stream.
 
+App launches use exact installed application names, executable identities or
+desktop-entry IDs. Desktop search keywords can help identify an already open
+window, but do not name an application to launch. For example, a terminal's
+`bash` keyword and a settings app's `agent` keyword cannot claim those launch
+requests or shadow a saved workflow. The catalog regression uses both desktop
+entries and keeps exact-name launches available.
+
 **Voice routing.** The Agent pane controls the dictation shortcut's mode: Dictate, Actions,
 Work, Auto, or Smart. Auto only routes speech beginning with Friday or X. Smart asks the
 planner whether speech is a command. A planner error is reported and consumed; it is not
@@ -179,6 +186,63 @@ a stale project or changed commit is refused. The resulting worktree is left
 for inspection; it is **not merged or deleted automatically**. A green test
 exit only verifies that preset's process result, not the project as a whole.
 
+### Registered projects in Rune Work
+
+In Rune’s Agent → Work pane, **Browse projects** lists saved names from X's
+existing project registry, five per page. Selecting one uses the same
+validated registered-root selection as `hex agent projects use`; a stale,
+ambiguous or moved project is refused. The selection updates the shown
+workspace for future Work tasks, but does not run code, grant a coding agent
+access, or bypass normal approval. Project paths are shown only to the
+local user, never sent to a model by browsing.
+
+Project registration and alias editing remain in the existing CLI. Work
+must be idle before a project can be switched. A physical Rune smoke
+test is still needed to verify keyboard focus, layout and pagination.
+
+### Selecting existing OpenCode sessions in Rune
+
+The Work pane's **Find sessions** button asks the existing local OpenCode
+service for sessions scoped to the currently selected project. Up to six
+recent sessions are shown for selection; the CLI still lists all sessions.
+Selecting a listed session performs an **exact fresh provider lookup**
+before X records it, and refuses moved or disappeared sessions. Changing the
+project clears the Rune session list so stale selections are not implied
+valid. No session prompt or transcript is displayed, no job is started,
+and future Work sends still need approval.
+
+The lookup may take a few seconds and needs a running local OpenCode
+service. This is not a general process scanner, background session monitor,
+or automatic cross-project session switch. Real keyboard and layout
+acceptance in Rune remains pending.
+
+### Owner-supplied browser metadata in Rune Work
+
+Rune's Work pane offers **Review page handoff** for a URL and optional title
+typed by the owner. The same `plan_browser_page_to_session` validation and
+redaction used by the CLI binds this metadata to the currently selected
+OpenCode session with a new one-use Work approval. Browsing the project list
+or entering the URL does not send data, open a browser, read tabs or start
+code. The actual browser page body, cookies, screenshots and browser state
+are **not** captured. Confirm privacy, keyboard focus and review text on
+the actual Rune UI before treating the flow as release-ready.
+
+### Share selected browser text
+
+With a project and an OpenCode session selected, use a desktop keybinding for
+`hex agent send-browser-selection` while the browser has focus and text is
+selected. X requires a grant for that browser and `hex agent computer remote on`
+before reading through accessibility. It reads only from the application's
+active accessibility window and refuses when that window is ambiguous. It
+rejects missing or oversized selections and leaves the clipboard alone.
+
+Review the redacted excerpt and selected session in the Work preview.
+Approval rechecks the browser grant and window identity before handing the
+excerpt to OpenCode under the selection-only execution policy. Focus can
+move to X for review.
+This command shares selected text only. It leaves tabs, console logs, and
+screenshots untouched.
+
 ### Read-only recovery claim history
 
 `hex agent workflow claims` displays every locally recorded coding job's run
@@ -221,6 +285,32 @@ and changing the selected project still enters normal approval.
 
 Parsing is local: no generative planner or paid model is needed.
 Unrestricted requests to invent or register projects are not supported.
+
+### Owner-selected terminal output handoff
+
+X can attach a **bounded excerpt the user deliberately supplies** from a
+terminal to the currently selected OpenCode session. For example, after
+selecting a project and an existing OpenCode session:
+
+```sh
+hex agent send-terminal-output "cargo test: 1 failed; 98 passed"
+cargo test 2>&1 | hex agent send-terminal-output --stdin
+```
+
+The second command runs `cargo test` **in your shell**, not inside X. X
+reads at most 1201 bytes from standard input, refuses excerpts above 1200
+bytes, redacts common credential-like lines and labels the content as
+`terminal_output`, untrusted project evidence. Output with raw escape
+control characters is refused. It never watches a PTY, grabs terminal
+scrollback, runs a shell or adds execution privileges. Sending the excerpt
+to a selected OpenCode session still requires the normal **explicit Work
+approval**, including in Autonomous mode, and uses selection-only
+tools-disabled access. If the CLI is waiting for terminal input, finish the
+pipe or cancel it; X only reads stdin when `--stdin` was requested.
+
+Do not pipe secrets or full build logs blindly. Pattern redaction is best
+effort and is **not** a general data-loss prevention system; inspect the
+selected excerpt before approving it.
 
 ### Read-only workflow graph preview
 
@@ -271,6 +361,14 @@ prevents new dispatch but lets already-running siblings finish. Global Stop
 requests cancellation of every child; workers must cooperate with that token,
 and X does not claim that an unresponsive worker has been terminated.
 
+In the Agent panel, each queued or running coding job has its own Stop
+button. It requests cancellation of that exact reviewed job, not its siblings.
+A job waiting to start will not launch; a running job must acknowledge Stop
+and exit before its resource is released. Success/proof-dependent jobs remain
+blocked when their prerequisite is cancelled. Ordering-only edges can still
+release independent work. Global Stop still cancels the entire graph. A
+partially cancelled graph is not reported as fully completed.
+
 ### Approved Git worktree isolation (development)
 
 The new worktree manager can allocate a detached Git checkout at a verified
@@ -281,8 +379,10 @@ Git checkout configuration and filters still require explicit owner consent.
 
 Cleanup **requires a new owner approval**, rechecks ownership and Git identity,
 refuses tracked/untracked/ignored changes and never uses `--force`.
-The coding graph keeps each worktree for inspection after the run. Merging
-and cleanup require their own explicit action.
+The coding graph keeps each worktree for inspection after the run. Before
+launch, it rechecks both the pinned starting commit and clean worktree files;
+queued work does not silently inherit unapproved edits. Merging and cleanup
+require their own explicit action.
 
 ### Crash-safe DAG task claims (development)
 
@@ -309,8 +409,27 @@ and exit code 0 are both observed; it does not prove code correctness.
 A separate Git status check reports whether an exact project-relative file
 changed, not whether the resulting code works.
 
-Coding graphs currently use verified delivery. Their run summary reports how
-many jobs returned that evidence.
+Coding graphs currently use delivery-only evidence. The task and saved report
+label those nodes Delivered, not code-verified. Older saved coding graph
+summaries are read as delivery-only. Existing v2 requires edges retain their
+historical successful-delivery semantics; they do not establish that a
+predecessor produced a usable artifact or passed tests. Version 3 graphs may
+add `requires_verified` edges: delivery-only predecessors cannot release
+those jobs. Version 2 inputs retain their existing meaning. An OpenCode node may declare `required_change` with a project-relative file
+path. X previews the requirement and independently compares its owned checkout
+against the pinned base, including committed and untracked changes. Missing
+changes fail the node; unreadable evidence is Unverified. This is file-change
+proof, not proof of correctness, tests or handoff.
+
+A v3 OpenCode node can instead set `required_commit: true`. X verifies
+that the owned checkout ended at a new descendant commit, with a changed
+Git tree and no tracked or non-ignored uncommitted changes. It records the
+exact base and output commit IDs, project, run and node in the durable claim
+journal. `hex agent workflow claims` exposes that artifact evidence locally
+without revealing provider session IDs or prompts. The receipt binds this
+proof profile. X does not auto-commit, run tests, transfer the artifact to
+a successor's checkout, or merge it; those require separate implementation
+and approvals. Ignored build outputs are not part of the artifact.
 
 ### Verified worktree scheduling (development)
 
@@ -350,6 +469,28 @@ predecessors have verified delivery.
 Tests use isolated real Git worktrees and fixture provider executables to
 check approval, replay refusal, changed configuration, and dirty-checkout
 preservation. Code correctness requires separate verification.
+
+### Harness ownership and output evidence
+
+Dropping an owned coding run requests Stop and waits for its supervisor;
+failure to create that supervisor also cleans up the child. The process
+adapter bounds individual output frames and its reader queue, rejects
+unreadable or oversized frames, and retains only a short stderr tail.
+Once a structured session is acknowledged, later events cannot switch the
+run to a different session. A process that closes its output but needs
+forced termination is reported as failed even if its termination handler
+exits with code zero.
+
+Independent Git status evidence uses a deadline and a bounded, complete
+capture. Inherited checkout overrides, malformed porcelain records,
+duplicate paths and truncated helper output cannot become proof of a
+successful coding result. Status evidence still does not establish file
+contents or code correctness.
+
+Checks live in `harness::process::tests`, `harness::evidence::tests`,
+`opencode::tests` and `desktop::capture_limit_tests`. The disposable X11
+smoke test waits for its own test window to become readable before checking
+window operations; all later reads and observed effects remain required.
 
 ### Coding workflow result history (development)
 
@@ -402,13 +543,16 @@ update HEAD, the index or worktree files.
 
 X has a process-local, deny-by-default grant store for exact project metadata
 reads, individually approved harness tasks, and individually approved test
-runs. Task grants are tied to a project ID, run ID and node ID, expire after
-at most 60 seconds, and can be consumed **once only**. Harness grants also
-bind the exact typed job request and required verification profile, so an
-edited goal or weaker proof cannot reuse consent. Project metadata grants
-are shorter-lived and use-limited. Revocation or restarting X invalidates
-outstanding receipts. A grant cannot authorize deletion, merging, secret
-access, screen capture or external transfers.
+runs. Task grants are tied to a project ID, run ID and node ID and can be
+consumed **once only**. A reviewed coding graph grants each exact node up to
+30 minutes to wait for its dependencies after approval. A queued receipt cannot
+launch a process: the executor converts it to a launch receipt immediately
+before dispatch, valid for at most 60 seconds and never beyond the original
+queue deadline. Harness grants bind the exact typed job request and required
+verification profile, so an edited goal or weaker proof cannot reuse consent.
+Project metadata grants are time- and use-limited. Revocation or restarting X
+invalidates outstanding receipts. A grant cannot authorize deletion, merging,
+secret access, screen capture or external transfers.
 
 The existing approval action issues receipts for the exact coding graph
 shown in the preview. Autonomous mode still requires this approval. Receipt
@@ -504,6 +648,10 @@ harness versions and login information. The model configured in the chosen
 harness handles the approved run.
 
 ### Claude Code Work
+
+The capability report distinguishes workspace-writing OpenCode from tool-free
+Claude Code analysis. Claude Code Work explicitly previews prompt-only access;
+it cannot satisfy a required file-change proof. No tool flags are relaxed.
 
 With Claude Code 2 installed, choose a project, run `hex agent claude <goal>`,
 and approve the task. X uses Claude Code's own login and streams its structured
@@ -868,7 +1016,10 @@ Native Linux process-control tests should run only on an isolated test session.
   editors or file managers. Links and a small set of navigation buttons may be clicked;
   other buttons and consequential controls are refused. Remote models additionally
   require explicit `agent computer remote on`; on-screen context is redacted before
-  transmission.
+  transmission. Reviewed compound Actions plans can include a Computer subtask
+  followed by explicit app/window actions; a failed subtask stops the sequence.
+  Implicit focused typing cannot be combined with Computer steps, and coding
+  sessions still require separate Work approval.
 * **Local audit** records task approval, discard, Stop, and action outcomes in
   `x-action-ledger.ndjson` under X's data directory. The ledger stores task and
   step keys, source, risk, requirements and status. Task text, model output,

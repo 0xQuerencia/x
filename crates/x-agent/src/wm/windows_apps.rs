@@ -79,6 +79,7 @@ fn entry(link: &Path) -> Option<Entry> {
         exec: String::new(), // Windows .lnk target must be resolved by the OS.
         terminal: false,
         names,
+        keywords: Vec::new(),
         classes,
         categories,
     })

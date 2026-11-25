@@ -445,11 +445,10 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
-    /// Hands-free wake word, off by default: `on` keeps the microphone open and runs any
-    /// speech that starts with a wake word ("Friday, start coding") as an X command. Other
-    /// speech is dropped, never typed, stored or sent. `off` closes the microphone again.
+    /// Linux hands-free listening. `on` requires a wake word. `smart` previews local
+    /// desktop commands without one. `off` releases the microphone.
     Listen {
-        #[arg(value_parser = ["on", "off", "status"])]
+        #[arg(value_parser = ["on", "smart", "off", "status"])]
         mode: String,
         #[command(flatten)]
         output: Output,
@@ -507,6 +506,21 @@ pub enum AgentCommand {
         url: String,
         #[arg(long, default_value = "")]
         title: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Share owner-selected terminal stdout/stderr as untrusted Work context.
+    /// Use --stdin for up to 1200 bytes piped by the user; X runs no commands.
+    SendTerminalOutput {
+        #[arg(long)]
+        stdin: bool,
+        #[arg(num_args = 0..)]
+        text: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Preview the selected text in the focused, granted browser for OpenCode.
+    SendBrowserSelection {
         #[command(flatten)]
         output: Output,
     },
@@ -936,6 +950,9 @@ pub fn run(command: ControlCli) -> u8 {
                         output,
                     ),
                 },
+                AgentCommand::SendBrowserSelection { output } => {
+                    (AgentAction::SendBrowserSelection, output)
+                }
                 AgentCommand::Projects { command } => {
                     use super::ProjectCommand;
                     let (command, output) = match command {
@@ -980,6 +997,32 @@ pub fn run(command: ControlCli) -> u8 {
                 ),
                 AgentCommand::SendBrowserPage { url, title, output } => {
                     (AgentAction::SendBrowserPage { url, title }, output)
+                }
+                AgentCommand::SendTerminalOutput {
+                    stdin,
+                    text,
+                    output,
+                } => {
+                    use std::io::Read;
+                    let excerpt = if stdin {
+                        if !text.is_empty() {
+                            return fail("Use either --stdin or a literal excerpt");
+                        }
+                        let mut bytes = Vec::new();
+                        if std::io::stdin().take(1201).read_to_end(&mut bytes).is_err() {
+                            return fail("Cannot read the requested terminal input");
+                        }
+                        match String::from_utf8(bytes) {
+                            Ok(content) => content,
+                            Err(_) => return fail("Terminal output must be UTF-8 text"),
+                        }
+                    } else {
+                        text.join(" ")
+                    };
+                    if excerpt.is_empty() || excerpt.len() > 1200 {
+                        return fail("Choose 1-1200 bytes of terminal output");
+                    }
+                    (AgentAction::SendTerminalOutput { text: excerpt }, output)
                 }
                 AgentCommand::SendProjectFile {
                     path,

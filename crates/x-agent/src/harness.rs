@@ -38,12 +38,15 @@ pub enum Capability {
     StreamEvents,
     StopOwnedRun,
     ResumeOwnedSession,
+    WorkspaceWrite,
+    ToolFreeAnalysis,
 }
 
 pub(crate) const OPENCODE_OWNED_CAPABILITIES: &[Capability] = &[
     Capability::OwnedRun,
     Capability::StreamEvents,
     Capability::StopOwnedRun,
+    Capability::WorkspaceWrite,
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -54,6 +57,12 @@ pub struct Descriptor {
     pub version: Option<String>,
     /// Operations the adapter implements. Runtime readiness is probed separately.
     pub capabilities: &'static [Capability],
+}
+
+impl Descriptor {
+    pub fn supports_workspace_write(&self) -> bool {
+        self.capabilities.contains(&Capability::WorkspaceWrite)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]

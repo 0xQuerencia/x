@@ -13,7 +13,7 @@ use crate::workflows::harness_exec::{
     ApprovedHarnessExecutor, Assignment, Proof, approval_scope, to_kind,
 };
 use crate::workflows::recovery::{Claim, Journal, State};
-use crate::workflows::scheduler::{self, NodeUpdate, Outcome};
+use crate::workflows::scheduler::{self, JobStops, NodeUpdate, Outcome};
 use crate::worktrees::{Manager, OwnedWorktree};
 
 use super::edit::{step, task};
@@ -24,6 +24,7 @@ const PARALLEL_WORKERS: usize = 2;
 
 fn node_status(outcome: Outcome) -> &'static str {
     match outcome {
+        Outcome::Delivered => "delivered",
         Outcome::Verified => "done",
         Outcome::Failed => "failed",
         Outcome::Unverified => "unverified",
@@ -40,6 +41,12 @@ pub(super) struct PendingGraph {
     registry: Registry,
     journal: Arc<Journal>,
     jobs: Vec<PlannedJob>,
+}
+
+impl PendingGraph {
+    pub(super) fn job_stops(&self, root: &Cancellation) -> JobStops {
+        JobStops::new(self.graph.nodes.len(), root)
+    }
 }
 
 struct PlannedJob {
@@ -61,6 +68,7 @@ fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
             let status = match claim.state {
                 State::Claimed if delivery_observed => "delivery_observed",
                 State::Claimed => "possibly_delivered",
+                State::Delivered => "delivered",
                 State::Verified => "verified",
                 State::Failed => "failed",
                 State::Unverified => "unverified",
@@ -74,6 +82,7 @@ fn claim_status_preview(mut claims: Vec<Claim>) -> serde_json::Value {
                 "evidence_recorded": delivery_observed,
                 "requires_provider_check_before_retry": !delivery_observed,
                 "retry_blocked_by_delivery": delivery_observed,
+                "artifact": claim.artifact,
             })
         })
         .collect::<Vec<_>>();
@@ -190,14 +199,26 @@ impl Service {
                 projects.insert(project_id.clone(), (project, commit));
             }
             let (project, commit) = &projects[project_id];
+            let proof_note = if node.required_commit {
+                "required committed artifact".to_owned()
+            } else {
+                node.required_change.as_ref().map_or_else(
+                    || "delivery only".to_owned(),
+                    |path| format!("required file change: {path}"),
+                )
+            };
             let preview = step(
                 &format!(
-                    "{} · {} · {} at {commit} · {goal}",
+                    "{} · {} · {} at {commit} · {goal} · {proof_note}",
                     node.id,
                     kind.label(),
                     project.root.display()
                 ),
-                "shares the goal with the harness and uses a separate Git worktree",
+                if adapter.descriptor().supports_workspace_write() {
+                    "shares the goal and allows edits in a separate Git worktree"
+                } else {
+                    "shares the goal for tool-free analysis; no workspace edits"
+                },
             );
             steps.push(preview);
             jobs.push(PlannedJob {
@@ -212,7 +233,11 @@ impl Service {
             return Err(busy(state.phase));
         }
         state.serial += 1;
-        let preview = format!("Run coding workflow {} in {}", graph.name, base.display());
+        let preview = format!(
+            "Run coding workflow {} in {} (queued jobs may start for 30 minutes after approval)",
+            graph.name,
+            base.display()
+        );
         let mut task = task(state.serial, &preview, steps, None);
         task.phase = Phase::AwaitingApproval;
         state.graph_workflow = Some(PendingGraph {
@@ -238,6 +263,45 @@ impl Service {
         Ok(task)
     }
 
+    /// Request Stop for one exact step in the currently approved coding graph.
+    /// A stale panel, non-coding task, or already finished step has no authority.
+    pub fn cancel_coding_job(&self, task_id: u64, index: usize) -> Result<(), String> {
+        let mut state = self.lock();
+        if state.phase != Phase::Running || state.stop.requested() {
+            return Err("No running coding graph".into());
+        }
+        let active = state
+            .task
+            .as_ref()
+            .filter(|task| task.id == task_id)
+            .and_then(|task| task.steps.get(index))
+            .is_some_and(|step| matches!(step.status.as_str(), "pending" | "running"));
+        if !active {
+            return Err("No matching active coding job".into());
+        }
+        let stops = state
+            .active_graph_stops
+            .as_ref()
+            .ok_or("No running coding graph")?;
+        if !stops.request(index)? {
+            return Err("Stop was already requested for this job".into());
+        }
+        if let Some(step) = state
+            .task
+            .as_mut()
+            .and_then(|task| task.steps.get_mut(index))
+        {
+            step.status = "stopping".into();
+        }
+        audit_best_effort(&mut state, AuditKind::StopRequested, Some(index));
+        emit(
+            &mut state,
+            "info",
+            &format!("Stop requested for coding job {}", index + 1),
+        );
+        Ok(())
+    }
+
     pub(super) fn run_graph_workflow(&self, workflow: PendingGraph, stop: &Cancellation) {
         let result = self.run_approved_graph(&workflow, stop);
         match result {
@@ -254,7 +318,7 @@ impl Service {
                 let complete = report
                     .nodes
                     .iter()
-                    .filter(|node| node.outcome == Outcome::Verified)
+                    .filter(|node| node.outcome.completed())
                     .count();
                 for node in &report.nodes {
                     let status = node_status(node.outcome);
@@ -265,8 +329,14 @@ impl Service {
                     };
                     self.emit("verification", &detail);
                 }
+                let delivered = report
+                    .nodes
+                    .iter()
+                    .filter(|node| node.outcome == Outcome::Delivered)
+                    .count();
+                let verified = complete - delivered;
                 let summary = format!(
-                    "{complete}/{} jobs returned verified delivery",
+                    "{complete}/{} jobs completed: {delivered} delivery-only, {verified} with additional proof",
                     report.nodes.len()
                 );
                 let phase = if report.stopped || stop.requested() {
@@ -291,6 +361,11 @@ impl Service {
         stop: &Cancellation,
     ) -> Result<scheduler::Report, String> {
         stop.check()?;
+        let stops = self
+            .lock()
+            .active_graph_stops
+            .clone()
+            .ok_or("Coding graph cancellation scopes are unavailable")?;
         let mut checked = HashSet::new();
         for job in &workflow.jobs {
             if checked.insert(job.project.id) {
@@ -330,11 +405,11 @@ impl Service {
         }
 
         let executor = self.approved_graph_executor(workflow, &worktrees, run, stop)?;
-        scheduler::run_observed(
+        scheduler::run_observed_scoped(
             &workflow.graph,
             &workflow.home,
             Arc::new(executor),
-            stop,
+            &stops,
             PARALLEL_WORKERS,
             |index, update| {
                 let status = match update {
@@ -365,12 +440,18 @@ impl Service {
                 .zip(&workflow.jobs)
                 .zip(worktrees)
             {
-                let proof = Proof::DeliveryOnly;
+                let proof = if node.required_commit {
+                    Proof::CommittedArtifact
+                } else {
+                    node.required_change
+                        .as_ref()
+                        .map_or(Proof::DeliveryOnly, |path| Proof::ChangedFile(path.clone()))
+                };
                 let scope = approval_scope(node, job.project.id, tree, &proof)?;
                 let receipt = grants.issue(
-                    Permission::StartHarness,
+                    Permission::QueueHarness,
                     scope,
-                    Duration::from_secs(60),
+                    Duration::from_secs(30 * 60),
                     1,
                     true,
                 )?;
@@ -386,6 +467,7 @@ impl Service {
             }
             drop(state);
             stop.check()?;
+            let service = self.clone();
             ApprovedHarnessExecutor::new(
                 &workflow.graph,
                 run,
@@ -393,6 +475,14 @@ impl Service {
                 Arc::clone(&workflow.manager),
                 Arc::clone(&workflow.journal),
             )
+            .map(|executor| {
+                executor.with_activity(Arc::new(move |node, attempt, kind| {
+                    service.emit(
+                        "workflow_activity",
+                        &format!("{run} / {node} / attempt {attempt}: {}", kind.as_str()),
+                    );
+                }))
+            })
         })();
         if result.is_err() {
             for id in workflow
@@ -424,6 +514,7 @@ mod reconciliation_tests {
                 attempt: 1,
                 state: State::Claimed,
                 evidence_id: Some("ses_private_provider_id".into()),
+                artifact: None,
             },
             Claim {
                 run_id,
@@ -432,6 +523,7 @@ mod reconciliation_tests {
                 attempt: 1,
                 state: State::Claimed,
                 evidence_id: None,
+                artifact: None,
             },
         ];
         let preview = reconciliation_preview(claims);
@@ -459,6 +551,7 @@ mod reconciliation_tests {
                 attempt: 2,
                 state: State::Failed,
                 evidence_id: Some("ses_private".into()),
+                artifact: None,
             },
             Claim {
                 run_id: run,
@@ -467,6 +560,7 @@ mod reconciliation_tests {
                 attempt: 1,
                 state: State::Verified,
                 evidence_id: Some("provider_secret".into()),
+                artifact: None,
             },
         ];
         let report = claim_status_preview(claims);
