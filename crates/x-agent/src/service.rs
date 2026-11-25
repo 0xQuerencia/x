@@ -33,6 +33,7 @@ mod integration;
 mod launch;
 mod ledger;
 mod lifecycle;
+mod mixed_proposal;
 mod notices;
 mod planning;
 mod policy;
