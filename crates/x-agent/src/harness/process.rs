@@ -18,13 +18,17 @@ const KILL_GRACE: Duration = Duration::from_secs(5);
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const OUTPUT_QUEUE: usize = 32;
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 mod closure;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(all(unix, not(target_os = "linux")))]
 mod unix;
 #[cfg(windows)]
 mod windows;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
+use linux::ChildGuard;
+#[cfg(all(unix, not(target_os = "linux")))]
 use unix::ChildGuard;
 #[cfg(windows)]
 use windows::ChildGuard;
@@ -201,14 +205,14 @@ fn supervise(
     let (mut errors, mut stderr_tail): (Vec<String>, Vec<String>) = (vec![], vec![]);
     let mut accepted_session = None;
     let mut terminal = false;
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let mut exited_at = None::<Instant>;
     while open > 0 && !stop.requested() {
         // An exited root can leave inherited pipe handles in a live descendant.
-        // EOF alone must not keep the supervisor outside its native Job cleanup.
+        // EOF alone must not keep the supervisor outside its native process cleanup.
         // The running provider has no new total deadline; only its post-exit
         // output drain is bounded. Check even while descendants emit output.
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         match owned.observe_exit() {
             Ok(true) => {
                 let ended = exited_at.get_or_insert_with(Instant::now);
