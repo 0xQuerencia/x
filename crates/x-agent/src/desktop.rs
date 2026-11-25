@@ -232,6 +232,10 @@ pub enum UiAct {
 
 pub trait Desktop: Send + Sync {
     fn find_window(&self, app: &str) -> Result<Win, String>;
+    /// Only a confirmed absence permits launching another window.
+    fn find_window_or_absent(&self, app: &str) -> Result<Option<Win>, String> {
+        self.find_window(app).map(Some)
+    }
     fn observe(&self, win: &Win) -> Result<Observation, String>;
     fn act(&self, win: &Win, act: &UiAct) -> Result<(), String>;
 
@@ -423,7 +427,15 @@ fn focus_window(win: &Win) -> Result<(), String> {
 
 impl Desktop for AgentDesktop {
     fn find_window(&self, app: &str) -> Result<Win, String> {
+        self.find_window_or_absent(app)?
+            .ok_or_else(|| format!("No {app} window is open"))
+    }
+
+    fn find_window_or_absent(&self, app: &str) -> Result<Option<Win>, String> {
         let mut found = windows_of(app)?;
+        if found.is_empty() {
+            return Ok(None);
+        }
         if found.len() > 1 {
             let active = active_address();
             found.retain(|w| Some(&w.address) == active.as_ref());
@@ -460,7 +472,7 @@ impl Desktop for AgentDesktop {
             .and_then(|w| w.get("id")?.as_str())
             .ok_or("The window has no accessibility tree (is accessibility on for this app?)")?;
         win.id = id.to_string();
-        Ok(win)
+        Ok(Some(win))
     }
 
     fn observe(&self, win: &Win) -> Result<Observation, String> {
