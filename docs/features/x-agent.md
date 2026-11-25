@@ -210,6 +210,18 @@ task checkout. Once Git actually starts, Stop cannot safely interrupt a branch
 update; Stop can cancel the pending approval or stop before the Git call.
 Inspect the primary checkout manually if Git reports an incomplete operation.
 
+### Natural project voice selection
+
+X recognizes deterministic registered-project phrases such as `work on
+project X`, `let's work on project X`, `switch back to project X`,
+`find my project X`, and `show my projects`. They use the same exact
+registered name/alias resolution as `use project X`: ambiguous names
+require an ID; unknown names do not become arbitrary filesystem paths,
+and changing the selected project still enters normal approval.
+
+Parsing is local: no generative planner or paid model is needed.
+Unrestricted requests to invent or register projects are not supported.
+
 ### Read-only workflow graph preview
 
 Run `hex agent workflow preview <id>` to validate a saved workflow or v2

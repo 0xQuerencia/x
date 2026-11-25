@@ -29,14 +29,24 @@ pub(super) fn parse(input: &str) -> Option<Command> {
     let normalized = spoken.trim_end_matches(['.', '?']).trim_end();
     let lower = normalized.to_lowercase();
     match lower.as_str() {
-        "list projects" | "list registered projects" => return Some(Command::Projects),
+        "list projects"
+        | "list registered projects"
+        | "show my projects"
+        | "show registered projects"
+        | "what projects do i have" => return Some(Command::Projects),
         "list saved sessions" => return Some(Command::SavedSessions),
         _ => {}
     }
     for (prefix, command) in [
         ("find project ", Command::Find as fn(String) -> Command),
+        ("find my project ", Command::Find),
         ("use project ", Command::Select),
+        ("select project ", Command::Select),
+        ("work on project ", Command::Select),
+        ("let's work on project ", Command::Select),
         ("switch to project ", Command::Select),
+        ("switch back to project ", Command::Select),
+        ("set project to ", Command::Select),
         ("open project ", Command::Open),
         ("resume opencode session ", Command::Resume),
         ("resume session ", Command::Resume),
@@ -265,6 +275,49 @@ impl Service {
                     "done",
                     format!("Verified and selected OpenCode session {id}"),
                 ))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod spoken_project_command_tests {
+    use super::{Command, parse};
+
+    #[test]
+    fn common_project_phrases_have_explicit_deterministic_targets() {
+        for phrase in [
+            "Friday, work on project X",
+            "Friday, let's work on project X.",
+            "switch back to project X",
+            "set project to X",
+            "select project X",
+        ] {
+            assert!(
+                matches!(parse(phrase), Some(Command::Select(ref query)) if query == "X"),
+                "{phrase}"
+            );
+        }
+        for phrase in ["show my projects", "what projects do I have?"] {
+            assert!(matches!(parse(phrase), Some(Command::Projects)), "{phrase}");
+        }
+        assert!(
+            matches!(parse("find my project X"), Some(Command::Find(ref query)) if query == "X")
+        );
+    }
+
+    #[test]
+    fn unrelated_or_incomplete_phrases_never_become_project_actions() {
+        for phrase in [
+            "work on the project later",
+            "open a browser",
+            "find project files",
+            "switch to workspace 3",
+        ] {
+            // A partially matching phrase may produce a project lookup, but
+            // it cannot execute without resolving a registered exact alias.
+            if let Some(Command::Open(_)) | Some(Command::Select(_)) = parse(phrase) {
+                panic!("An unrelated phrase became a project mutation: {phrase}");
             }
         }
     }
