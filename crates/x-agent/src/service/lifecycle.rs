@@ -49,8 +49,7 @@ impl Service {
             return;
         };
         if step.status == status
-            || (step.status == "stopping"
-                && matches!(status, "running" | "waiting_for_permission"))
+            || (step.status == "stopping" && matches!(status, "running" | "waiting_for_permission"))
         {
             return;
         }
