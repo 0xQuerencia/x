@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn stat_parses_parentheses_and_keeps_multithreaded_zombies_active() {
-        let mut fields = vec!["0"; 18];
+        let mut fields = ["0"; 18];
         fields[0] = "Z";
         fields[2] = "99";
         fields[17] = "2";
@@ -218,6 +218,24 @@ mod tests {
         let result = guard.finish(&stop, false);
         assert_eq!(result.exit_code, Some(0));
         assert!(result.failure.is_none());
+    }
+
+    #[test]
+    fn stop_keeps_other_owned_groups_running() {
+        let stop = Cancellation::default();
+        let mut first = Command::new("sleep");
+        first.arg("30");
+        let mut second = Command::new("sleep");
+        second.arg("30");
+        let mut first = ChildGuard::spawn(&mut first, &stop, Arc::new(|_| {})).unwrap();
+        let mut second = ChildGuard::spawn(&mut second, &stop, Arc::new(|_| {})).unwrap();
+        let first_stop = stop.child();
+        first_stop.request();
+        let result = first.finish(&first_stop, false);
+        assert!(result.failure.is_none());
+        assert!(!second.observe_exit().unwrap());
+        stop.request();
+        second.finish(&stop, false);
     }
 
     #[test]
