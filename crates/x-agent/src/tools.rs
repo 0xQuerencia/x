@@ -150,7 +150,7 @@ pub enum Action {
         directory: String,
     },
     /// Operates one app's window by reading its accessibility tree: click, type, navigate,
-    /// verify. It must be the only step and always needs the person's scoped permission.
+    /// verify. Always needs the person's scoped permission.
     Computer {
         app: String,
         goal: String,
@@ -1316,14 +1316,25 @@ pub fn parse_reply(raw: &str) -> Result<Reply, String> {
         return Ok(Reply::Dictation);
     }
     let actions = parse_plan_json(raw)?;
-    if actions.len() > 1
-        && actions
-            .iter()
-            .any(|a| matches!(a, Action::Session { .. } | Action::Computer { .. }))
-    {
-        return Err("A session or computer step must be the only step".into());
-    }
+    validate_sequence(&actions)?;
     Ok(Reply::Steps(actions))
+}
+
+/// Check the whole sequence for cross-step constraints, even for a typed
+/// planner that did not use the JSON parser.
+pub(crate) fn validate_sequence(actions: &[Action]) -> Result<(), String> {
+    if actions.len() > MAX_STEPS {
+        return Err("Planner exceeded maximum allowed steps".into());
+    }
+    if actions.len() > 1 && actions.iter().any(|a| matches!(a, Action::Session { .. })) {
+        return Err("A session step must be the only step".into());
+    }
+    if actions.iter().any(|a| matches!(a, Action::Computer { .. }))
+        && actions.iter().any(|a| matches!(a, Action::Type { .. }))
+    {
+        return Err("Computer sequences cannot contain unbound focused typing".into());
+    }
+    Ok(())
 }
 
 /// Parse untrusted planner JSON (`{"steps":[...]}`) into validated actions.
