@@ -231,7 +231,10 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         assert!(guard.observe_exit().unwrap());
-        assert!(matches!(group_state(guard.child.id() as i32), State::Active));
+        assert!(matches!(
+            group_state(guard.child.id() as i32),
+            State::Active
+        ));
         let result = guard.finish(&stop, false);
         assert_eq!(result.exit_code, Some(0));
         assert!(result.failure.is_some());
