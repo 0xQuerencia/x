@@ -46,6 +46,9 @@ pub struct Node {
     /// Version 3: require additional proof, not merely successful delivery.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires_verified: Vec<String>,
+    /// Version 3: require an observed change to this exact relative Git path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_change: Option<String>,
     pub job: Job,
     #[serde(default)]
     pub on_failure: OnFailure,
@@ -85,6 +88,7 @@ impl Graph {
                     after,
                     requires: step.requires,
                     requires_verified: vec![],
+                    required_change: None,
                     job: Job::Desktop {
                         action: step.action,
                     },
@@ -118,6 +122,14 @@ impl Graph {
         for node in &self.nodes {
             if !slug(&node.id) || !ids.insert(node.id.as_str()) {
                 return Err("Graph nodes require unique safe IDs".into());
+            }
+            if let Some(path) = &node.required_change {
+                if self.version != PROOF_VERSION
+                    || !matches!(&node.job, Job::Harness { harness: HarnessKind::OpenCode, .. })
+                    || !crate::verification::valid_expected_path(path)
+                {
+                    return Err("Required file change needs a safe v3 OpenCode proof path".into());
+                }
             }
             if self.version == VERSION && !node.requires_verified.is_empty() {
                 return Err("Verified dependency edges require graph version 3".into());
@@ -345,6 +357,7 @@ mod tests {
             after: vec![],
             requires: vec!["first".into(), "second".into()],
             requires_verified: vec![],
+            required_change: None,
             job: Job::Desktop {
                 action: StepAction::SwitchWorkspace { workspace: 4 },
             },
