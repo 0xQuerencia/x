@@ -2328,6 +2328,7 @@ echo '{"type":"step_finish","sessionID":"ses_graph_fixture","part":{"type":"step
         after: vec![],
         requires,
         requires_verified: vec![],
+        required_change: None,
         job: Job::Harness {
             harness,
             project_id: project.id.to_string(),
