@@ -586,6 +586,11 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
             s.iter()
                 .any(|s| matches!(s.as_str(), Some("hidden" | "disabled" | "offscreen")))
         });
+    // Inaccessible containers cannot supply actionable descendants.
+    if hidden {
+        return;
+    }
+    let protected = role.contains("password") || mentions(&name, SECRET_WORDS);
     let actions: Vec<String> = node
         .get("available_actions")
         .and_then(Value::as_array)
@@ -596,7 +601,7 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
         .map(String::from)
         .collect();
     let reference = str_of("ref_id");
-    if !hidden && !SKIP_ROLES.contains(&role.as_str()) {
+    if !SKIP_ROLES.contains(&role.as_str()) {
         let keep_control = !reference.is_empty()
             && !actions.is_empty()
             && (!name.is_empty() || role == "textfield")
@@ -620,7 +625,8 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
                 },
                 actions,
             });
-        } else if !name.is_empty()
+        } else if !protected
+            && !name.is_empty()
             && name != parent_name
             && matches!(
                 role.as_str(),
@@ -630,6 +636,10 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
         {
             obs.texts.push(name.clone());
         }
+    }
+    // Retain the protected field marker, but never expose its subtree.
+    if protected {
+        return;
     }
     for child in node
         .get("children")
