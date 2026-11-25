@@ -172,6 +172,7 @@ pub(crate) fn run_observed(
                     .after
                     .iter()
                     .chain(&node.requires)
+                    .chain(&node.requires_verified)
                     .all(|dependency| finished[ids[dependency.as_str()]].is_some());
                 if !all_finished {
                     continue;
@@ -179,9 +180,16 @@ pub(crate) fn run_observed(
                 let required_ok = node.requires.iter().all(|dependency| {
                     finished[ids[dependency.as_str()]].is_some_and(Outcome::completed)
                 });
-                if !required_ok {
+                let proof_ok = node.requires_verified.iter().all(|dependency| {
+                    finished[ids[dependency.as_str()]] == Some(Outcome::Verified)
+                });
+                if !required_ok || !proof_ok {
                     finished[index] = Some(Outcome::Skipped);
-                    notes[index] = "Required predecessor did not complete".into();
+                    notes[index] = if !proof_ok {
+                        "Required predecessor has no additional verification proof".into()
+                    } else {
+                        "Required predecessor did not complete".into()
+                    };
                     observe(index, NodeUpdate::Finished(Outcome::Skipped));
                     progressed = true;
                     continue;
@@ -377,6 +385,7 @@ mod tests {
             id: id.into(),
             after: vec![],
             requires: requires.iter().map(|text| (*text).into()).collect(),
+            requires_verified: vec![],
             job: Job::Harness {
                 harness: HarnessKind::OpenCode,
                 project_id: project_id.into(),
@@ -455,6 +464,26 @@ mod tests {
         .unwrap();
         assert_eq!(report.max_concurrent, 2);
         assert_eq!(mock.peak.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn proof_edge_does_not_accept_delivery_only() {
+        let a = uuid::Uuid::new_v4().to_string();
+        let b = uuid::Uuid::new_v4().to_string();
+        let mut graph = graph(&a, &b);
+        graph.version = super::super::dag::PROOF_VERSION;
+        graph.nodes[1].requires_verified = vec!["front".into()];
+        let report = run(
+            &graph,
+            Path::new("/tmp"),
+            Arc::new(Mock::new(Outcome::Delivered)),
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
+        assert_eq!(report.nodes[0].outcome, Outcome::Delivered);
+        assert_eq!(report.nodes[1].outcome, Outcome::Skipped);
+        assert!(report.nodes[1].reason.contains("verification proof"));
     }
 
     #[test]
