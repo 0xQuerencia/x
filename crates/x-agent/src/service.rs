@@ -1313,8 +1313,15 @@ impl Service {
                     ),
                     None => format!("Run {} in {}", options.work_harness.label(), ws.display()),
                 };
+                let access = if options.work_harness == harness::Kind::ClaudeCode
+                    || options.work_access == harness::WorkAccess::SelectionOnly
+                {
+                    "tool-free analysis of the supplied prompt; no workspace edits"
+                } else {
+                    "can modify files in this folder"
+                };
                 let steps = vec![
-                    step(&description, "can modify files in this folder"),
+                    step(&description, access),
                     step("Stream agent activity", ""),
                     step("Report exit status and changed files", ""),
                 ];
@@ -1351,7 +1358,11 @@ impl Service {
             workspace,
             session: options.session,
             accepted_session: None,
-            work_access: options.work_access,
+            work_access: if options.work_harness == harness::Kind::ClaudeCode {
+                harness::WorkAccess::SelectionOnly
+            } else {
+                options.work_access
+            },
             work_harness: (mode == Mode::Work).then_some(options.work_harness),
             blocked: vec![],
             edit: None,
