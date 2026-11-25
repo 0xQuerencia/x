@@ -68,7 +68,12 @@ impl Manager {
         }
         let status = git(
             &path,
-            &["status", "--porcelain=v1", "--untracked-files=all", "--ignored"],
+            &[
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--ignored",
+            ],
         )?;
         if !status.trim().is_empty() {
             return Err("The task worktree is not clean at its approved starting commit".into());
