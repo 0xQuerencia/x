@@ -19,6 +19,8 @@ use crate::cancellation::Cancellation;
 
 const POLL: Duration = Duration::from_millis(200);
 const KILL_GRACE: Duration = Duration::from_secs(5);
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
+const OUTPUT_QUEUE: usize = 32;
 
 pub(crate) struct Spec {
     pub name: &'static str,
@@ -200,18 +202,53 @@ enum Line {
     Out(String),
     Err(String),
     Closed,
+    ReadError,
 }
 
-fn pump(stream: impl std::io::Read + Send + 'static, out: bool, tx: mpsc::Sender<Line>) {
-    thread::spawn(move || {
-        for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            let _ = tx.send(if out {
-                Line::Out(line)
-            } else {
-                Line::Err(line)
-            });
+fn read_frame(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
+    let mut bytes = Vec::new();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if bytes.is_empty() {
+                return Ok(None);
+            }
+            break;
         }
-        let _ = tx.send(Line::Closed);
+        let newline = available.iter().position(|&byte| byte == b'\n');
+        let count = newline.map_or(available.len(), |index| index + 1);
+        if bytes.len() + count > MAX_FRAME_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Harness output frame exceeds limit",
+            ));
+        }
+        bytes.extend_from_slice(&available[..count]);
+        reader.consume(count);
+        if newline.is_some() {
+            break;
+        }
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
+fn pump(stream: impl std::io::Read + Send + 'static, out: bool, tx: mpsc::SyncSender<Line>) {
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stream);
+        loop {
+            let message = match read_frame(&mut reader) {
+                Ok(Some(line)) if out => Line::Out(line),
+                Ok(Some(line)) => Line::Err(line),
+                Ok(None) => Line::Closed,
+                Err(_) => Line::ReadError,
+            };
+            let end = matches!(message, Line::Closed | Line::ReadError);
+            if tx.send(message).is_err() || end {
+                break;
+            }
+        }
     });
 }
 
@@ -222,7 +259,7 @@ fn supervise(
     stop: &Cancellation,
     on_event: EventSink,
 ) -> RunResult {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::sync_channel(OUTPUT_QUEUE);
     if let Some(s) = child.stdout.take() {
         pump(s, true, tx.clone());
     }
@@ -250,9 +287,15 @@ fn supervise(
             }
             Err(RecvTimeoutError::Disconnected) => break,
             Ok(Line::Closed) => open -= 1,
+            Ok(Line::ReadError) => {
+                let message = "Harness output exceeded its frame limit or could not be read";
+                errors.push(message.into());
+                on_event(Event::new(EventKind::Error, message.into()));
+                break;
+            }
             Ok(Line::Err(l)) => {
                 (last, stalled) = (Instant::now(), false);
-                stderr_tail.push(l.trim().to_string());
+                stderr_tail.push(l.trim().chars().take(450).collect());
                 if stderr_tail.len() > 5 {
                     stderr_tail.remove(0);
                 }
@@ -299,6 +342,7 @@ fn supervise(
             }
         }
     }
+    drop(rx);
     let exit_code = if stop.requested() || !errors.is_empty() {
         terminate(child);
         child.wait().ok().and_then(|s| s.code())
@@ -352,4 +396,28 @@ fn wait_with_grace(child: &mut Child, stop: &Cancellation) -> Option<std::proces
         thread::sleep(Duration::from_millis(50));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_are_bounded_before_allocating_unlimited_output() {
+        let mut input = std::io::Cursor::new(vec![b'a'; MAX_FRAME_BYTES + 1]);
+        assert_eq!(
+            read_frame(&mut input).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn frames_preserve_partial_final_lines_and_reject_invalid_utf8() {
+        let mut input = std::io::Cursor::new(b"one\ntwo");
+        assert_eq!(read_frame(&mut input).unwrap().as_deref(), Some("one\n"));
+        assert_eq!(read_frame(&mut input).unwrap().as_deref(), Some("two"));
+        assert_eq!(read_frame(&mut input).unwrap(), None);
+        let mut invalid = std::io::Cursor::new([0xff]);
+        assert!(read_frame(&mut invalid).is_err());
+    }
 }
