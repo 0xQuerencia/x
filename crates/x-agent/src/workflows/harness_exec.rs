@@ -763,7 +763,10 @@ mod tests {
         let events = Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = Arc::clone(&events);
         let runner = Arc::new(runner.with_activity(Arc::new(move |node, attempt, kind| {
-            captured.lock().unwrap().push((node.to_owned(), attempt, kind));
+            captured
+                .lock()
+                .unwrap()
+                .push((node.to_owned(), attempt, kind));
         })));
         scheduler::run(
             &graph,
