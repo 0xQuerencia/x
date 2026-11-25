@@ -1177,6 +1177,23 @@ impl Service {
         }
     }
 
+    /// Revalidate the exact model selected for a running computer task.
+    fn screen_decision_permission(
+        &self,
+        planner: &Arc<dyn Planner>,
+        app: &str,
+    ) -> Result<bool, String> {
+        let current = self.planner.lock().ok().and_then(|p| p.clone());
+        if !current.as_ref().is_some_and(|p| Arc::ptr_eq(p, planner)) {
+            return Err("The selected model changed during computer use".into());
+        }
+        let state = self.lock();
+        if !planner.is_local() && !state.computer_remote {
+            return Err("Remote computer consent was revoked".into());
+        }
+        Ok(state.computer_remote && state.computer_apps.iter().any(|name| name == app))
+    }
+
     /// Preview a fresh project folder before creating it or starting Work.
     fn plan_session(&self, goal: &str, options: PlanOptions) -> Result<Task, String> {
         let root = match self.session_root.lock().ok().and_then(|r| r.clone()) {
@@ -1689,12 +1706,12 @@ impl Service {
                     .map(drop)
             }
         }
-        if let Err(why) = self.check_screen_may_leave() {
-            return crate::computer::Outcome::Failed(why);
-        }
         let Some(planner) = self.planner.lock().ok().and_then(|p| p.clone()) else {
             return crate::computer::Outcome::Failed("No model is set".into());
         };
+        if let Err(why) = self.screen_decision_permission(&planner, app) {
+            return crate::computer::Outcome::Failed(why);
+        }
         let desktop = self
             .desktop
             .lock()
@@ -1707,15 +1724,13 @@ impl Service {
             &|goal, app, observation, history| {
                 // A one-task approval permits accessibility text, not pixels.
                 // Remote vision also requires a persistent per-app grant.
-                let vision_allowed = {
-                    let state = self.lock();
-                    state.computer_remote && state.computer_apps.iter().any(|name| name == app)
-                };
+                let vision_allowed = self.screen_decision_permission(&planner, app)?;
                 if let Some(decision) =
                     planner.decide_computer(goal, app, observation, history, vision_allowed)
                 {
                     decision
                 } else {
+                    self.screen_decision_permission(&planner, app)?;
                     let prompt = crate::computer::prompt(goal, app, observation, history);
                     planner
                         .complete(&prompt)
