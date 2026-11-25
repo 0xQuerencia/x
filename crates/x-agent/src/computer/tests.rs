@@ -464,3 +464,30 @@ fn editor_cannot_use_browser_keys() {
     assert!(click_allowed("menuitem", "Dark Theme"));
     assert!(!click_allowed("menuitem", "Delete the project"));
 }
+
+#[test]
+fn an_ambiguous_window_is_not_treated_as_an_absent_app() {
+    struct Ambiguous;
+    impl Desktop for Ambiguous {
+        fn find_window(&self, _: &str) -> Result<Win, String> {
+            Err("Several windows are open".into())
+        }
+        fn observe(&self, _: &Win) -> Result<Observation, String> {
+            panic!("must not observe an ambiguous window")
+        }
+        fn act(&self, _: &Win, _: &UiAct) -> Result<(), String> {
+            panic!("must not act on an ambiguous window")
+        }
+    }
+    struct NoLaunch;
+    impl Host for NoLaunch {
+        fn emit(&self, _: &str, _: &str) {}
+        fn stopped(&self) -> bool {
+            false
+        }
+        fn open_app(&self, _: &str) -> Result<(), String> {
+            panic!("must not launch on a lookup error")
+        }
+    }
+    assert!(wait_for_window(&Ambiguous, "chrome", &NoLaunch).is_err());
+}
