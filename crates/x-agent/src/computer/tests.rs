@@ -429,3 +429,25 @@ fn editor_cannot_use_browser_keys() {
     assert!(click_allowed("menuitem", "Dark Theme"));
     assert!(!click_allowed("menuitem", "Delete the project"));
 }
+
+#[test]
+fn negated_screen_text_does_not_verify_a_positive_substring() {
+    let (outcome, _) = drive(
+        vec![screen("not completed", vec![])],
+        &[
+            r#"{"done":true,"evidence":"completed"}"#,
+            r#"{"done":true,"evidence":"completed"}"#,
+            r#"{"done":true,"evidence":"completed"}"#,
+        ],
+    );
+    assert!(matches!(outcome, Outcome::Failed(_)));
+}
+
+#[test]
+fn model_summary_is_not_reported_as_verified_fact() {
+    let (outcome, _) = drive(
+        vec![screen("Ready", vec![])],
+        &[r#"{"done":true,"evidence":"Ready","summary":"I submitted the form"}"#],
+    );
+    assert!(matches!(outcome, Outcome::Done(note) if !note.contains("submitted")));
+}
