@@ -2094,6 +2094,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"session_id":"5e3b19
         .plan_claude("summarize the supplied context", false)
         .unwrap();
     assert_eq!(fresh.work_harness, Some(harness::Kind::ClaudeCode));
+    assert_eq!(fresh.work_access, harness::WorkAccess::SelectionOnly);
+    assert!(fresh.steps[0].risk.contains("tool-free analysis"));
     assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
     assert!(!repo.join("received-args").exists());
     s.approve(fresh.id).unwrap();
