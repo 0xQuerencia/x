@@ -102,14 +102,17 @@ pub(super) struct History {
 
 impl History {
     fn prune(&mut self) {
-        self.records.retain(|entry| entry.seen.elapsed() < RETENTION);
+        self.records
+            .retain(|entry| entry.seen.elapsed() < RETENTION);
     }
 
     fn record(&mut self, draft: CorrectionDraft, parent: Option<&Binding>) {
         self.prune();
-        if self.records.iter().any(|entry| {
-            entry.draft.run_id == draft.run_id && entry.draft.node_id == draft.node_id
-        }) {
+        if self
+            .records
+            .iter()
+            .any(|entry| entry.draft.run_id == draft.run_id && entry.draft.node_id == draft.node_id)
+        {
             return;
         }
         let (root, depth) = if let Some(parent) = parent {
@@ -193,7 +196,8 @@ fn correction_graph(binding: &Binding, goal: &str) -> Result<Graph, String> {
             project_id: project_id.clone(),
             goal: format!(
                 "Correct the observed {} failure at {}. Owner goal: {goal}",
-                binding.suite.label(), binding.commit
+                binding.suite.label(),
+                binding.commit
             ),
         },
         on_failure: OnFailure::Stop,
