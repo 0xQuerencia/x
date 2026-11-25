@@ -303,8 +303,11 @@ summaries are read as delivery-only. Existing v2 requires edges retain their
 historical successful-delivery semantics; they do not establish that a
 predecessor produced a usable artifact or passed tests. Version 3 graphs may
 add `requires_verified` edges: delivery-only predecessors cannot release
-those jobs. Version 2 inputs retain their existing meaning. An explicit
-additional proof producer is required before such a dependency can succeed.
+those jobs. Version 2 inputs retain their existing meaning. An OpenCode node may declare `required_change` with a project-relative file
+path. X previews the requirement and independently compares its owned checkout
+against the pinned base, including committed and untracked changes. Missing
+changes fail the node; unreadable evidence is Unverified. This is file-change
+proof, not proof of correctness, tests or handoff.
 
 ### Verified worktree scheduling (development)
 
