@@ -69,6 +69,44 @@ impl Manager {
         Ok(())
     }
 
+    /// Independently inspect the final checkout relative to the reviewed base.
+    /// Includes tracked/committed changes and non-ignored untracked paths.
+    pub(crate) fn changed_paths(
+        &self,
+        project: &Project,
+        worktree: &OwnedWorktree,
+    ) -> Result<Vec<String>, String> {
+        let path = self.validate_owned(project, worktree)?;
+        git(
+            &path,
+            &["merge-base", "--is-ancestor", worktree.start_commit(), "HEAD"],
+        )?;
+        let tracked = git(
+            &path,
+            &[
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+                worktree.start_commit(),
+                "--",
+            ],
+        )?;
+        let untracked = git(&path, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+        let mut changes = tracked
+            .split('\0')
+            .chain(untracked.split('\0'))
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        changes.sort_unstable();
+        changes.dedup();
+        self.validate_owned(project, worktree)?;
+        Ok(changes)
+    }
+
     /// Requires explicit user approval for this exact run/task/project tuple.
     /// The caller's policy gate must make sure `approved` came from the owner.
     pub fn allocate(
@@ -502,6 +540,37 @@ mod tests {
         assert_eq!(
             git(&project.root, &["status", "--porcelain=v1"]).unwrap(),
             before
+        );
+    }
+
+    #[test]
+    fn changed_paths_include_real_commits_and_untracked_files() {
+        let (_dir, project, manager, sha) = fixture();
+        let owned = manager
+            .allocate(&project, Uuid::new_v4(), "backend", &sha, true)
+            .unwrap();
+        assert!(manager.changed_paths(&project, &owned).unwrap().is_empty());
+        fs::write(owned.path().join("committed.txt"), "first").unwrap();
+        git(owned.path(), &["add", "--", "committed.txt"]).unwrap();
+        git(
+            owned.path(),
+            &[
+                "-c",
+                "user.name=X",
+                "-c",
+                "user.email=x@invalid.test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+        )
+        .unwrap();
+        fs::write(owned.path().join("untracked.txt"), "second").unwrap();
+        assert_eq!(
+            manager.changed_paths(&project, &owned).unwrap(),
+            vec!["committed.txt".to_string(), "untracked.txt".to_string()]
         );
     }
 
