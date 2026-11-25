@@ -1123,6 +1123,7 @@ mod storage {
                 after: vec![],
                 requires: vec![],
                 requires_verified: vec![],
+                required_change: None,
                 job: Job::Harness {
                     harness: HarnessKind::OpenCode,
                     project_id: uuid::Uuid::new_v4().to_string(),
