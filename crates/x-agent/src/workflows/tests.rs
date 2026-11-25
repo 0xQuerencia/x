@@ -1122,6 +1122,7 @@ mod storage {
                 id: "backend".into(),
                 after: vec![],
                 requires: vec![],
+                requires_verified: vec![],
                 job: Job::Harness {
                     harness: HarnessKind::OpenCode,
                     project_id: uuid::Uuid::new_v4().to_string(),
