@@ -66,6 +66,13 @@ impl Manager {
         if current_commit(&path)? != worktree.start_commit() {
             return Err("The task worktree changed its approved starting commit".into());
         }
+        let status = git(
+            &path,
+            &["status", "--porcelain=v1", "--untracked-files=all", "--ignored"],
+        )?;
+        if !status.trim().is_empty() {
+            return Err("The task worktree is not clean at its approved starting commit".into());
+        }
         Ok(())
     }
 
@@ -132,7 +139,7 @@ impl Manager {
             let resolved = destination
                 .canonicalize()
                 .map_err(|_| "The worktree was created but its folder cannot be verified")?;
-            if resolved != destination && !resolved.starts_with(&parent) {
+            if resolved != destination {
                 return Err("The worktree resolved outside the approved directory".into());
             }
             let observed_common = git_common_dir(&resolved)?;
@@ -502,6 +509,21 @@ mod tests {
         assert_eq!(
             git(&project.root, &["status", "--porcelain=v1"]).unwrap(),
             before
+        );
+    }
+
+    #[test]
+    fn worktree_start_requires_clean_files_as_well_as_the_approved_commit() {
+        let (_dir, project, manager, sha) = fixture();
+        let owned = manager
+            .allocate(&project, Uuid::new_v4(), "backend", &sha, true)
+            .unwrap();
+        manager.verify_start(&project, &owned).unwrap();
+        fs::write(owned.path().join("local.txt"), "preserve this").unwrap();
+        assert!(manager.verify_start(&project, &owned).is_err());
+        assert_eq!(
+            fs::read_to_string(owned.path().join("local.txt")).unwrap(),
+            "preserve this"
         );
     }
 
