@@ -2397,7 +2397,7 @@ fn native_graph_approval_runs_the_previewed_goals_in_owned_worktrees() {
     let done = wait_for(&service, |snapshot| !snapshot.phase.is_busy());
     let task = done.task.unwrap();
     assert_eq!(done.phase, Phase::Completed, "{:?}", task.error);
-    assert!(task.steps.iter().all(|step| step.status == "done"));
+    assert!(task.steps.iter().all(|step| step.status == "delivered"));
     assert_eq!(done.pending_job_approvals, Some(0));
     assert!(service.approve(preview.id).is_err());
     assert_eq!(
