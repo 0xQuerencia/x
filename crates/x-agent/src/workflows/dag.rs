@@ -143,7 +143,7 @@ impl Graph {
             if let Job::Harness {
                 project_id, goal, ..
             } = &node.job
-                && (uuid::Uuid::parse_str(project_id).is_err()
+                && (uuid::Uuid::parse_str(project_id).map_or(true, |id| id.is_nil())
                     || goal.trim().is_empty()
                     || goal.chars().count() > 4_096
                     || goal.chars().any(char::is_control))
@@ -261,14 +261,14 @@ fn slug(value: &str) -> bool {
         && value.as_bytes()[0].is_ascii_alphanumeric()
 }
 
-/// Accept a strict v2 graph or convert an existing v1 workflow in memory.
+/// Accept a strict v2 or v3 graph, or convert an existing v1 workflow in memory.
 /// Neither path executes anything, and unknown keys are refused.
 pub fn decode(input: &str, home: &Path) -> Result<Graph, String> {
     let value: serde_json::Value =
         serde_json::from_str(input).map_err(|e| format!("Invalid workflow JSON: {e}"))?;
     match value.get("version") {
         None => {
-            let legacy: Workflow = serde_json::from_value(value)
+            let legacy: Workflow = serde_json::from_str(input)
                 .map_err(|e| format!("Invalid legacy workflow: {e}"))?;
             Graph::from_legacy(legacy, home)
         }
@@ -277,7 +277,7 @@ pub fn decode(input: &str, home: &Path) -> Result<Graph, String> {
                 .as_u64()
                 .is_some_and(|v| v == u64::from(VERSION) || v == u64::from(PROOF_VERSION)) =>
         {
-            let graph: Graph = serde_json::from_value(value)
+            let graph: Graph = serde_json::from_str(input)
                 .map_err(|e| format!("Invalid workflow graph: {e}"))?;
             graph.validate_with_home(home)?;
             Ok(graph)
@@ -397,6 +397,28 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_duplicate_fields_without_value_normalization() {
+        let graph = Graph::from_legacy(legacy(), &home()).unwrap();
+        let json = serde_json::to_string(&graph).unwrap();
+        let duplicated = json.replacen(
+            "\"version\":2",
+            "\"version\":2,\"version\":2",
+            1,
+        );
+        assert_ne!(duplicated, json);
+        assert!(decode(&duplicated, &home()).is_err());
+
+        let json = serde_json::to_string(&legacy()).unwrap();
+        let duplicated = json.replacen(
+            "\"id\":\"example\"",
+            "\"id\":\"other\",\"id\":\"example\"",
+            1,
+        );
+        assert_ne!(duplicated, json);
+        assert!(decode(&duplicated, &home()).is_err());
+    }
+
+    #[test]
     fn harness_tasks_require_valid_registered_project_identity() {
         let mut graph = Graph::from_legacy(legacy(), &home()).unwrap();
         graph.nodes[0].job = Job::Harness {
@@ -404,6 +426,10 @@ mod tests {
             project_id: "not-an-id".into(),
             goal: "check tests".into(),
         };
+        assert!(graph.validate().is_err());
+        if let Job::Harness { project_id, .. } = &mut graph.nodes[0].job {
+            *project_id = uuid::Uuid::nil().to_string();
+        }
         assert!(graph.validate().is_err());
         if let Job::Harness { project_id, .. } = &mut graph.nodes[0].job {
             *project_id = uuid::Uuid::new_v4().to_string();
