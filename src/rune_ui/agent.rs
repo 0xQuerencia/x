@@ -169,6 +169,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         .child(
             text(phase_label(snapshot.phase))
                 .key("phase")
+                .shrink()
                 .font(DESCRIPTION)
                 .color(p.text()),
         );
@@ -224,13 +225,6 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         view_button("view-commands", tr("Commands"), false, false),
         view_button("view-quick", tr("Quick"), false, true),
         view_button("view-workflows", tr("Workflows"), true, false),
-        status,
-        text(tr("Dictate keeps its own shortcut"))
-            .key("dictate-note")
-            .font(DESCRIPTION)
-            .color(p.muted()),
-        mode_button("mode-actions", tr("Actions"), Mode::Actions),
-        mode_button("mode-work", tr("Work"), Mode::Work),
     ];
     let voice = agent_host::voice_mode();
     let voice_modes = [
@@ -303,7 +297,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         ));
 
     if pane.show_quick {
-        let mut body = col().key("agent-body").gap(16.0);
+        let mut body = col().key("agent-body").gap(16.0).child(status);
         if let Some(task) = &snapshot.task {
             body = body.child(task_card(p, snapshot, task));
         }
@@ -320,7 +314,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         );
     }
     if pane.show_workflows {
-        let mut body = col().key("agent-body").gap(16.0);
+        let mut body = col().key("agent-body").gap(16.0).child(status);
         if let Some(task) = &snapshot.task {
             body = body.child(task_card(p, snapshot, task));
         }
@@ -345,7 +339,10 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         .width(None)
         .on_edit(|ui: &mut Ui| &mut ui.agent.input)
         .build(p.k)
-        .key("agent-input");
+        .key("agent-input")
+        .w(0.0)
+        .grow(1.0)
+        .shrink();
     let listening = snapshot.phase == Phase::Listening;
     let capture = row()
         .key("agent-capture")
@@ -394,24 +391,35 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
     } else {
         capture
     };
+    let mode_row = row()
+        .key("agent-command-mode")
+        .gap(8.0)
+        .center_y()
+        .child(mode_button("mode-actions", tr("Actions"), Mode::Actions))
+        .child(mode_button("mode-work", tr("Work"), Mode::Work))
+        .child(status);
     let mut body = col()
         .key("agent-body")
         .gap(16.0)
-        .child(capture)
+        .child(mode_row)
+        .child(capture);
+    if let Some(task) = &snapshot.task {
+        body = body.child(task_card(p, snapshot, task));
+    }
+    body = body
         .child(voice_row)
         .child(autonomy_control)
         .child(text(tr("Autonomous: safe Actions and granted apps run without repeated approval. Work and protected actions still ask."))
             .font(DESCRIPTION)
-            .color(p.muted()));
+            .color(p.muted())
+            .wrap());
     body = body.child(access_row(p, snapshot));
     if pane.mode == Mode::Work {
         body = body.child(workspace_row(p, pane, busy));
         body = body.child(project_tests_row(p, pane, busy));
         body = body.child(recovery_review_row(p, pane));
     }
-    if let Some(task) = &snapshot.task {
-        body = body.child(task_card(p, snapshot, task));
-    } else {
+    if snapshot.task.is_none() {
         body = body.child(message(
             p,
             "agent-empty",
@@ -432,7 +440,10 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
             .shrink()
             .px(24.0)
             .py(16.0)
-            .child(body),
+            .child(super::list_detail::card_scroll(
+                "agent-command-scroll",
+                body,
+            )),
     )
 }
 
@@ -509,7 +520,10 @@ fn workspace_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
         .width(None)
         .on_edit(|ui: &mut Ui| &mut ui.agent.workspace)
         .build(p.k)
-        .key("agent-workspace");
+        .key("agent-workspace")
+        .w(0.0)
+        .grow(1.0)
+        .shrink();
     row()
         .key("agent-workspace-row")
         .gap(8.0)
@@ -560,7 +574,10 @@ fn project_tests_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
         .width(None)
         .on_edit(|ui: &mut Ui| &mut ui.agent.test_project)
         .build(p.k)
-        .key("agent-test-project");
+        .key("agent-test-project")
+        .w(0.0)
+        .grow(1.0)
+        .shrink();
     let selected_suite = pane.test_suite_index % TEST_SUITES.len();
     col()
         .key("agent-project-tests")
@@ -606,7 +623,8 @@ fn project_tests_row(p: Paint, pane: &AgentPane, busy: bool) -> El {
         .child(
             text(tr("Test scripts run with your user permissions, not in a security sandbox. X requires a separate approval and retains the isolated checkout."))
                 .font(DESCRIPTION)
-                .color(p.warning()),
+                .color(p.warning())
+                .wrap(),
         )
 }
 

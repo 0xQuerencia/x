@@ -210,6 +210,18 @@ task checkout. Once Git actually starts, Stop cannot safely interrupt a branch
 update; Stop can cancel the pending approval or stop before the Git call.
 Inspect the primary checkout manually if Git reports an incomplete operation.
 
+### Natural project voice selection
+
+X recognizes deterministic registered-project phrases such as `work on
+project X`, `let's work on project X`, `switch back to project X`,
+`find my project X`, and `show my projects`. They use the same exact
+registered name/alias resolution as `use project X`: ambiguous names
+require an ID; unknown names do not become arbitrary filesystem paths,
+and changing the selected project still enters normal approval.
+
+Parsing is local: no generative planner or paid model is needed.
+Unrestricted requests to invent or register projects are not supported.
+
 ### Read-only workflow graph preview
 
 Run `hex agent workflow preview <id>` to validate a saved workflow or v2
@@ -396,13 +408,16 @@ update HEAD, the index or worktree files.
 
 X has a process-local, deny-by-default grant store for exact project metadata
 reads, individually approved harness tasks, and individually approved test
-runs. Task grants are tied to a project ID, run ID and node ID, expire after
-at most 60 seconds, and can be consumed **once only**. Harness grants also
-bind the exact typed job request and required verification profile, so an
-edited goal or weaker proof cannot reuse consent. Project metadata grants
-are shorter-lived and use-limited. Revocation or restarting X invalidates
-outstanding receipts. A grant cannot authorize deletion, merging, secret
-access, screen capture or external transfers.
+runs. Task grants are tied to a project ID, run ID and node ID and can be
+consumed **once only**. A reviewed coding graph grants each exact node up to
+30 minutes to wait for its dependencies after approval. A queued receipt cannot
+launch a process: the executor converts it to a launch receipt immediately
+before dispatch, valid for at most 60 seconds and never beyond the original
+queue deadline. Harness grants bind the exact typed job request and required
+verification profile, so an edited goal or weaker proof cannot reuse consent.
+Project metadata grants are time- and use-limited. Revocation or restarting X
+invalidates outstanding receipts. A grant cannot authorize deletion, merging,
+secret access, screen capture or external transfers.
 
 The existing approval action issues receipts for the exact coding graph
 shown in the preview. Autonomous mode still requires this approval. Receipt
