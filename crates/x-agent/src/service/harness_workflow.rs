@@ -375,6 +375,7 @@ impl Service {
             }
             drop(state);
             stop.check()?;
+            let service = self.clone();
             ApprovedHarnessExecutor::new(
                 &workflow.graph,
                 run,
@@ -382,6 +383,14 @@ impl Service {
                 Arc::clone(&workflow.manager),
                 Arc::clone(&workflow.journal),
             )
+            .map(|executor| {
+                executor.with_activity(Arc::new(move |node, attempt, kind| {
+                    service.emit(
+                        "workflow_activity",
+                        &format!("{run} / {node} / attempt {attempt}: {}", kind.as_str()),
+                    );
+                }))
+            })
         })();
         if result.is_err() {
             for id in workflow
