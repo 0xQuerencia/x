@@ -155,11 +155,7 @@ impl Grants {
     /// Exchange an exact queued-node approval for a short-lived launch receipt.
     /// The existing receipt is changed atomically, so revocation, expiration,
     /// and a second activation cannot recreate the authority.
-    pub(crate) fn activate_harness(
-        &self,
-        receipt: &Receipt,
-        scope: &Scope,
-    ) -> Result<(), String> {
+    pub(crate) fn activate_harness(&self, receipt: &Receipt, scope: &Scope) -> Result<(), String> {
         self.activate_harness_at(receipt, scope, Instant::now())
     }
 
@@ -351,7 +347,11 @@ mod tests {
                 .consume_at(&receipt, Permission::QueueHarness, &scope, ready)
                 .is_err()
         );
-        assert!(grants.activate_harness_at(&receipt, &task(), ready).is_err());
+        assert!(
+            grants
+                .activate_harness_at(&receipt, &task(), ready)
+                .is_err()
+        );
         grants.activate_harness_at(&receipt, &scope, ready).unwrap();
         assert!(grants.activate_harness_at(&receipt, &scope, ready).is_err());
         grants
