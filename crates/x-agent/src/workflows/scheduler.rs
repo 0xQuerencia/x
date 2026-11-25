@@ -136,11 +136,11 @@ pub(crate) fn run_observed(
         .collect();
     let count = graph.nodes.len();
     let mut finished: Vec<Option<Outcome>> = vec![None; count];
-    let mut active: HashSet<usize> = HashSet::new();
+    let mut active: HashMap<usize, thread::JoinHandle<()>> = HashMap::new();
     let mut resources: HashSet<Resource> = HashSet::new();
     let mut resource_leases: HashMap<usize, Resource> = HashMap::new();
     let mut notes = vec![String::new(); count];
-    let (send, receive) = mpsc::channel::<(usize, Outcome)>();
+    let (send, receive) = mpsc::channel::<(usize, Outcome, bool)>();
     let mut stop_new = false;
     let mut max_concurrent = 0usize;
 
@@ -155,7 +155,7 @@ pub(crate) fn run_observed(
                     stop_new = true;
                     break;
                 }
-                if finished[index].is_some() || active.contains(&index) {
+                if finished[index].is_some() || active.contains_key(&index) {
                     continue;
                 }
                 let all_finished = node
@@ -197,23 +197,34 @@ pub(crate) fn run_observed(
                     progressed = true;
                     continue;
                 }
-                resources.insert(owned_resource.clone());
-                resource_leases.insert(index, owned_resource);
-                active.insert(index);
-                max_concurrent = max_concurrent.max(active.len());
-                progressed = true;
                 let runner = Arc::clone(&executor);
                 let tx = send.clone();
                 let task = node.clone();
                 let cancellation = stop.child();
-                observe(index, NodeUpdate::Running);
-                thread::spawn(move || {
+                progressed = true;
+                match thread::Builder::new().spawn(move || {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         runner.execute(task, cancellation)
-                    }))
-                    .unwrap_or(Outcome::Failed);
-                    let _ = tx.send((index, result));
-                });
+                    }));
+                    let panicked = result.is_err();
+                    let _ = tx.send((index, result.unwrap_or(Outcome::Failed), panicked));
+                }) {
+                    Ok(worker) => {
+                        resources.insert(owned_resource.clone());
+                        resource_leases.insert(index, owned_resource);
+                        active.insert(index, worker);
+                        max_concurrent = max_concurrent.max(active.len());
+                        observe(index, NodeUpdate::Running);
+                    }
+                    Err(error) => {
+                        finished[index] = Some(Outcome::Failed);
+                        notes[index] = format!("Could not start worker: {}", error.kind());
+                        observe(index, NodeUpdate::Finished(Outcome::Failed));
+                        if node.on_failure == super::model::OnFailure::Stop {
+                            stop_new = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -223,10 +234,22 @@ pub(crate) fn run_observed(
             }
             continue;
         }
-        let Ok((index, outcome)) = receive.recv() else {
+        let Ok((index, mut outcome, panicked)) = receive.recv() else {
+            stop.request();
+            for (_, worker) in active.drain() {
+                let _ = worker.join();
+            }
             return Err("The scheduler lost an owned worker".into());
         };
-        active.remove(&index);
+        // Release the resource only after the worker is reaped, not merely
+        // after its result arrives. Never expose the panic payload as evidence.
+        let joined = active
+            .remove(&index)
+            .is_some_and(|worker| worker.join().is_ok());
+        if panicked || !joined {
+            outcome = Outcome::Failed;
+            notes[index] = "Worker panicked or did not exit cleanly".into();
+        }
         if let Some(lease) = resource_leases.remove(&index) {
             resources.remove(&lease);
         }
@@ -519,6 +542,38 @@ mod tests {
             2,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_panicked_worker_is_reaped_and_does_not_unlock_required_jobs() {
+        struct PanicWorker;
+        impl Executor for PanicWorker {
+            fn authorized(&self, _node: &Node) -> bool {
+                true
+            }
+            fn execute(&self, node: Node, _stop: Cancellation) -> Outcome {
+                assert_eq!(node.id, "front");
+                panic!("private worker panic fixture");
+            }
+        }
+        let a = uuid::Uuid::new_v4().to_string();
+        let b = uuid::Uuid::new_v4().to_string();
+        let mut graph = graph(&a, &b);
+        graph.nodes[1].requires = vec!["front".into()];
+        let report = run(
+            &graph,
+            Path::new("/tmp"),
+            Arc::new(PanicWorker),
+            &Cancellation::default(),
+            2,
+        )
+        .unwrap();
+        assert_eq!(report.nodes[0].outcome, Outcome::Failed);
+        assert_eq!(report.nodes[1].outcome, Outcome::Skipped);
+        assert_eq!(
+            report.nodes[0].reason,
+            "Worker panicked or did not exit cleanly"
+        );
     }
 
     #[test]
