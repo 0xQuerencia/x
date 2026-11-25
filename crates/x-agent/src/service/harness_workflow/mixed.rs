@@ -55,7 +55,8 @@ impl Service {
                 .ok_or("The graph no longer has an approved task")?
                 .id;
             let mut assignments = Vec::new();
-            for (index, (node, job)) in workflow.graph.nodes.iter().zip(&workflow.jobs).enumerate() {
+            for (index, (node, job)) in workflow.graph.nodes.iter().zip(&workflow.jobs).enumerate()
+            {
                 let Some(job) = job else {
                     continue;
                 };
