@@ -54,7 +54,7 @@ fn revoking_or_expiring_a_desktop_grant_while_acquiring_input_prevents_mutation(
             )
             .unwrap();
         let revoke = grants.clone();
-        let queued = receipt.clone();
+        let queued = receipt;
         let acquisitions = Arc::new(AtomicUsize::new(0));
         let observed = acquisitions.clone();
         let acquire: AcquireInput = Arc::new(move |_| {
