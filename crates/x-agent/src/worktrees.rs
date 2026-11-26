@@ -142,6 +142,51 @@ impl Manager {
         Ok(())
     }
 
+    pub(crate) fn has_github_remote(
+        &self,
+        project: &Project,
+        repository: &str,
+    ) -> Result<bool, String> {
+        self.verify_project(project)?;
+        let Ok(config) = git(
+            &project.root,
+            &["config", "--local", "--get-regexp", r"^remote\..+\.url$"],
+        ) else {
+            return Ok(false);
+        };
+        Ok(config.lines().any(|line| {
+            let Some((_, url)) = line.split_once(' ') else {
+                return false;
+            };
+            let slug = [
+                "https://github.com/",
+                "git@github.com:",
+                "ssh://git@github.com/",
+            ]
+            .into_iter()
+            .find_map(|prefix| url.strip_prefix(prefix));
+            slug.is_some_and(|slug| {
+                slug.strip_suffix(".git")
+                    .unwrap_or(slug)
+                    .eq_ignore_ascii_case(repository)
+            })
+        }))
+    }
+
+    pub(crate) fn has_ancestor(
+        &self,
+        project: &Project,
+        base: &str,
+        commit: &str,
+    ) -> Result<bool, String> {
+        self.validate_base(project, base)?;
+        if !valid_commit(commit) {
+            return Err("An exact full commit is required".into());
+        }
+        let args = ["merge-base", "--is-ancestor", commit, base];
+        Ok(git(&project.root, &args).is_ok())
+    }
+
     /// Resolve only an independently observed output from this exact run/project.
     /// Persisted JSON is historical evidence, never authority to select a checkout.
     pub(crate) fn validate_artifact(
@@ -504,49 +549,26 @@ impl Manager {
             return Err("Removing a worktree requires explicit approval".into());
         }
         let base = self.validated_base()?;
-        let common = self.verify_project(project)?;
-        if project.id != worktree.project_id
-            || worktree.run_id.is_nil()
-            || !valid_slug(&worktree.task_id)
-            || !valid_commit(&worktree.start_commit)
-        {
-            return Err("The worktree ownership record is invalid".into());
-        }
-        let expected = base
-            .join(project.id.to_string())
-            .join(format!("{}-{}", worktree.run_id, worktree.task_id));
-        if worktree.path != expected
-            || !worktree.path.starts_with(&base)
-            || !worktree.path.is_dir()
-            || worktree
-                .path
-                .canonicalize()
-                .map_err(|_| "Worktree folder no longer exists")?
-                != worktree.path
-        {
-            return Err("The worktree path has changed".into());
-        }
-        if git_common_dir(&worktree.path)? != common {
-            return Err("That path is no longer a worktree of the chosen project".into());
-        }
         let lock = open_lock(&base.join("x-worktrees.lock"))?;
         lock.try_lock()
             .map_err(|_| "Another worktree operation is running")?;
         let result: Result<(), String> = (|| {
+            let checkout = self.validate_owned(project, worktree)?;
+            if current_commit(&checkout)? != worktree.start_commit() {
+                return Err("The reviewed checkout commit changed".into());
+            }
             let dirty = git(
-                &worktree.path,
+                &checkout,
                 &[
                     "status",
                     "--porcelain=v1",
                     "--untracked-files=all",
                     "--ignored",
+                    "--ignore-submodules=none",
                 ],
             )?;
             if !dirty.trim().is_empty() {
-                return Err(
-                    "Worktree contains changes or untracked/ignored files; nothing was removed"
-                        .into(),
-                );
+                return Err("The checkout contains changes or untracked or ignored files".into());
             }
             let path = worktree
                 .path

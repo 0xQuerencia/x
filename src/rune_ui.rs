@@ -702,6 +702,8 @@ pub(crate) struct Ui {
     tour: Option<onboarding::Tour>,
     /// The new first run over the tour (Labs).
     first_run: Option<onboarding_kit::Onboard>,
+    /// Receives stale Rune edit callbacks after the first-run view closes.
+    closed_practice_edit: TextEdit,
     /// The OS's capabilities and the OS-only state its panes show.
     platform: platform::PlatformState,
     host: platform::PlatformHost,
@@ -807,6 +809,7 @@ impl Ui {
             sound_sets: sound_sets::SoundSets::default(),
             tour: None,
             first_run: None,
+            closed_practice_edit: TextEdit::default(),
             platform: platform::PlatformState::new(platform::Capabilities::current()),
             host: platform::PlatformHost::Local(Default::default()),
             meetings: meetings::MeetingsPane::default(),

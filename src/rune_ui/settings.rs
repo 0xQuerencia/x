@@ -591,7 +591,7 @@ pub(super) fn error_notes(p: Paint, error: &str) -> [El; 2] {
 pub(super) fn listener_card(ui: &Ui, p: Paint) -> El {
     let running = ui.running();
     let status = match &ui.view {
-        Some(view) => tr(&view.listener.status).to_string(),
+        Some(view) => crate::desktop::i18n::tr_owned(&view.listener.status),
         None if matches!(ui.service, Service::Fixture(_)) || ui.connection_error.is_some() => {
             tr("Service disconnected").to_string()
         }

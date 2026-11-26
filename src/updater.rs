@@ -136,7 +136,7 @@ pub fn switch_label(channel: &str, version: &str) -> String {
     crate::desktop::i18n::tr_named(
         "Switch to {channel} {version}",
         &[
-            ("channel", crate::desktop::i18n::tr(channel)),
+            ("channel", &crate::desktop::i18n::tr_owned(channel)),
             ("version", version),
         ],
     )

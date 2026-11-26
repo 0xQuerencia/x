@@ -111,6 +111,43 @@ pub struct Task {
     pub goal: String,
     pub acceptance: String,
     pub depends: Vec<String>,
+    pub evidence: Vec<Evidence>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
+pub struct Evidence {
+    pub repository: String,
+    pub pull_request: u32,
+    pub merge_commit: String,
+}
+
+fn evidence(value: &str) -> Option<Vec<Evidence>> {
+    let mut links = Vec::new();
+    for item in value.split(',') {
+        let (link, commit) = item.trim().split_once(" @ ")?;
+        let (repository, number) = link
+            .strip_prefix("https://github.com/")?
+            .split_once("/pull/")?;
+        let pr = number.parse::<u32>().ok().filter(|number| *number != 0)?;
+        if !crate::github_read::repository_ok(repository)
+            || commit.len() != 40
+            || !crate::worktrees::valid_commit(commit)
+        {
+            return None;
+        }
+        let link = Evidence {
+            repository: repository.to_ascii_lowercase(),
+            pull_request: pr,
+            merge_commit: commit.to_ascii_lowercase(),
+        };
+        if !links.contains(&link) {
+            links.push(link);
+        }
+        if links.len() > 3 {
+            return None;
+        }
+    }
+    Some(links)
 }
 
 impl Task {
@@ -175,7 +212,7 @@ fn parse(text: &str) -> Result<Document, String> {
     for (line_number, line) in lines {
         let error = || {
             format!(
-                "Unsupported roadmap syntax on line {}; use checkbox tasks and Goal, Acceptance, Depends fields",
+                "Unsupported roadmap syntax on line {}; use checkbox tasks and Goal, Acceptance, Depends, Evidence fields",
                 line_number + 1
             )
         };
@@ -208,6 +245,7 @@ fn parse(text: &str) -> Result<Document, String> {
                 goal: String::new(),
                 acceptance: String::new(),
                 depends: vec![],
+                evidence: vec![],
             });
             fields.push(0);
             continue;
@@ -220,6 +258,7 @@ fn parse(text: &str) -> Result<Document, String> {
             "Goal" => 1,
             "Acceptance" => 2,
             "Depends" => 4,
+            "Evidence" => 8,
             _ => return Err(error()),
         };
         if *seen & bit != 0 || value.trim().is_empty() {
@@ -247,6 +286,7 @@ fn parse(text: &str) -> Result<Document, String> {
                     }
                 }
             }
+            "Evidence" => task.evidence = evidence(value).ok_or_else(error)?,
             _ => unreachable!(),
         }
     }
@@ -258,7 +298,7 @@ fn parse(text: &str) -> Result<Document, String> {
         if ids.insert(task.id.as_str(), index).is_some() {
             return Err("Duplicate roadmap task ID".into());
         }
-        if (!task.completed_in_source && fields[index] != 7)
+        if (!task.completed_in_source && fields[index] & 7 != 7)
             || task.goal_text().chars().count() > 4096
         {
             return Err("Each unchecked task needs Goal, Acceptance and Depends fields within 4,096 characters".into());

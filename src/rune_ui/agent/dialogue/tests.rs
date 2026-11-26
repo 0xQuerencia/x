@@ -223,11 +223,15 @@ fn a_keyboard_answer_is_cleared_when_its_question_or_task_changes() {
 #[test]
 #[ignore = "writes light/dark native window-question renders for visual inspection"]
 fn render_native_window_question_light_and_dark() {
+    render_pair("window-question", |dark| runtime(dark, true));
+}
+
+fn render_pair(name: &str, scene: impl Fn(bool) -> Runtime<Ui>) {
     let gpu = rune::render::Gpu::try_new(rune::render::Gpu::instance(), None)
         .expect("a GPU or software Vulkan adapter is needed to render native window questions");
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     for dark in [false, true] {
-        let mut rt = runtime(dark, true);
+        let mut rt = scene(dark);
         let mut renderer = crate::rune_ui::offscreen::renderer(&gpu.device);
         let size = (SIZE.0 as u32, SIZE.1 as u32);
         let target = crate::rune_ui::offscreen::target(&gpu.device, size.0, size.1);
@@ -258,9 +262,85 @@ fn render_native_window_question_light_and_dark() {
         target.copy(&mut encoder);
         renderer.submit(&gpu.queue, encoder);
         let path = folder.join(format!(
-            "rune-agent-window-question-{}.png",
+            "rune-agent-{name}-{}.png",
             if dark { "dark" } else { "light" }
         ));
         rune::render::write_png(&path, size.0, size.1, &target.read(&gpu.device)).unwrap();
     }
+}
+
+fn permission_fixture() -> Ui {
+    let mut ui = fixture(false);
+    let snapshot = ui.agent.snapshot.as_mut().unwrap();
+    snapshot.phase = Phase::Running;
+    snapshot.window_question = None;
+    let task = snapshot.task.as_mut().unwrap();
+    task.phase = Phase::Running;
+    task.mode = Mode::Work;
+    task.text = "Review the exact queued test".into();
+    task.steps[0].status = "waiting_for_permission".into();
+    task.steps[0].title = "Test the committed workspace".into();
+    task.steps[0].risk = "Runs Cargo tests in the owned checkout".into();
+    snapshot.cancellable_coding_jobs = vec![0];
+    snapshot
+        .permission_waits
+        .push(::x_agent::service::PermissionWait {
+            step_index: 0,
+            review_token: "64cb70a8-5a75-4faa-8efa-213d31f54f40".into(),
+        });
+    ui
+}
+
+fn permission_runtime(dark: bool) -> Runtime<Ui> {
+    let mut rt = crate::rune_ui::offscreen::runtime(
+        permission_fixture(),
+        drawn,
+        SIZE,
+        Env::new(dark, 1.0),
+        TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES),
+    );
+    rt.frame(0.0);
+    rt
+}
+
+#[test]
+fn exact_permission_renewal_is_reachable_by_keyboard_and_stale_reviews_have_no_button() {
+    let mut rt = permission_runtime(false);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains("renew-job-42-0"))
+    );
+    let reached = (0..10).any(|_| {
+        rt.key(KeyEvent {
+            key: Key::Tab,
+            mods: Mods::default(),
+        });
+        rt.frame(0.0);
+        rt.elements()
+            .iter()
+            .any(|el| el.focused && el.path.contains("renew-job-42-0"))
+    });
+    assert!(reached);
+    rt.update(|ui, _| ui.agent.snapshot.as_mut().unwrap().permission_waits.clear());
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    let elements = rt.elements();
+    assert!(
+        elements
+            .iter()
+            .all(|el| !el.path.contains("renew-job-42-0"))
+    );
+    assert!(
+        elements
+            .iter()
+            .any(|el| el.path.contains("stop-coding-job-0"))
+    );
+}
+
+#[test]
+#[ignore = "writes light/dark native permission wait renders for visual inspection"]
+fn render_native_permission_wait_light_and_dark() {
+    render_pair("permission-wait", permission_runtime);
 }

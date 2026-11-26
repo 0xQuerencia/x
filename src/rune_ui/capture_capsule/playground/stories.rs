@@ -3,6 +3,7 @@
 //! frame, driven by the same fake host, with the states, tuning, and log
 //! beside it. Sound and its volume stay Hex's.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use rune::{Cx, El, OverlaySpec, Play, Story, col, el, row, text};
@@ -49,8 +50,10 @@ pub(crate) fn add<S: 'static>(playground: rune::Playground<S>) -> rune::Playgrou
 }
 
 fn scene<const I: usize>() -> Story<CapsuleState> {
-    let name = Box::leak(format!("{GROUP}/{}", SCENES[I].0).into_boxed_str());
-    story(name, init_scene::<I>).trigger('p', "Play the whole flow", play)
+    static NAMES: OnceLock<[String; SCENES.len()]> = OnceLock::new();
+    let names =
+        NAMES.get_or_init(|| std::array::from_fn(|index| format!("{GROUP}/{}", SCENES[index].0)));
+    story(&names[I], init_scene::<I>).trigger('p', "Play the whole flow", play)
 }
 
 /// A story on the capsule's overlay frame. Its first variant keeps the
