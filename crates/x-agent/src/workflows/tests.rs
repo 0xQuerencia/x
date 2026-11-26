@@ -323,6 +323,39 @@ mod validation {
     }
 
     #[test]
+    fn typed_text_requires_its_own_allowlisted_opener_and_plain_line() {
+        let h = home();
+        let mut workflow = coding(h.path());
+        workflow.steps = vec![
+            step("opener", open("terminal", None)),
+            step(
+                "note",
+                StepAction::TypeText {
+                    opened_by: "opener".into(),
+                    text: "Café".into(),
+                },
+            ),
+        ];
+        assert!(
+            workflow.validate(h.path()).unwrap_err()[0]
+                .message
+                .contains("text-editor")
+        );
+        workflow.steps[0].action = open("text-editor", None);
+        workflow.validate(h.path()).unwrap();
+        assert!(workflow.needs_approval());
+        workflow.steps[1].action = StepAction::TypeText {
+            opened_by: "opener".into(),
+            text: "one\ntwo".into(),
+        };
+        assert!(
+            workflow.validate(h.path()).unwrap_err()[0]
+                .message
+                .contains("one line")
+        );
+    }
+
+    #[test]
     fn arguments_are_checked() {
         let h = home();
         let outside_home = if cfg!(windows) { r"C:\Windows" } else { "/etc" };

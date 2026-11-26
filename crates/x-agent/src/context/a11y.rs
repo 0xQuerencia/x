@@ -355,6 +355,59 @@ pub fn parse_done(bytes: &[u8]) -> Result<(), EditError> {
 }
 
 impl Atspi {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn insert_checked(
+        &self,
+        pid: u32,
+        text: &str,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<(), EditError> {
+        use std::io::{Seek, Write};
+        use std::process::Stdio;
+
+        if pid == 0
+            || !(1..=300).contains(&text.chars().count())
+            || text.chars().any(char::is_control)
+        {
+            return Err(EditError::Refused(
+                "The literal line or editor identity is invalid".into(),
+            ));
+        }
+        let python = crate::tools::which("python3")
+            .ok_or_else(|| EditError::Refused("python3 is not installed".into()))?;
+        let mut input = tempfile::tempfile()
+            .map_err(|_| EditError::Refused("Cannot open private editor input".into()))?;
+        let payload = serde_json::json!({"active_window": true, "text": text});
+        input
+            .write_all(payload.to_string().as_bytes())
+            .and_then(|()| input.rewind())
+            .map_err(|_| EditError::Refused("Cannot write private editor input".into()))?;
+        let mut command = Command::new(python);
+        command.args([
+            "-I",
+            "-c",
+            SCRIPT,
+            &pid.to_string(),
+            &MAX_SELECTION.to_string(),
+            "insert_checked",
+        ]);
+        let (success, bytes) = crate::desktop::capture::capture_with_stdin(
+            &mut command,
+            HELPER_TIMEOUT,
+            Some(stop),
+            Stdio::from(input),
+        )
+        .map_err(|_| {
+            EditError::Partial("The editor helper stopped before reporting readback".into())
+        })?;
+        if !success {
+            return Err(EditError::Partial(
+                "The editor helper did not report readback".into(),
+            ));
+        }
+        parse_done(&bytes)
+    }
+
     fn mutate(&self, pid: u32, op: &str, params: serde_json::Value) -> Result<(), EditError> {
         parse_done(&run_op(pid.max(1), op, &params).map_err(EditError::Refused)?)
     }

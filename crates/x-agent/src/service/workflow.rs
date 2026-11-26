@@ -108,6 +108,18 @@ impl Host for Bridge {
         allowed
     }
 
+    fn text_editor_ready(&self) -> Result<(), String> {
+        self.inner.text_editor_ready()
+    }
+
+    fn type_text(
+        &self,
+        window: &WinInfo,
+        text: &str,
+    ) -> Result<crate::tools::ExecutionOutcome, String> {
+        self.desktop(|stop| self.inner.type_text_scoped(window, text, stop))
+    }
+
     fn opencode_ready(&self) -> Result<(), String> {
         let found = self.svc.harness.is_some();
         found
@@ -277,7 +289,13 @@ impl Service {
         let steps = wf
             .steps
             .iter()
-            .map(|s| step(&s.action.describe(), s.action.risk()))
+            .map(|s| {
+                let mut preview = step(&s.action.describe(), s.action.risk());
+                if let workflows::StepAction::TypeText { text, .. } = &s.action {
+                    preview.detail = format!("Literal line: {text:?}");
+                }
+                preview
+            })
             .collect();
         let mut s = self.lock();
         if s.phase.is_busy() {

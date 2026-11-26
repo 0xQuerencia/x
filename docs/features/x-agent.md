@@ -372,6 +372,24 @@ run OpenCode require approval in Autonomous mode too. Hands-free speech can
 prepare a saved run for approval. A sequential step with `requires` waits
 for a verified predecessor. An unverified launch skips dependent steps.
 
+### Verified literal text in a sequential workflow
+
+In **Agent → Workflows**, add an **Open app** step set to `text-editor`, then
+add **Insert text into new editor** and enter that step's ID and the literal
+line. The saved JSON uses `{"action":"type_text","opened_by":"step-1","text":"A local note"}`.
+Use the workflow preview to review the saved steps, then start the run and
+approve the exact text. A line can contain up to 300 characters.
+
+The Hyprland adapter uses AT-SPI to insert and read back the line in the
+focused editor window opened by this run. Reused windows, ambiguous focus,
+protected fields and failed readback stop the typing step. The result includes
+verification status. The local workflow file and approval preview show the
+literal text. Run summaries and activity omit it.
+
+The disposable Hyprland test uses a GTK editor fixture. Other desktop
+backends return unsupported for this operation. Graph runs continue to
+refuse this sequential step.
+
 ### Workflow DAG schema (development)
 
 The new `workflows::dag` module validates versioned graph JSON, detects

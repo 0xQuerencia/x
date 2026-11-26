@@ -65,14 +65,15 @@ fn workspace() -> u64 {
 }
 
 fn wait_for(service: &Service, phase: Phase) -> Snapshot {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let snapshot = service.snapshot(0);
         if snapshot.phase == phase {
             return snapshot;
         }
         assert!(
-            Instant::now() < deadline,
+            !matches!(snapshot.phase, Phase::Failed | Phase::Cancelled)
+                && Instant::now() < deadline,
             "Waiting for {phase:?}, got {snapshot:?}"
         );
         thread::sleep(Duration::from_millis(10));
@@ -141,4 +142,102 @@ fn finished_voice_reaches_verified_workspace_and_a_stopped_capture_cannot_move_i
     assert_eq!(workspace(), 3);
     assert!(service.approve(preview.id).is_err());
     assert_eq!(planner.0.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+#[ignore = "mutates a disposable Hyprland session; run scripts/smoke-x/hyprland-voice.sh"]
+fn saved_workflow_inserts_literal_text_once_and_rejects_a_reused_editor() {
+    use x_agent::service::AutonomyMode;
+    use x_agent::workflows::model::{OnFailure, Step, StepAction, Workflow};
+
+    assert_eq!(
+        std::env::var("X_TEST_ISOLATED_HYPRLAND").as_deref(),
+        Ok("1")
+    );
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+    let output = home.join("editor-text");
+    let (requests, _requested) = channel();
+    let (_reply, replies) = channel();
+    let service = Service::new(
+        Arc::new(FinishedTranscript {
+            requests,
+            replies: Mutex::new(replies),
+        }),
+        Arc::new(RealLauncher),
+        None,
+    );
+    service.set_autonomy_mode(AutonomyMode::Autonomous);
+    service.set_workflow_dirs(home.join("workflows"), home.clone());
+    let literal = "  Café and open Firefox  ";
+    let workflow = Workflow {
+        id: "note".into(),
+        name: "Write a local note".into(),
+        triggers: vec![],
+        steps: vec![
+            Step {
+                id: "editor".into(),
+                action: StepAction::OpenApp {
+                    app: "text-editor".into(),
+                    workspace: None,
+                },
+                requires: vec![],
+                timeout_secs: Some(5),
+                on_failure: OnFailure::Stop,
+            },
+            Step {
+                id: "note".into(),
+                action: StepAction::TypeText {
+                    opened_by: "editor".into(),
+                    text: literal.into(),
+                },
+                requires: vec!["editor".into()],
+                timeout_secs: None,
+                on_failure: OnFailure::Stop,
+            },
+        ],
+    };
+    service.workflow_store().save(&workflow).unwrap();
+    let preview = service.plan_workflow_by_id("note").unwrap();
+    assert_eq!(service.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(preview.steps[1].detail.contains(literal));
+    assert!(!output.exists());
+    service.approve(preview.id).unwrap();
+    let done = wait_for(&service, Phase::Completed);
+    assert_eq!(std::fs::read_to_string(&output).unwrap(), literal);
+    assert!(
+        done.events
+            .iter()
+            .all(|event| !event.text.contains(literal))
+    );
+    assert!(service.approve(preview.id).is_err());
+    let report = service.workflow_store().last("note").unwrap();
+    assert!(
+        report
+            .steps
+            .iter()
+            .all(|step| step.status == x_agent::workflows::StepStatus::Done)
+    );
+    assert!(!serde_json::to_string(&report).unwrap().contains(literal));
+
+    let repeat = service.plan_workflow_by_id("note").unwrap();
+    service.approve(repeat.id).unwrap();
+    wait_for(&service, Phase::Failed);
+    assert_eq!(std::fs::read_to_string(&output).unwrap(), literal);
+
+    std::fs::write(home.join("close-editor"), []).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !x_agent::wm::view().unwrap().windows.is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the fixture editor did not close"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    std::fs::write(home.join("protected-editor"), []).unwrap();
+    let protected = service.plan_workflow_by_id("note").unwrap();
+    service.approve(protected.id).unwrap();
+    let failed = wait_for(&service, Phase::Failed).task.unwrap();
+    assert!(failed.steps[1].detail.contains("plain text field"));
+    assert_eq!(std::fs::read_to_string(output).unwrap(), literal);
+    std::fs::write(home.join("close-editor"), []).unwrap();
 }

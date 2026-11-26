@@ -168,6 +168,25 @@ pub trait Host: Send + Sync {
         stop.check()?;
         self.close_window(window)
     }
+    fn text_editor_ready(&self) -> Result<(), String> {
+        Err("Verified editor typing is unsupported on this desktop".into())
+    }
+    fn type_text(
+        &self,
+        _window: &WinInfo,
+        _text: &str,
+    ) -> Result<crate::tools::ExecutionOutcome, String> {
+        Err("Verified editor typing is unsupported on this desktop".into())
+    }
+    fn type_text_scoped(
+        &self,
+        window: &WinInfo,
+        text: &str,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<crate::tools::ExecutionOutcome, String> {
+        stop.check()?;
+        self.type_text(window, text)
+    }
     fn opencode_ready(&self) -> Result<(), String>;
     fn opencode(&self, goal: &str, dir: &Path) -> Result<String, String>;
     /// Whether this step may run. The person approved the workflow as a whole; this is the

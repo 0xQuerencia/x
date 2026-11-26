@@ -37,6 +37,10 @@ pub const APPS: &[(&str, &[&str])] = &[
         ],
     ),
     ("files", &["nautilus", "dolphin", "thunar", "pcmanfm"]),
+    (
+        "text-editor",
+        &["mousepad", "gedit", "pluma", "gnome-text-editor"],
+    ),
 ];
 pub(crate) const BROWSERS: &[&str] = &["firefox", "chrome", "chromium", "brave"];
 const SITES: &[(&str, &str)] = &[
@@ -74,6 +78,8 @@ const ALIASES: &[(&str, &str)] = &[
     ("files", "files"),
     ("editor", "vscode"),
     ("my editor", "vscode"),
+    ("text-editor", "text-editor"),
+    ("text editor", "text-editor"),
 ];
 
 fn lookup<'a, T>(table: &'a [(&'a str, T)], key: &str) -> Option<&'a T> {

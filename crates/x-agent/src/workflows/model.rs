@@ -15,6 +15,7 @@ pub const MAX_TRIGGERS: usize = 8;
 pub const MAX_NAME: usize = 60;
 pub const DEFAULT_TIMEOUT: u64 = 15;
 pub const MAX_TIMEOUT: u64 = 120;
+pub(super) const TEXT_EDITOR: &str = "text-editor";
 const MAX_TEXT: usize = 300;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -95,6 +96,11 @@ pub enum StepAction {
     CloseOpenedWindow {
         opened_by: String,
     },
+    /// Insert one literal line into a text editor window opened by this run.
+    TypeText {
+        opened_by: String,
+        text: String,
+    },
     /// An existing X action, written as the phrase you would say, such as
     /// `search github for rust lifetimes`. It is parsed and checked like spoken input.
     RunAction {
@@ -129,6 +135,9 @@ impl StepAction {
             Self::CloseOpenedWindow { opened_by } => {
                 format!("Close the window opened by step {opened_by}")
             }
+            Self::TypeText { opened_by, .. } => {
+                format!("Insert text into the editor opened by {opened_by}")
+            }
             Self::RunAction { phrase } => format!("Run: {phrase}"),
             Self::OpencodeTask { goal, directory } => {
                 format!("OpenCode in {directory}: {goal}")
@@ -144,6 +153,7 @@ impl StepAction {
                 "launches an app"
             }
             Self::OpenUrl { .. } => "opens a website",
+            Self::TypeText { .. } => "inserts text into a local text editor",
             Self::RunAction { .. } => "runs an X action",
             Self::CloseOpenedWindow { .. } => "closes a window opened by this run",
             _ => "",
@@ -202,6 +212,7 @@ impl Workflow {
                 step.action,
                 StepAction::OpenUrl { .. }
                     | StepAction::RunAction { .. }
+                    | StepAction::TypeText { .. }
                     | StepAction::OpencodeTask { .. }
                     | StepAction::CloseOpenedWindow { .. }
             )
@@ -248,6 +259,7 @@ impl Workflow {
         }
         let mut ids: Vec<&str> = Vec::new();
         let mut opening_steps: HashSet<&str> = HashSet::new();
+        let mut editor_steps: HashSet<&str> = HashSet::new();
         for step in &self.steps {
             let sid = Some(step.id.as_str());
             if !slug_ok(&step.id) {
@@ -283,6 +295,17 @@ impl Workflow {
                 StepAction::OpenApp { .. } | StepAction::OpenTerminal { .. }
             ) {
                 opening_steps.insert(&step.id);
+            }
+            if let StepAction::TypeText { opened_by, .. } = &step.action
+                && !editor_steps.contains(opened_by.as_str())
+            {
+                note(
+                    sid,
+                    "Typing needs an earlier step that opens a text-editor".into(),
+                );
+            }
+            if matches!(&step.action, StepAction::OpenApp { app, .. } if app == TEXT_EDITOR) {
+                editor_steps.insert(&step.id);
             }
             ids.push(&step.id);
         }
@@ -356,6 +379,7 @@ pub(super) fn check_action(action: &StepAction, home: &Path) -> Result<(), Strin
                 Err("The opening step id is invalid".into())
             }
         }
+        StepAction::TypeText { text, .. } => check_text("The literal text", text),
         StepAction::RunAction { phrase } => {
             check_text("The action phrase", phrase)?;
             let actions = tools::plan_rules(phrase)
@@ -364,7 +388,9 @@ pub(super) fn check_action(action: &StepAction, home: &Path) -> Result<(), Strin
                 .iter()
                 .any(|action| matches!(action, tools::Action::Type { .. }))
             {
-                return Err("Typing into windows is not allowed in workflows".into());
+                return Err(
+                    "Typing into windows is not allowed in Run X action steps. Use Insert text with an editor opened by the workflow".into(),
+                );
             }
             if actions.iter().any(|action| {
                 !action.risk().is_low_risk()

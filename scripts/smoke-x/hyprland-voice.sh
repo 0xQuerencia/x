@@ -2,7 +2,7 @@
 # Run X's finished-voice acceptance test on Hyprland nested in a virtual KWin desktop.
 set -Eeuo pipefail
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-for tool in cargo dbus-run-session kwin_wayland Hyprland hyprctl python3; do
+for tool in cargo dbus-daemon dbus-run-session gdbus kwin_wayland Hyprland hyprctl python3; do
   if ! command -v "$tool" >/dev/null; then
     echo "Hyprland voice smoke requires $tool." >&2
     exit 1
@@ -27,23 +27,28 @@ with open(sys.argv[1], encoding="utf-8") as messages:
         sys.exit("No Hyprland test executable found")
 PY
 )"
+# D-Bus activation inherits this environment, so isolate it before starting the bus.
+unset DISPLAY WAYLAND_DISPLAY WAYLAND_SOCKET HYPRLAND_INSTANCE_SIGNATURE SWAYSOCK I3SOCK AT_SPI_BUS_ADDRESS
+unset XDG_SEAT XDG_SESSION_ID XDG_VTNR
+export HOME="$scratch/home" XDG_RUNTIME_DIR="$scratch/r" XDG_CONFIG_HOME="$scratch/config"
+export XDG_CACHE_HOME="$scratch/cache" XDG_DATA_HOME="$scratch/data" XDG_STATE_HOME="$scratch/state"
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland
+mkdir -m 700 "$HOME" "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 dbus-run-session -- bash -s -- "$scratch" "$binary" <<'INNER'
 set -Eeuo pipefail
 scratch="$1"
 binary="$2"
 kwin=""
 hypr=""
+access_bus=""
+registry=""
 cleanup() {
+  if [[ -n "$registry" ]]; then kill "$registry" 2>/dev/null || true; wait "$registry" 2>/dev/null || true; fi
+  if [[ -n "$access_bus" ]]; then kill "$access_bus" 2>/dev/null || true; wait "$access_bus" 2>/dev/null || true; fi
   if [[ -n "$hypr" ]]; then kill "$hypr" 2>/dev/null || true; wait "$hypr" 2>/dev/null || true; fi
   if [[ -n "$kwin" ]]; then kill "$kwin" 2>/dev/null || true; wait "$kwin" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
-export HOME="$scratch/home" XDG_RUNTIME_DIR="$scratch/r" XDG_CONFIG_HOME="$scratch/config"
-export XDG_CACHE_HOME="$scratch/cache" XDG_DATA_HOME="$scratch/data" XDG_STATE_HOME="$scratch/state"
-export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland
-mkdir -m 700 "$HOME" "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
-unset DISPLAY WAYLAND_DISPLAY WAYLAND_SOCKET HYPRLAND_INSTANCE_SIGNATURE SWAYSOCK I3SOCK
-unset XDG_SEAT XDG_SESSION_ID XDG_VTNR
 kwin_wayland --virtual --socket wayland-parent --width 1024 --height 768 \
   --no-lockscreen --no-global-shortcuts > "$scratch/kwin.log" 2>&1 &
 kwin="$!"
@@ -75,5 +80,80 @@ for i in {1..80}; do
   sleep 0.1
 done
 if [[ "$ready" != 1 ]]; then cat "$scratch/hypr.log" >&2; exit 1; fi
-X_TEST_ISOLATED_HYPRLAND=1 "$binary" --ignored --test-threads=1 --nocapture
+for display in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+  if [[ -S "$display" ]]; then export WAYLAND_DISPLAY="${display##*/}"; break; fi
+done
+if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then cat "$scratch/hypr.log" >&2; exit 1; fi
+export GDK_BACKEND=wayland GTK_USE_PORTAL=0
+# System D-Bus activation can use a socket under /run/user even when the Wayland
+# session is private. Both the GTK fixture and X must use this owned bus.
+export AT_SPI_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/accessibility"
+dbus-daemon --session --nofork --address="$AT_SPI_BUS_ADDRESS" > "$scratch/accessibility.log" 2>&1 &
+access_bus="$!"
+for i in {1..80}; do
+  [[ ! -S "$XDG_RUNTIME_DIR/accessibility" ]] || break
+  kill -0 "$access_bus" 2>/dev/null || break
+  sleep 0.1
+done
+if [[ ! -S "$XDG_RUNTIME_DIR/accessibility" ]]; then cat "$scratch/accessibility.log" >&2; exit 1; fi
+for candidate in /usr/lib/at-spi2-registryd /usr/libexec/at-spi2-registryd /usr/lib/at-spi2-core/at-spi2-registryd; do
+  if [[ -x "$candidate" ]]; then
+    "$candidate" --use-gnome-session=0 > "$scratch/registry.log" 2>&1 &
+    registry="$!"
+    break
+  fi
+done
+if [[ -z "$registry" ]]; then echo "AT-SPI registry is required" >&2; exit 1; fi
+gdbus wait --address "$AT_SPI_BUS_ADDRESS" --timeout 5 org.a11y.atspi.Registry
+mkdir -m 700 "$scratch/bin"
+cat > "$scratch/bin/mousepad" <<'PYTHON'
+#!/usr/bin/env python3
+from pathlib import Path
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk
+
+app = Gtk.Application(application_id="org.xfce.mousepad")
+
+def activate(app):
+    home = Path.home()
+    def record(text):
+        (home / "editor-text").write_text(text, encoding="utf-8")
+
+    if (home / "protected-editor").exists():
+        view = Gtk.Entry()
+        view.set_visibility(False)
+        view.connect("changed", lambda entry: record(entry.get_text()))
+    else:
+        view = Gtk.TextView()
+        buffer = view.get_buffer()
+        buffer.connect("changed", lambda buffer: record(
+            buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)))
+    window = Gtk.ApplicationWindow(application=app, title="X disposable editor")
+    window.set_default_size(480, 160)
+    window.add(view)
+    window.show_all()
+    view.grab_focus()
+
+    def close_if_requested():
+        request = home / "close-editor"
+        if not request.exists():
+            return True
+        request.unlink()
+        window.close()
+        return False
+
+    GLib.timeout_add(100, close_if_requested)
+
+app.connect("activate", activate)
+app.run()
+PYTHON
+chmod 700 "$scratch/bin/mousepad"
+export PATH="$scratch/bin:$PATH"
+if ! X_TEST_ISOLATED_HYPRLAND=1 "$binary" --ignored --test-threads=1 --nocapture; then
+  hyprctl -j clients >&2
+
+  exit 1
+fi
 INNER
