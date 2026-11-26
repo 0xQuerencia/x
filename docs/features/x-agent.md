@@ -385,13 +385,22 @@ Do not pipe secrets or full build logs blindly. Pattern redaction is best
 effort and is **not** a general data-loss prevention system; inspect the
 selected excerpt before approving it.
 
-### Read-only workflow graph preview
+### Workflow preview and dry run
 
 Run `hex agent workflow preview <id>` to validate a saved workflow or v2/v3/v4
 graph and print its ordered nodes, dependencies and actions as JSON. The
 response explicitly says `executed: false` and `authorization:
 not_requested`; no desktop action, coding harness, approval or merge is
-triggered by this command. `workflow run` reviews a legacy sequential workflow;
+triggered by this command.
+
+Use **Dry run** in the Workflows list or editor, or run
+`hex agent workflow dry-run <id>` to validate a sequential workflow and check
+its current desktop prerequisites. This works with Autonomous mode on and
+leaves any existing task untouched. The editor can check unsaved changes. The
+CLI returns the ordered steps and either a passing preflight or a refusal with
+the missing prerequisites. Running the workflow checks the prerequisites again.
+
+`workflow run` reviews a sequential workflow;
 `workflow run-graph` reviews a supported typed graph before execution.
 Saved runs that open a website, use a spoken action step, close a window, or
 run OpenCode require approval in Autonomous mode too. Hands-free speech can

@@ -396,7 +396,7 @@ pub(in crate::rune_ui) struct Manager {
     dirty: bool,
     shown: String,
     editor: Option<WfEditor>,
-    /// Shown under the list: the outcome of the last Save, Delete or Duplicate.
+    /// Outcome of the latest workflow operation.
     note: Option<(bool, String)>,
     /// A TextEdit to hand out when a closure outlives the editor it indexes.
     spare: TextEdit,
@@ -485,6 +485,29 @@ fn note(ui: &mut Ui, ok: bool, message: String) {
     ui.agent.workflows.dirty = true;
 }
 
+fn dry_run(ui: &mut Ui, workflow: Result<Workflow, String>) {
+    let checked = workflow.and_then(|wf| {
+        agent_host::service().check_workflow(&wf)?;
+        Ok(wf)
+    });
+    ui.agent.workflows.note = Some(match checked {
+        Ok(wf) => (
+            true,
+            format!(
+                "{} · {}\n{}",
+                wf.name,
+                tr("Prerequisites checked. No steps ran."),
+                wf.steps
+                    .iter()
+                    .map(|step| step.action.describe())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+        ),
+        Err(error) => (false, error),
+    });
+}
+
 fn save(ui: &mut Ui) -> Option<String> {
     let wf = ui.agent.workflows.editor.as_ref()?.build();
     let saved = store().save(&wf);
@@ -528,6 +551,13 @@ pub(super) fn view(p: Paint, ui: &Ui) -> El {
     match &mgr.editor {
         Some(editor) => body = body.child(editor_card(p, editor)),
         None => body = body.child(list(p, mgr)),
+    }
+    if let Some((ok, message)) = &mgr.note {
+        body = body.child(small(
+            "wf-note".into(),
+            message.clone(),
+            if *ok { p.success() } else { p.danger() },
+        ));
     }
     body
 }
@@ -647,13 +677,6 @@ fn list(p: Paint, mgr: &Manager) -> El {
             "wf-recovery-unavailable".into(),
             "Could not inspect interrupted coding jobs; no retry was attempted.".into(),
             p.warning(),
-        ));
-    }
-    if let Some((ok, message)) = &mgr.note {
-        list = list.child(small(
-            "wf-note".into(),
-            message.clone(),
-            if *ok { p.success() } else { p.danger() },
         ));
     }
     list
@@ -794,7 +817,8 @@ fn entry_card(p: Paint, item: &Row) -> El {
         }
     }
     let runnable = entry.runnable();
-    let (edit_id, run_id, dup_id, del_id) = (id.clone(), id.clone(), id.clone(), id.clone());
+    let (edit_id, dry_id, run_id, dup_id, del_id) =
+        (id.clone(), id.clone(), id.clone(), id.clone(), id.clone());
     card.child(
         row()
             .key(key("actions"))
@@ -813,8 +837,15 @@ fn entry_card(p: Paint, item: &Row) -> El {
             ))
             .child(button(
                 p,
+                &key("dry-run"),
+                tr("Dry run"),
+                ButtonKind::Secondary,
+                move |ui: &mut Ui, _| dry_run(ui, store().get(&dry_id)),
+            ))
+            .child(button(
+                p,
                 &key("run"),
-                tr("Test"),
+                tr("Run"),
                 if runnable {
                     ButtonKind::Primary
                 } else {
@@ -942,24 +973,12 @@ fn editor_card(p: Paint, ed: &WfEditor) -> El {
             ))
             .child(button(
                 p,
-                "wf-test",
-                tr("Save and test"),
+                "wf-dry-run",
+                tr("Dry run"),
                 ButtonKind::Secondary,
                 |ui: &mut Ui, _| {
-                    if let Some(id) = save(ui) {
-                        let outcome = agent_host::service().plan_workflow_by_id(&id);
-                        if let Err(error) = outcome {
-                            if let Some(e) = ui.agent.workflows.editor.as_mut() {
-                                e.problems = vec![error];
-                            }
-                        } else {
-                            ui.agent.workflows.editor = None;
-                            note(
-                                ui,
-                                true,
-                                tr("Planned: review it above and approve").to_string(),
-                            );
-                        }
+                    if let Some(editor) = ui.agent.workflows.editor.as_ref() {
+                        dry_run(ui, Ok(editor.build()));
                     }
                 },
             ))
@@ -970,6 +989,7 @@ fn editor_card(p: Paint, ed: &WfEditor) -> El {
                 ButtonKind::Secondary,
                 |ui: &mut Ui, _| {
                     ui.agent.workflows.editor = None;
+                    ui.agent.workflows.note = None;
                 },
             )),
     )
