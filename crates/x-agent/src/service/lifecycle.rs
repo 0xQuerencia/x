@@ -117,41 +117,10 @@ impl Service {
         if s.model_stop.as_ref().is_some_and(Cancellation::request) {
             emit(&mut s, "info", "Stop requested for the pending plan");
         }
-        match s.phase {
-            Phase::AwaitingApproval | Phase::WaitingForInput => {
-                s.stop.request();
-                let id = s.task.as_ref().map(|task| task.id).unwrap_or_default();
-                set_phase(&mut s, Phase::Cancelled);
-                s.edit = None;
-                s.computer_dialogue = None;
-                s.window_dialogue = None;
-                s.workflow = None;
-                s.graph_workflow = None;
-                s.active_graph_stops = None;
-                s.pending_tests = None;
-                s.pending_integration = None;
-                s.project_command = None;
-                s.actions.clear();
-                s.guard = None;
-                s.grants.clear();
-                s.create_workspace = false;
-                if let Some(t) = s.task.as_mut() {
-                    t.edit = None;
-                }
-                audit_best_effort(&mut s, AuditKind::Discarded, None);
-                emit(&mut s, "info", "Plan discarded");
-                emit(&mut s, "approval", &format!("discarded task {id}"));
-            }
-            Phase::Running => {
-                if s.stop.request() {
-                    audit_best_effort(&mut s, AuditKind::StopRequested, None);
-                    emit(&mut s, "info", "Stop requested");
-                }
-            }
-            Phase::Listening | Phase::Transcribing => {
-                self.discard_voice(s);
-            }
-            _ => {}
+        if matches!(s.phase, Phase::Listening | Phase::Transcribing) {
+            self.discard_voice(s);
+        } else {
+            cancel_task_locked(&mut s);
         }
         Ok(())
     }
@@ -268,6 +237,41 @@ impl Service {
             }
             thread::sleep(std::time::Duration::from_millis(50));
         }
+    }
+}
+
+/// Cancel the active plan or signal its worker while its identity is locked.
+pub(super) fn cancel_task_locked(state: &mut State) {
+    match state.phase {
+        Phase::AwaitingApproval | Phase::WaitingForInput => {
+            state.stop.request();
+            let id = state.task.as_ref().map(|task| task.id).unwrap_or_default();
+            set_phase(state, Phase::Cancelled);
+            state.edit = None;
+            state.computer_dialogue = None;
+            state.window_dialogue = None;
+            state.workflow = None;
+            state.graph_workflow = None;
+            state.active_graph_stops = None;
+            state.pending_tests = None;
+            state.pending_integration = None;
+            state.project_command = None;
+            state.actions.clear();
+            state.guard = None;
+            state.grants.clear();
+            state.create_workspace = false;
+            if let Some(task) = state.task.as_mut() {
+                task.edit = None;
+            }
+            audit_best_effort(state, AuditKind::Discarded, None);
+            emit(state, "info", "Plan discarded");
+            emit(state, "approval", &format!("discarded task {id}"));
+        }
+        Phase::Running if state.stop.request() => {
+            audit_best_effort(state, AuditKind::StopRequested, None);
+            emit(state, "info", "Stop requested");
+        }
+        _ => {}
     }
 }
 

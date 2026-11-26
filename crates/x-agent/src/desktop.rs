@@ -411,23 +411,30 @@ fn accessibility_window_id<'a>(listed: &'a Value, win: &Win) -> Result<&'a str, 
         .into_iter()
         .flatten()
         .filter(|w| w.get("pid").and_then(Value::as_u64) == Some(u64::from(win.pid)));
-    let mut exact = same_pid
-        .clone()
-        .filter(|w| w.get("title").and_then(Value::as_str) == Some(win.title.as_str()));
-    let candidate = if let Some(first) = exact.next() {
-        if exact.next().is_some() {
-            return Err("Several accessibility windows have the same title".into());
-        }
-        Some(first)
-    } else {
-        // A fallback is safe only when the process has exactly one window.
-        let mut windows = same_pid;
-        windows.next().filter(|_| windows.next().is_none())
-    };
-    candidate
-        .and_then(|w| w.get("id")?.as_str())
+    let same_title = |w: &Value| w.get("title").and_then(Value::as_str) == Some(win.title.as_str());
+    let has_exact_title = same_pid.clone().any(same_title);
+    let mut candidates = same_pid.filter(|w| !has_exact_title || same_title(w));
+    let no_tree = "The window has no unique accessibility tree";
+    let first = candidates.next().ok_or(no_tree)?;
+    let id = first
+        .get("id")
+        .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| "The window has no unique accessibility tree".into())
+        .ok_or(no_tree)?;
+
+    // AT-SPI may list the same window node more than once. Multiple distinct
+    // native identities are still ambiguous, including the PID-only fallback.
+    if candidates.any(|candidate| {
+        candidate.get("id").and_then(Value::as_str) != Some(id)
+            || candidate.get("process_instance") != first.get("process_instance")
+    }) {
+        return Err(if has_exact_title {
+            "Several accessibility windows have the same title".into()
+        } else {
+            no_tree.into()
+        });
+    }
+    Ok(id)
 }
 
 impl Desktop for AgentDesktop {
@@ -616,6 +623,25 @@ mod accessibility_window_tests {
             {"pid": 7, "title": "Tab", "id": "b"}
         ]});
         assert!(accessibility_window_id(&listed, &window()).is_err());
+    }
+
+    #[test]
+    fn repeated_rows_resolve_only_the_same_native_accessibility_identity() {
+        let row = serde_json::json!({
+            "pid": 7, "title": "Tab", "id": "a", "process_instance": "one"
+        });
+        let repeated = serde_json::json!({"data": [row.clone(), row.clone()]});
+        assert_eq!(accessibility_window_id(&repeated, &window()).unwrap(), "a");
+
+        let mut renamed = window();
+        renamed.title = "Renamed".into();
+        assert_eq!(accessibility_window_id(&repeated, &renamed).unwrap(), "a");
+
+        let mut replaced = row.clone();
+        replaced["process_instance"] = serde_json::json!("two");
+        let ambiguous = serde_json::json!({"data": [row, replaced]});
+        assert!(accessibility_window_id(&ambiguous, &window()).is_err());
+        assert!(accessibility_window_id(&ambiguous, &renamed).is_err());
     }
 
     #[test]

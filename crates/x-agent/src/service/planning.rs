@@ -56,7 +56,31 @@ impl Service {
 
     /// Apps the person lets X read and operate. Anything else asks first, every time.
     pub fn set_computer_apps(&self, apps: Vec<String>) {
-        self.lock().computer_apps = apps.clone();
+        {
+            let mut state = self.lock();
+            let revoked = state.actions.iter().any(|request| {
+                let Action::Computer { app, .. } = &request.action else {
+                    return false;
+                };
+                let id = request.metadata.idempotency_key;
+                state.computer_apps.contains(app)
+                    && !apps.contains(app)
+                    && state.task.as_ref().is_some_and(|task| {
+                        task.id == id.task
+                            && task.steps.get(id.step).is_some_and(|step| {
+                                matches!(
+                                    step.status.as_str(),
+                                    "pending" | "running" | "waiting_input" | "waiting_review"
+                                )
+                            })
+                    })
+            });
+            state.computer_apps.clone_from(&apps);
+            if state.phase.is_busy() && revoked {
+                super::lifecycle::cancel_task_locked(&mut state);
+                emit(&mut state, "info", "Computer app grant revoked");
+            }
+        }
         self.sync_background_computer_policy(Some(&apps), None);
     }
 
@@ -366,6 +390,7 @@ impl Service {
             return Err("The selected model changed during computer use".into());
         }
         let state = self.lock();
+        state.stop.check()?;
         if !planner.is_local() && !state.computer_remote {
             return Err("Remote computer consent was revoked".into());
         }
