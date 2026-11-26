@@ -142,6 +142,28 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
                 _ => need("exactly a recorded run UUID and node id"),
             }
         }
+        "artifact-review-preview" | "plan-artifact-review" => {
+            let mut args = value.split_whitespace();
+            let source = args.next().and_then(|value| value.split_once('/'));
+            match (command, source, args.next(), args.next(), args.next()) {
+                ("artifact-review-preview", Some((run, node)), Some(head), None, None) => {
+                    match svc.preview_artifact_review(run, node, head) {
+                        Ok(preview) => match serde_json::to_string(&preview) {
+                            Ok(json) => ControlReply::done(json),
+                            Err(_) => refuse("Could not display the local review context".into()),
+                        },
+                        Err(error) => refuse(error),
+                    }
+                }
+                ("plan-artifact-review", Some((run, node)), Some(head), Some(token), None) => {
+                    match svc.plan_artifact_review(run, node, head, token) {
+                        Ok(_) => super::snapshot(0),
+                        Err(error) => refuse(error),
+                    }
+                }
+                _ => need("an exact run UUID/node ID, commit and the preview token when planning"),
+            }
+        }
         "plan-coding-retry" => {
             let mut args = value.split_whitespace();
             match (
@@ -316,7 +338,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, open-worktree, worktree-cleanup-preview, worktree-cleanup, reconcile-coding, plan-coding-retry, correction-preview, plan-correction, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, open-worktree, worktree-cleanup-preview, worktree-cleanup, reconcile-coding, plan-coding-retry, artifact-review-preview, plan-artifact-review, correction-preview, plan-correction, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }

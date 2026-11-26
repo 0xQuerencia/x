@@ -105,6 +105,18 @@ This explicit local command returns repository text to the operator, not to the 
 
 **Open checkout** revalidates the exact Git-owned path. **Review fast-forward** is available for a current clean committed result. It opens a separate review of the primary checkout and never applies a merge on selection. The approved merge rechecks the exact reviewed commit and worktree. The Git fixture checks actual commit content and stale-test handling; installed-operator acceptance is still required.
 
+## Tool-free review of a recorded coding artifact
+
+The local `hex agent workflow artifact-review-preview <run>/<node> <commit>`
+command displays a bounded redacted diff excerpt and its review token for
+Claude Code. Review the outgoing content and use
+`hex agent workflow plan-artifact-review <run>/<node> '<commit> <review-token>'`.
+X verifies the registered project and artifact again at dispatch. The ordinary
+Work card asks for separate approval before sending the excerpt. The adapter
+starts with tools disabled and the artifact review never becomes the selected
+continuation session. Provider findings are advisory. Only a separately
+approved fixed suite provides test evidence at its recorded commit.
+
 ## Check delivery for a recorded job (A02/A09/B11)
 
 Run `hex agent workflow reconcile-coding <run-id> <node-id>` with an exact
