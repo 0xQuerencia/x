@@ -1416,12 +1416,11 @@ mod voice_edits {
     fn setup(text: &str, model: Option<Arc<FakeModel>>) -> (Service, Arc<FakeField>) {
         let (s, _, _) = super::rig();
         let r = rig(text);
-        s.set_context(Arc::new(Engine::new(r.windows.clone(), r.field.clone())));
+        s.set_context(Arc::new(Engine::new(r.windows, r.field.clone())));
         if let Some(m) = model {
             s.set_planner(Some(m));
         }
         s.record_insertion(text);
-        std::mem::forget(r.windows); // keep the fake desktop alive for the test's duration
         (s, r.field)
     }
 
