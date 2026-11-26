@@ -1790,6 +1790,29 @@ mod saved_workflows {
     }
 
     #[test]
+    fn dry_run_checks_prerequisites_without_acquiring_authority() {
+        let r = rig();
+        r.s.set_autonomy_mode(AutonomyMode::Autonomous);
+        let wf = r.s.workflow_store().get("coding").unwrap();
+        r.s.check_workflow(&wf).unwrap();
+        let idle = r.s.snapshot(0);
+        assert_eq!(idle.phase, Phase::Idle);
+        assert!(idle.task.is_none());
+        assert!(r.s.workflow_store().last(&wf.id).is_none());
+        assert!(r.host.log().is_empty());
+
+        let pending = r.s.plan_hands_free("start coding", Mode::Actions).unwrap();
+        r.s.check_workflow(&wf).unwrap();
+        r.host.w.lock().unwrap().installed.remove("firefox");
+        let error = r.s.check_workflow(&wf).unwrap_err();
+        assert!(error.contains("firefox"), "{error}");
+        let after = r.s.snapshot(0);
+        assert_eq!(after.phase, Phase::AwaitingApproval);
+        assert_eq!(after.task.unwrap().id, pending.id);
+        assert!(r.host.log().is_empty());
+    }
+
+    #[test]
     fn a_failed_run_says_which_steps_worked_and_which_did_not() {
         let r = rig_with(None, |f| {
             f.w.lock().unwrap().never_appears.insert("terminal");

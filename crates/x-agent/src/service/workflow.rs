@@ -255,6 +255,15 @@ impl Service {
                 return Err(busy(s.phase));
             }
         }
+        self.check_workflow(&wf)?;
+        let task = self.begin_workflow_task(text, &wf, source, voice_route)?;
+        self.approve_if_automatic(task.id)?;
+        Ok(task)
+    }
+
+    /// Validate a sequential workflow and read its current prerequisites.
+    /// This creates no task or approval and leaves existing work untouched.
+    pub fn check_workflow(&self, wf: &Workflow) -> Result<(), String> {
         let cfg = self.workflow_config();
         wf.validate(&cfg.home)
             .map_err(|p| format!("Workflow {:?} is not valid: {}", wf.name, join(&p)))?;
@@ -264,7 +273,7 @@ impl Service {
             stop: Cancellation::default(),
             task_id: None,
         };
-        let problems = workflows::preflight(&wf, &bridge, &cfg);
+        let problems = workflows::preflight(wf, &bridge, &cfg);
         if !problems.is_empty() {
             return Err(format!(
                 "{}: nothing was started: {}",
@@ -272,12 +281,10 @@ impl Service {
                 problems.join("; ")
             ));
         }
-        let task = self.begin_workflow_task(text, &wf, source, voice_route)?;
-        self.approve_if_automatic(task.id)?;
-        Ok(task)
+        Ok(())
     }
 
-    /// For the manager's Test and Run buttons and `x agent workflow run`.
+    /// For the manager's Run button and `x agent workflow run`.
     pub fn plan_workflow_by_id(&self, id: &str) -> Result<super::Task, String> {
         let wf = self.workflow_store().get(id)?;
         let text = format!("Run workflow: {}", wf.name);
