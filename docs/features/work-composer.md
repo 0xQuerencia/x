@@ -123,6 +123,16 @@ non-force removal after checking ownership, commit and status again. Cleanup
 requires a stopped or failed preparation with durable evidence that dispatch
 never began. Retained journal records and the primary checkout remain in place.
 
+To retry an independent coding node, select the matching saved workflow and run
+`hex agent workflow plan-coding-retry <workflow-id> <run-id>/<node-id>`.
+Review the unchanged request, the recorded base commit and the attempt number,
+then approve the exact new task. A retry keeps the recorded run and node.
+It requires durable proof the prior attempt never reached dispatch. It can
+reattach a clean prepared checkout at the same commit or prepare an absent,
+previously unprepared checkout. The limit is three total attempts. Delivered,
+ambiguous, dirty, stale and dependency-bound requests remain unavailable for
+retry. A retry never replays earlier nodes.
+
 For an interrupted first attempt before durable checkout preparation, X can
 report that dispatch was never reached. After preparation a missing session
 remains uncertain. Claude Code lookup is unsupported. Every result leaves the

@@ -78,6 +78,7 @@ impl Reservation {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub(crate) fn reset_preparation(&mut self) {
         self.resolved_commit = None;
     }
@@ -100,6 +101,34 @@ pub enum Inspection {
 }
 
 impl Manager {
+    pub(crate) fn retry_checkout(
+        &self,
+        project: &Project,
+        run: Uuid,
+        node: &str,
+        reservation: &Reservation,
+        inspection: Inspection,
+    ) -> Result<Option<OwnedWorktree>, String> {
+        let base = reservation.approved_base();
+        match inspection {
+            Inspection::Absent { .. } if reservation.resolved_commit().is_none() => Ok(None),
+            Inspection::Owned {
+                current_commit,
+                clean_for_cleanup: true,
+                prepared_commit_matches: Some(true),
+                ..
+            } if current_commit == base => {
+                let tree = self.reattach(project, run, node, base)?;
+                self.verify_start(project, &tree)?;
+                Ok(Some(tree))
+            }
+            _ => Err(
+                "The recorded checkout is missing, dirty, partially prepared or at another commit"
+                    .into(),
+            ),
+        }
+    }
+
     /// Inspect only the generated path for this exact registered project/run/node.
     /// A missing or foreign checkout is never repaired or adopted automatically.
     pub fn inspect_reserved(

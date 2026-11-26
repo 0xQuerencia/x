@@ -142,6 +142,22 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
                 _ => need("exactly a recorded run UUID and node id"),
             }
         }
+        "plan-coding-retry" => {
+            let mut args = value.split_whitespace();
+            match (
+                args.next(),
+                args.next().and_then(|job| job.split_once('/')),
+                args.next(),
+            ) {
+                (Some(workflow), Some((run, node)), None) => {
+                    match svc.plan_coding_retry(workflow, run, node) {
+                        Ok(_) => super::snapshot(0),
+                        Err(error) => refuse(error),
+                    }
+                }
+                _ => need("the original workflow ID and an exact run UUID/node ID"),
+            }
+        }
         "open-worktree" | "worktree-cleanup-preview" => {
             let mut args = value.split_whitespace();
             match (args.next(), args.next(), args.next()) {
@@ -300,7 +316,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, open-worktree, worktree-cleanup-preview, worktree-cleanup, reconcile-coding, correction-preview, plan-correction, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, open-worktree, worktree-cleanup-preview, worktree-cleanup, reconcile-coding, plan-coding-retry, correction-preview, plan-correction, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }

@@ -386,7 +386,7 @@ pub fn record(
     let (_, transcription_selection) = crate::app_settings::transcription_selection();
     let transcription_model = crate::transcription::models::validate(&transcription_selection)?;
     if !crate::transcription::models::is_installed(
-        transcription_model,
+        &transcription_model,
         &transcription_selection.language,
     ) {
         return Err(eyre!("{} is not installed", transcription_model.name));
@@ -908,7 +908,7 @@ pub fn finish_pending(id: &str) -> Result<Option<MeetingManifest>> {
     }
     let (_, selection) = crate::app_settings::transcription_selection();
     let model = crate::transcription::models::validate(&selection)?;
-    if !crate::transcription::models::is_installed(model, &selection.language) {
+    if !crate::transcription::models::is_installed(&model, &selection.language) {
         return Err(eyre!("{} is not installed", model.name));
     }
     let mut manifest = read_manifest(&directory)?;
@@ -1253,7 +1253,7 @@ fn rename_meeting(directory: &Path, title: &str) -> Result<MeetingManifest> {
 pub fn transcribe_meeting(id: &str) -> Result<MeetingManifest> {
     let (_, selection) = crate::app_settings::transcription_selection();
     let model = crate::transcription::models::validate(&selection)?;
-    if !crate::transcription::models::is_installed(model, &selection.language) {
+    if !crate::transcription::models::is_installed(&model, &selection.language) {
         return Err(eyre!("{} is not installed", model.name));
     }
     let directory = root()?.join(id);

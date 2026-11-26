@@ -445,6 +445,52 @@ fn a_failed_harness_preserves_delivery_without_verifying_the_job() {
 }
 
 #[test]
+fn permission_expiry_during_preparation_retains_checkout_without_dispatch() {
+    let (_directory, graph, runner, _, calls) = fixture(false);
+    let node = &graph.nodes[0];
+    let assignment = &runner.assignments[&node.id];
+    let reservation = Reservation::planned(&assignment.project, &assignment.base).unwrap();
+    let Begin::Fresh(claim) = runner
+        .journal
+        .begin_preparation(
+            runner.run_id,
+            &node.id,
+            &assignment.fingerprint,
+            reservation,
+        )
+        .unwrap()
+    else {
+        panic!("expected a fresh prepared attempt");
+    };
+    let stop = Cancellation::default();
+    let tree = runner.prepare(assignment, &stop).unwrap();
+    assignment.grants.expire_for_test(&assignment.receipt);
+    runner
+        .worktrees
+        .verify_start(&assignment.project, &tree)
+        .unwrap();
+    runner.journal.record_checkout(&claim, &tree).unwrap();
+    assert_eq!(
+        runner.execute_prepared(assignment, &tree, &claim, &stop),
+        Outcome::Failed
+    );
+    let recorded = runner.journal.exact_claim(runner.run_id, &node.id).unwrap();
+    assert_eq!(
+        recorded.dispatch,
+        Some(crate::workflows::recovery::Dispatch::Pending)
+    );
+    assert_eq!(recorded.state, State::Failed);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(tree.path().is_dir());
+    assert!(
+        runner
+            .outcome_reason(node)
+            .unwrap()
+            .contains("approval has expired")
+    );
+}
+
+#[test]
 fn committed_profile_grants_only_the_exact_reviewed_git_commands() {
     let (_directory, mut graph, _executor, ..) = fixture(false);
     let node = &mut graph.nodes[0];

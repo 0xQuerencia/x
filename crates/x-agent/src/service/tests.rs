@@ -3382,6 +3382,108 @@ fn exact_delivery_reconciliation_reads_only_owned_session_and_preserves_claims()
 }
 
 #[test]
+fn a_reviewed_undispatched_retry_reattaches_only_the_unchanged_saved_request() {
+    use crate::grants::Scope;
+    use crate::workflows::{
+        harness_exec::{planned_scope, proof_for},
+        recovery::{Begin, Journal},
+        roadmap::digest,
+    };
+    use crate::worktrees::{Manager, Reservation};
+
+    let (service, directory, _, graph) = graph_workflow_fixture();
+    let home = directory.path().to_path_buf();
+    let support = home.join("state");
+    let base = home.join("X Worktrees");
+    std::fs::create_dir(&base).unwrap();
+    let registry = crate::projects::Registry::new(support.clone(), home.clone());
+    let node = &graph.nodes[0];
+    let project = registry
+        .validated_resolve(node.job.project_id().unwrap())
+        .unwrap();
+    let manager = Manager::new(base, home.clone());
+    let sha = manager.starting_commit(&project).unwrap();
+    let run = uuid::Uuid::new_v4();
+    let id = run.to_string();
+    let Scope::Task { intent, .. } =
+        planned_scope(node, project.id, run, &sha, &proof_for(node)).unwrap()
+    else {
+        unreachable!("this is an exact coding job");
+    };
+    let mut reservation = Reservation::planned(&project, &sha).unwrap();
+    let journal_dir = support.join("workflow-journal");
+    let journal = Journal::new(journal_dir.clone());
+    let Begin::Fresh(_) = journal
+        .begin_preparation(
+            run,
+            &node.id,
+            &digest(intent.as_bytes()),
+            reservation.clone(),
+        )
+        .unwrap()
+    else {
+        panic!("expected a new preparation");
+    };
+    let tree = manager
+        .allocate(&project, run, &node.id, &sha, true)
+        .unwrap();
+    reservation.record_checkout(&tree).unwrap();
+    let path = journal_dir.join("x-job-claims.json");
+    let mut recorded: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    recorded["entries"][0]["state"] = "failed".into();
+    recorded["entries"][0]["worktree"] = serde_json::to_value(reservation).unwrap();
+    let before = serde_json::to_vec(&recorded).unwrap();
+    std::fs::write(&path, &before).unwrap();
+    assert!(service.plan_coding_retry("missing", &id, &node.id).is_err());
+
+    let mut changed = graph.clone();
+    let crate::workflows::dag::Job::Harness { goal, .. } = &mut changed.nodes[0].job else {
+        unreachable!();
+    };
+    *goal = "Different goal".into();
+    let graph_file = support.join("workflows/coding-graph.json");
+    std::fs::write(&graph_file, serde_json::to_vec(&changed).unwrap()).unwrap();
+    assert!(service.plan_coding_retry(&graph.id, &id, &node.id).is_err());
+    std::fs::write(&graph_file, serde_json::to_vec(&graph).unwrap()).unwrap();
+
+    let preview = service.plan_coding_retry(&graph.id, &id, &node.id).unwrap();
+    assert_eq!(preview.phase, Phase::AwaitingApproval);
+    assert_eq!(preview.steps.len(), 1);
+    assert!(preview.text.contains(&id));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(!tree.path().join("received-args").exists());
+
+    let edits = tree.path().join("owner.txt");
+    std::fs::write(&edits, "keep me").unwrap();
+    service.approve(preview.id).unwrap();
+    assert_eq!(
+        wait_for(&service, |s| !s.phase.is_busy()).phase,
+        Phase::Failed
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(edits.is_file());
+    std::fs::remove_file(edits).unwrap();
+
+    let retry = service.plan_coding_retry(&graph.id, &id, &node.id).unwrap();
+    service.approve(retry.id).unwrap();
+    assert_eq!(
+        wait_for(&service, |s| !s.phase.is_busy()).phase,
+        Phase::Completed
+    );
+    let result = journal.exact_claim(run, &node.id).unwrap();
+    assert_eq!(result.attempt, 2);
+    assert_eq!(result.state, crate::workflows::recovery::State::Delivered);
+    assert!(result.evidence_id.is_some());
+    assert!(
+        std::fs::read_to_string(tree.path().join("received-args"))
+            .unwrap()
+            .contains("Inspect fixture inspect")
+    );
+    assert!(service.plan_coding_retry(&graph.id, &id, &node.id).is_err());
+}
+
+#[test]
 fn recovery_checkout_requires_exact_ownership_and_a_current_clean_review() {
     use crate::workflows::recovery::{Begin, Journal};
     use crate::worktrees::{Manager, Reservation};
