@@ -277,7 +277,7 @@ pub fn install() -> Result<Receiver<StatusItemAction>> {
         .enumerate()
         .filter(|(_, model)| model.available())
         .map(|(index, model)| {
-            let item = add_item(&models, &target, model.name, sel!(selectModel:), mtm);
+            let item = add_item(&models, &target, &model.name, sel!(selectModel:), mtm);
             item.setTag(index as isize);
             item.setHidden(true);
             (model.id, item)
