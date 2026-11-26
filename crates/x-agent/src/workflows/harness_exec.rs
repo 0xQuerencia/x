@@ -41,6 +41,7 @@ pub struct Assignment {
     receipt: Receipt,
     scope: Scope,
     fingerprint: String,
+    retry: Option<Claim>,
 }
 
 impl Assignment {
@@ -144,7 +145,19 @@ impl Assignment {
             receipt,
             scope,
             fingerprint,
+            retry: None,
         })
+    }
+    pub(crate) fn with_retry(mut self, claim: &Claim) -> Result<Self, String> {
+        claim.validate_undispatched_retry()?;
+        if claim.run_id != self.run
+            || claim.node_id != self.node.id
+            || claim.request_fingerprint != self.fingerprint
+        {
+            return Err("The saved coding request differs from the recorded retry".into());
+        }
+        self.retry = Some(claim.clone());
+        Ok(self)
     }
 }
 
@@ -256,6 +269,43 @@ impl ApprovedHarnessExecutor {
                     .is_ok()
             }))
         .then_some(assignment)
+    }
+
+    fn begin_retry(
+        &self,
+        assignment: &Assignment,
+        previous: &Claim,
+        reservation: &Reservation,
+        stop: &Cancellation,
+    ) -> Result<Claim, String> {
+        let recorded = previous
+            .worktree
+            .as_ref()
+            .filter(|recorded| recorded.same_plan(reservation))
+            .ok_or("The approved project or starting commit changed")?;
+        let node = &assignment.node.id;
+        let inspection =
+            self.worktrees
+                .inspect_reserved(&assignment.project, self.run_id, node, recorded)?;
+        if let Some(tree) = self.worktrees.retry_checkout(
+            &assignment.project,
+            self.run_id,
+            node,
+            recorded,
+            inspection,
+        )? {
+            assignment
+                .worktree
+                .set(tree)
+                .map_err(|_| "The retry checkout changed")?;
+        }
+        stop.check()?;
+        assignment.grants.check(
+            &assignment.receipt,
+            Permission::QueueHarness,
+            &assignment.scope,
+        )?;
+        self.journal.begin_undispatched_retry(previous)
     }
 
     fn prepare(
@@ -610,14 +660,25 @@ impl Executor for ApprovedHarnessExecutor {
             Ok(reservation) => reservation,
             Err(_) => return Outcome::Unverified,
         };
-        let claim = match self.journal.begin_preparation(
-            self.run_id,
-            &node.id,
-            &assignment.fingerprint,
-            reservation,
-        ) {
-            Ok(Begin::Fresh(claim)) => claim,
-            _ => return Outcome::Unverified,
+        let claim = if let Some(previous) = &assignment.retry {
+            let result = self.begin_retry(assignment, previous, &reservation, &stop);
+            match result {
+                Ok(claim) => claim,
+                Err(reason) => {
+                    self.note(&node.id, reason);
+                    return Outcome::Unverified;
+                }
+            }
+        } else {
+            match self.journal.begin_preparation(
+                self.run_id,
+                &node.id,
+                &assignment.fingerprint,
+                reservation,
+            ) {
+                Ok(Begin::Fresh(claim)) => claim,
+                _ => return Outcome::Unverified,
+            }
         };
         let tree = match self.prepare(assignment, &stop) {
             Ok(tree) => tree,

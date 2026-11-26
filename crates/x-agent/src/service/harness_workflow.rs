@@ -55,6 +55,7 @@ pub(super) struct PendingGraph {
     jobs: Vec<Option<PlannedJob>>,
     desktop: Vec<Prepared>,
     correction: Option<Binding>,
+    retry: Option<Claim>,
 }
 
 impl PendingGraph {
@@ -225,6 +226,16 @@ impl Service {
         pinned: Option<&Project>,
         correction: Option<Binding>,
     ) -> Result<Task, String> {
+        self.plan_graph_review_with_retry(graph, pinned, correction, None)
+    }
+
+    fn plan_graph_review_with_retry(
+        &self,
+        graph: Graph,
+        pinned: Option<&Project>,
+        correction: Option<Binding>,
+        retry: Option<Claim>,
+    ) -> Result<Task, String> {
         let phase = self.lock().phase;
         if phase.is_busy() {
             return Err(busy(phase));
@@ -299,6 +310,17 @@ impl Service {
                 let commit = if let Some(binding) = &correction {
                     binding.validate_source(&manager, &project, &journal)?;
                     binding.commit.clone()
+                } else if let Some(claim) = &retry {
+                    let reservation = claim
+                        .worktree
+                        .as_ref()
+                        .ok_or("The recorded checkout is unavailable")?;
+                    if reservation.project_id() != project.id
+                        || journal.exact_claim(claim.run_id, &claim.node_id)? != *claim
+                    {
+                        return Err("The exact retry changed before review".into());
+                    }
+                    reservation.approved_base().to_owned()
                 } else {
                     manager.starting_commit(&project)?
                 };
@@ -373,8 +395,12 @@ impl Service {
                 binding.attempt, binding.source_run, binding.source_node, binding.commit
             )
         });
+        let retry_note = retry.as_ref().map_or_else(String::new, |claim| {
+            format!(" · explicitly authorize attempt {} for recorded run {}/{}; prior attempt never reached dispatch",
+                claim.attempt + 1, claim.run_id, claim.node_id)
+        });
         let preview = format!(
-            "Run reviewed workflow {} with coding checkouts in {} (queued jobs may start for 30 minutes after approval; desktop steps reacquire input and recheck exact targets){source_note}{correction_note}",
+            "Run reviewed workflow {} with coding checkouts in {} (queued jobs may start for 30 minutes after approval; desktop steps reacquire input and recheck exact targets){source_note}{correction_note}{retry_note}",
             graph.name,
             base.display()
         );
@@ -390,6 +416,7 @@ impl Service {
             jobs,
             desktop,
             correction,
+            retry,
         });
         state.phase = Phase::AwaitingApproval;
         state.review = Review::Required;
@@ -454,6 +481,7 @@ impl Service {
         match result {
             Ok(report) => {
                 if workflow.correction.is_none()
+                    && workflow.retry.is_none()
                     && let Err(error) = self
                         .workflow_store()
                         .record_graph_last(&workflow.graph.id, &report)
@@ -568,7 +596,10 @@ impl Service {
                 }
             }
         }
-        let run = Uuid::new_v4();
+        let run = workflow
+            .retry
+            .as_ref()
+            .map_or_else(Uuid::new_v4, |claim| claim.run_id);
         let executor = Arc::new(self.approved_graph_executor(workflow, run, stop, &stops)?);
         let result = scheduler::run_observed_scoped(
             &workflow.graph,

@@ -1,10 +1,57 @@
 //! Exact local checkout recovery. Historic claims carry no execution authority.
 
 use super::*;
+use crate::grants::Scope;
 use crate::workflows::{recovery::Dispatch, roadmap::digest};
 use crate::worktrees::Inspection;
 
 impl Service {
+    pub fn plan_coding_retry(&self, workflow: &str, run: &str, node: &str) -> Result<Task, String> {
+        self.with_recovery_checkout(run, node, |manager, project, claim, inspection| {
+            claim.validate_undispatched_retry()?;
+            let reservation = claim
+                .worktree
+                .as_ref()
+                .ok_or("This job has no recorded checkout")?;
+            let mut graph = self.workflow_store().get_graph(workflow)?;
+            if graph.id != workflow || graph.roadmap.is_some() {
+                return Err(
+                    "Choose the original saved coding workflow with no linked roadmap source"
+                        .into(),
+                );
+            }
+            graph.nodes.retain(|candidate| candidate.id == node);
+            let candidate = graph
+                .nodes
+                .first()
+                .filter(|node| {
+                    matches!(node.job, Job::Harness { .. })
+                        && node.after.is_empty()
+                        && node.requires.is_empty()
+                        && node.requires_verified.is_empty()
+                        && node.inputs.is_empty()
+                })
+                .ok_or(
+                    "Retry requires an independent coding node from the original saved workflow",
+                )?;
+            let Scope::Task { intent, .. } = planned_scope(
+                candidate,
+                project.id,
+                claim.run_id,
+                reservation.approved_base(),
+                &proof_for(candidate),
+            )?
+            else {
+                return Err("The approved coding request has the wrong scope".into());
+            };
+            if digest(intent.as_bytes()) != claim.request_fingerprint {
+                return Err("The saved coding request changed since the recorded attempt".into());
+            }
+            manager.retry_checkout(project, claim.run_id, node, reservation, inspection)?;
+            self.plan_graph_review_with_retry(graph, None, None, Some(claim.clone()))
+        })
+    }
+
     pub fn open_coding_worktree(&self, run: &str, node: &str) -> Result<(), String> {
         self.with_desktop_control(|| {
             self.with_recovery_checkout(run, node, |_, _, _, inspection| match inspection {
