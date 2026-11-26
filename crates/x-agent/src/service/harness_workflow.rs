@@ -23,6 +23,7 @@ use super::{AuditKind, Cancellation, Phase, Review, Service, Task, audit_best_ef
 
 mod inventory;
 mod mixed;
+mod renewal;
 
 const WORKTREE_FOLDER: &str = "X Worktrees";
 const PARALLEL_WORKERS: usize = 2;
@@ -45,7 +46,7 @@ pub(super) struct PendingGraph {
     home: PathBuf,
     base: PathBuf,
     manager: Arc<Manager>,
-    registry: Registry,
+    registry: Arc<Registry>,
     journal: Arc<Journal>,
     jobs: Vec<Option<PlannedJob>>,
     desktop: Vec<Prepared>,
@@ -235,7 +236,7 @@ impl Service {
             .ok_or("Could not locate X's local data directory")?;
         let base = home.join(WORKTREE_FOLDER);
         let manager = Arc::new(Manager::new(base.clone(), home.clone()));
-        let registry = Registry::new(support.to_path_buf(), home.clone());
+        let registry = Arc::new(Registry::new(support.to_path_buf(), home.clone()));
         let journal = Arc::new(Journal::new(support.join("workflow-journal")));
         let desktop =
             desktop_exec::prepare(&graph, self.machine().as_ref(), &self.workflow_config())?;
@@ -412,7 +413,12 @@ impl Service {
             .as_ref()
             .filter(|task| task.id == task_id)
             .and_then(|task| task.steps.get(index))
-            .is_some_and(|step| matches!(step.status.as_str(), "pending" | "running"));
+            .is_some_and(|step| {
+                matches!(
+                    step.status.as_str(),
+                    "pending" | "running" | "waiting_for_permission"
+                )
+            });
         if !active {
             return Err("No matching active coding job".into());
         }
@@ -559,7 +565,7 @@ impl Service {
             }
         }
         let run = Uuid::new_v4();
-        let executor = Arc::new(self.approved_graph_executor(workflow, run, stop)?);
+        let executor = Arc::new(self.approved_graph_executor(workflow, run, stop, &stops)?);
         let result = scheduler::run_observed_scoped(
             &workflow.graph,
             &workflow.home,
@@ -568,6 +574,7 @@ impl Service {
             PARALLEL_WORKERS,
             |index, update| {
                 let status = match update {
+                    NodeUpdate::WaitingForPermission => "waiting_for_permission",
                     NodeUpdate::Running => "running",
                     NodeUpdate::Finished(outcome) => node_status(outcome),
                 };
