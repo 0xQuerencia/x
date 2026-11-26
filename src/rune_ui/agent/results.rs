@@ -37,6 +37,9 @@ impl Results {
             _ => return false,
         };
         self.pending = None;
+        if !self.expanded {
+            return false;
+        }
         match reply {
             Ok(Reply::Entries(entries)) => self.entries = entries,
             Ok(Reply::Review(review)) => self.review = Some(review),
@@ -113,6 +116,11 @@ pub(super) fn panel(p: Paint, results: &Results) -> El {
             results.expanded = !results.expanded;
             if results.expanded {
                 results.list();
+            } else {
+                results.entries.clear();
+                results.selected = None;
+                results.review = None;
+                results.note = None;
             }
         },
     ));

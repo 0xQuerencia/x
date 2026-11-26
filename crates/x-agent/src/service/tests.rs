@@ -2737,7 +2737,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"session_id":"5e3b19
 #[test]
 fn real_committed_artifact_is_recorded_and_missing_commit_blocks_dependents() {
     for commit in [true, false] {
-        let (service, directory, _, mut graph) = graph_workflow_fixture();
+        let (service, directory, repo, mut graph) = graph_workflow_fixture();
         let body = if commit {
             r#"printf 'implementation' > artifact.txt
 git add -- artifact.txt
@@ -2778,6 +2778,30 @@ echo '{"type":"step_start","sessionID":"ses_graph_fixture","part":{"type":"step-
             assert!(matches!(sha.len(), 40 | 64));
             assert_ne!(artifact["commit"], artifact["base_commit"]);
             assert_eq!(artifact["node_id"], "inspect");
+            let run = artifact["run_id"].as_str().unwrap();
+            let review = service.coding_worktree_review(run, "inspect").unwrap();
+            assert_eq!(review.recorded_artifact.as_deref(), Some(sha));
+            assert_eq!(review.current_commit, sha);
+            assert_eq!(review.files[0].path, "artifact.txt");
+            assert!(
+                service
+                    .plan_coding_result_integration(run, "inspect", &review.base_commit)
+                    .is_err()
+            );
+            let plan = service
+                .plan_coding_result_integration(run, "inspect", sha)
+                .unwrap();
+            assert_eq!(plan.phase, Phase::AwaitingApproval);
+            assert!(!repo.join("artifact.txt").exists());
+            service.approve(plan.id).unwrap();
+            assert_eq!(
+                wait_for(&service, |s| !s.phase.is_busy()).phase,
+                Phase::Completed
+            );
+            assert_eq!(
+                std::fs::read_to_string(repo.join("artifact.txt")).unwrap(),
+                "implementation"
+            );
         } else {
             assert_eq!(snapshot.phase, Phase::Failed);
             assert_eq!(steps[0].status, "failed");
