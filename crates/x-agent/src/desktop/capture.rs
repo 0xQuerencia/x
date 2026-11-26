@@ -2,7 +2,14 @@
 //! and the direct child, including when a descendant keeps stdout open.
 
 use std::io::{self, Read};
-use std::process::{ChildStdout, Command, Stdio};
+
+pub(crate) trait OutputPipe: Read + PipeHandle {}
+impl<T: Read + PipeHandle> OutputPipe for T {}
+#[cfg(unix)]
+use std::os::fd::AsRawFd as PipeHandle;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle as PipeHandle;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::cancellation::Cancellation;
@@ -102,9 +109,7 @@ fn read_output(
 }
 
 #[cfg(unix)]
-fn prepare_pipe(pipe: &ChildStdout) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-
+pub(crate) fn prepare_pipe(pipe: &impl PipeHandle) -> io::Result<()> {
     let fd = pipe.as_raw_fd();
     // SAFETY: the descriptor is borrowed from a live ChildStdout.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
@@ -119,18 +124,17 @@ fn prepare_pipe(pipe: &ChildStdout) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn read_ready(pipe: &mut ChildStdout, buffer: &mut [u8]) -> io::Result<usize> {
+pub(crate) fn read_ready(pipe: &mut impl OutputPipe, buffer: &mut [u8]) -> io::Result<usize> {
     pipe.read(buffer)
 }
 
 #[cfg(windows)]
-fn prepare_pipe(_pipe: &ChildStdout) -> io::Result<()> {
+pub(crate) fn prepare_pipe(_pipe: &impl PipeHandle) -> io::Result<()> {
     Ok(())
 }
 
 #[cfg(windows)]
-fn read_ready(pipe: &mut ChildStdout, buffer: &mut [u8]) -> io::Result<usize> {
-    use std::os::windows::io::AsRawHandle;
+pub(crate) fn read_ready(pipe: &mut impl OutputPipe, buffer: &mut [u8]) -> io::Result<usize> {
     use std::ptr::null_mut;
     use windows_sys::Win32::Foundation::{ERROR_BROKEN_PIPE, ERROR_PIPE_NOT_CONNECTED};
     use windows_sys::Win32::System::Pipes::PeekNamedPipe;

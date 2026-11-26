@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::cancellation::Cancellation;
 use crate::tools;
 
-mod capture;
+pub(crate) mod capture;
 pub(crate) use capture::{capture, capture_prefix, capture_scoped};
 
 const MAX_ELEMENTS: usize = 120;

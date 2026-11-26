@@ -1,5 +1,6 @@
 //! Unix process-group ownership. Windows uses a private native Job instead.
 
+use std::io;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus};
 use std::thread;
@@ -34,6 +35,10 @@ impl ChildGuard {
         &mut self.0
     }
 
+    pub(super) fn observe_exit(&mut self) -> io::Result<bool> {
+        observe_exit(&self.0)
+    }
+
     pub(super) fn finish(&mut self, stop: &Cancellation, failed: bool) -> Finished {
         let mut failure = None;
         let exit_code = if stop.requested() || failed {
@@ -61,9 +66,7 @@ impl ChildGuard {
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        if !matches!(self.0.try_wait(), Ok(Some(_))) {
-            terminate(&mut self.0);
-        }
+        terminate(&mut self.0);
     }
 }
 
@@ -74,16 +77,39 @@ fn signal_group(pgid: i32, signal: i32) {
     }
 }
 
+fn observe_exit(child: &Child) -> io::Result<bool> {
+    // SAFETY: waitid initializes its output. WNOWAIT leaves the direct child
+    // unreaped so it pins the process group through all group signals.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == 0 {
+        // SAFETY: a successful wait initialized the zeroed siginfo_t.
+        Ok(unsafe { info.si_pid() } != 0)
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 fn terminate(child: &mut Child) {
     let pgid = child.id() as i32;
+    if observe_exit(child).is_err() {
+        return;
+    }
     signal_group(pgid, libc::SIGTERM);
     let deadline = Instant::now() + KILL_GRACE;
     while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            signal_group(pgid, libc::SIGKILL);
-            return;
+        match observe_exit(child) {
+            Ok(true) => break,
+            Ok(false) => thread::sleep(Duration::from_millis(50)),
+            Err(_) => return,
         }
-        thread::sleep(Duration::from_millis(50));
     }
     signal_group(pgid, libc::SIGKILL);
     let _ = child.wait();

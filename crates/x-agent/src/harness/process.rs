@@ -18,18 +18,24 @@ const KILL_GRACE: Duration = Duration::from_secs(5);
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const OUTPUT_QUEUE: usize = 32;
 
-#[cfg(any(windows, target_os = "linux", test))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos", test))]
 mod closure;
+mod test_capture;
+pub(crate) use test_capture::capture_test;
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 mod unix;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_group;
 #[cfg(windows)]
 mod windows;
-#[cfg(target_os = "linux")]
-use linux::ChildGuard;
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 use unix::ChildGuard;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use unix_group::ChildGuard;
 #[cfg(windows)]
 use windows::ChildGuard;
 
@@ -205,14 +211,14 @@ fn supervise(
     let (mut errors, mut stderr_tail): (Vec<String>, Vec<String>) = (vec![], vec![]);
     let mut accepted_session = None;
     let mut terminal = false;
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     let mut exited_at = None::<Instant>;
     while open > 0 && !stop.requested() {
         // An exited root can leave inherited pipe handles in a live descendant.
         // EOF alone must not keep the supervisor outside its native process cleanup.
         // The running provider has no new total deadline; only its post-exit
         // output drain is bounded. Check even while descendants emit output.
-        #[cfg(any(windows, target_os = "linux"))]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         match owned.observe_exit() {
             Ok(true) => {
                 let ended = exited_at.get_or_insert_with(Instant::now);

@@ -149,6 +149,7 @@ impl Assignment {
 }
 
 type JobActivity = Arc<dyn Fn(&str, u8, EventKind) + Send + Sync>;
+type FailureActivity = Arc<dyn Fn(test_runner::CorrectionDraft) + Send + Sync>;
 
 #[derive(Clone)]
 struct Produced {
@@ -162,6 +163,7 @@ pub struct ApprovedHarnessExecutor {
     worktrees: Arc<Manager>,
     journal: Arc<Journal>,
     activity: Option<JobActivity>,
+    failure: Option<FailureActivity>,
     /// Only results produced by this live executor can release artifact inputs.
     /// Reopening a journal never restores authority or trusts supplied JSON.
     outputs: Mutex<HashMap<String, Produced>>,
@@ -216,6 +218,7 @@ impl ApprovedHarnessExecutor {
             worktrees,
             journal,
             activity: None,
+            failure: None,
             outputs: Mutex::new(HashMap::new()),
             preparation: Mutex::new(()),
             reasons: Mutex::new(HashMap::new()),
@@ -224,6 +227,11 @@ impl ApprovedHarnessExecutor {
 
     pub(crate) fn with_activity(mut self, activity: JobActivity) -> Self {
         self.activity = Some(activity);
+        self
+    }
+
+    pub(crate) fn with_failure(mut self, failure: FailureActivity) -> Self {
+        self.failure = Some(failure);
         self
     }
 
@@ -340,7 +348,7 @@ impl ApprovedHarnessExecutor {
         claim: &Claim,
         stop: &Cancellation,
     ) -> Outcome {
-        let result = test_runner::verify_approved(
+        let result = test_runner::verify_approved_report(
             &self.worktrees,
             &assignment.project,
             tree,
@@ -349,7 +357,10 @@ impl ApprovedHarnessExecutor {
             &assignment.receipt,
             stop,
         );
-        let verified = result.as_ref().ok().map(|result| result.outcome);
+        let verified = result
+            .as_ref()
+            .ok()
+            .map(|result| result.verification.outcome);
         let mut artifact = None;
         let mut outcome = match verified {
             Some(VerifiedOutcome::Verified) => match self.worktrees.checkpoint_artifact(
@@ -400,6 +411,13 @@ impl ApprovedHarnessExecutor {
             .is_err()
         {
             return Outcome::Unverified;
+        }
+        if outcome == Outcome::Failed
+            && !stop.requested()
+            && let (Some(on_failure), Ok(report)) = (&self.failure, result)
+            && let Some(draft) = report.correction
+        {
+            on_failure(draft);
         }
         if let Some(artifact) = artifact {
             let Ok(mut outputs) = self.outputs.lock() else {
