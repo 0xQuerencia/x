@@ -116,6 +116,19 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(report) => ControlReply::done(report.to_string()),
             Err(error) => refuse(error),
         },
+        "review-worktree" => {
+            let mut args = value.split_whitespace();
+            match (args.next(), args.next(), args.next()) {
+                (Some(run), Some(node), None) => match svc.coding_worktree_review(run, node) {
+                    Ok(review) => match serde_json::to_string(&review) {
+                        Ok(json) => ControlReply::done(json),
+                        Err(_) => refuse("Could not serialize the local worktree review".into()),
+                    },
+                    Err(error) => refuse(error),
+                },
+                _ => need("exactly a recorded run UUID and node id"),
+            }
+        }
         "uncertain" if !value.is_empty() => refuse("workflow uncertain takes no arguments".into()),
         "uncertain" => match svc.uncertain_coding_jobs() {
             Ok(report) => ControlReply::done(report.to_string()),
@@ -205,7 +218,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }

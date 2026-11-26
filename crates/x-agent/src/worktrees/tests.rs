@@ -587,3 +587,168 @@ fn recovery_inventory_refuses_symlinked_foreign_and_reregistered_checkouts() {
         "unrelated directory"
     );
 }
+
+#[test]
+fn worktree_review_reads_exact_committed_changes_and_distinguishes_stale_tests() {
+    use crate::verification::test_runner::{Suite, TestEvidence};
+
+    let (_dir, project, manager, sha) = fixture();
+    let run = Uuid::new_v4();
+    let mut reservation = Reservation::planned(&project, &sha).unwrap();
+    let owned = manager
+        .allocate(&project, run, "writer", &sha, true)
+        .unwrap();
+    reservation.record_checkout(&owned).unwrap();
+    fs::write(owned.path().join("review.txt"), "reviewed change\n").unwrap();
+    git(owned.path(), &["add", "--", "review.txt"]).unwrap();
+    git(
+        owned.path(),
+        &[
+            "-c",
+            "user.name=X",
+            "-c",
+            "user.email=x@invalid.example",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "review fixture",
+        ],
+    )
+    .unwrap();
+    let head = current_commit(owned.path()).unwrap();
+    let evidence = TestEvidence {
+        suite: Suite::CargoAgent,
+        commit: head.clone(),
+        passed: Some(true),
+        observed_at: 1,
+    };
+    let review = manager
+        .review_reserved(&project, run, "writer", &reservation, Some(&evidence))
+        .unwrap();
+    assert_eq!(review.base_commit, sha);
+    assert_eq!(review.current_commit, head);
+    assert!(review.committed_diff.contains("+reviewed change"));
+    assert_eq!(review.test_matches_checkout, Some(true));
+    assert!(!review.diff_truncated);
+    assert_eq!(review.binary_changes, Some(false));
+    assert!(!review.tracked_changes);
+    assert!(!review.untracked_files);
+    assert!(!project.root.join("review.txt").exists());
+
+    fs::write(owned.path().join("review.txt"), "uncommitted change\n").unwrap();
+    fs::write(
+        owned.path().join("untracked.txt"),
+        "private untracked content",
+    )
+    .unwrap();
+    let dirty = manager
+        .review_reserved(&project, run, "writer", &reservation, Some(&evidence))
+        .unwrap();
+    assert!(!dirty.clean_inputs);
+    assert!(dirty.tracked_changes);
+    assert!(dirty.untracked_files);
+    assert_eq!(dirty.test_matches_checkout, Some(false));
+    assert!(!dirty.committed_diff.contains("uncommitted change"));
+    assert!(
+        manager
+            .review_reserved(&project, Uuid::new_v4(), "writer", &reservation, None)
+            .is_err()
+    );
+}
+
+#[test]
+fn worktree_review_caps_real_patch_output_and_identifies_binary_commits() {
+    let (_dir, project, manager, sha) = fixture();
+    let run = Uuid::new_v4();
+    let mut reservation = Reservation::planned(&project, &sha).unwrap();
+    let owned = manager
+        .allocate(&project, run, "writer", &sha, true)
+        .unwrap();
+    reservation.record_checkout(&owned).unwrap();
+
+    fs::write(owned.path().join("a.txt"), "🦀 line\n".repeat(650_000)).unwrap();
+    fs::write(owned.path().join("b.bin"), [0, 1, 2]).unwrap();
+    git(owned.path(), &["add", "--", "a.txt", "b.bin"]).unwrap();
+    git(
+        owned.path(),
+        &[
+            "-c",
+            "user.name=X",
+            "-c",
+            "user.email=x@invalid.example",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "large review fixture",
+        ],
+    )
+    .unwrap();
+    let review = manager
+        .review_reserved(&project, run, "writer", &reservation, None)
+        .unwrap();
+    assert!(review.diff_truncated);
+    assert!(review.clean_inputs);
+    assert_eq!(review.binary_changes, Some(true));
+    assert_eq!(review.test_matches_checkout, None);
+    assert!(review.committed_diff.contains("+🦀 line"));
+    assert!(review.committed_diff.len() <= 24_000);
+    assert!(!review.committed_diff.contains('�'));
+}
+
+#[test]
+fn worktree_review_marks_results_stale_after_head_moves_and_refuses_wrong_node() {
+    use crate::verification::test_runner::{Suite, TestEvidence};
+
+    let (_dir, project, manager, sha) = fixture();
+    let run = Uuid::new_v4();
+    let mut reservation = Reservation::planned(&project, &sha).unwrap();
+    let owned = manager.allocate(&project, run, "test", &sha, true).unwrap();
+    reservation.record_checkout(&owned).unwrap();
+    let evidence = TestEvidence {
+        suite: Suite::CargoAgent,
+        commit: sha,
+        passed: Some(false),
+        observed_at: 1,
+    };
+    let review = manager
+        .review_reserved(&project, run, "test", &reservation, Some(&evidence))
+        .unwrap();
+    assert_eq!(review.test_matches_checkout, Some(true));
+    assert_eq!(review.test_evidence.as_ref().unwrap().passed, Some(false));
+
+    git(
+        owned.path(),
+        &[
+            "-c",
+            "user.name=X",
+            "-c",
+            "user.email=x@invalid.example",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "different proof target",
+        ],
+    )
+    .unwrap();
+    let review = manager
+        .review_reserved(&project, run, "test", &reservation, Some(&evidence))
+        .unwrap();
+    assert_eq!(review.test_matches_checkout, Some(false));
+    assert_ne!(review.current_commit, evidence.commit);
+    assert!(
+        manager
+            .review_reserved(&project, run, "other", &reservation, None)
+            .is_err()
+    );
+    let mut changed = project.clone();
+    changed.id = Uuid::new_v4();
+    assert!(
+        manager
+            .review_reserved(&changed, run, "test", &reservation, None)
+            .is_err()
+    );
+}
