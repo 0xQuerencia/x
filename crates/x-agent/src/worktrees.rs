@@ -13,7 +13,7 @@ use crate::cancellation::Cancellation;
 use crate::projects::Project;
 
 mod inspection;
-pub use inspection::{Inspection, Reservation};
+pub use inspection::{Inspection, Reservation, WorktreeReview};
 
 const TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -672,11 +672,13 @@ fn ensure_clean(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<String, String> {
+fn git_command(root: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
     command
         .current_dir(root)
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_COMMON_DIR")
@@ -692,7 +694,11 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
             "core.fsmonitor=false",
         ])
         .args(args);
-    let (success, output) = crate::desktop::capture(&mut command, TIMEOUT)
+    command
+}
+
+fn git(root: &Path, args: &[&str]) -> Result<String, String> {
+    let (success, output) = crate::desktop::capture(&mut git_command(root, args), TIMEOUT)
         .map_err(|_| "Git worktree operation failed or timed out")?;
     if !success {
         return Err("Git refused the worktree operation".into());
