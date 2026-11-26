@@ -241,6 +241,22 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             },
             Err(error) => refuse(error),
         },
+        "dry-run" if value.is_empty() => need("a workflow id"),
+        "dry-run" => match store.get(value).and_then(|wf| {
+            svc.check_workflow(&wf)?;
+            Ok(wf)
+        }) {
+            Ok(workflow) => ControlReply::unchanged(
+                serde_json::json!({
+                    "workflow": workflow,
+                    "executed": false,
+                    "authorization": "not_requested",
+                    "preflight": "passed",
+                })
+                .to_string(),
+            ),
+            Err(error) => refuse(error),
+        },
         "last" if value.is_empty() => need("a workflow id"),
         "last" => match store.last(value) {
             Some(report) => ControlReply::done(serde_json::to_string(&report).unwrap_or_default()),

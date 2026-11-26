@@ -289,10 +289,11 @@ pub enum AgentCommand {
         command: ProjectCli,
     },
     /// Saved desktop workflows, run by trigger phrase or by id. `list` shows them with their
-    /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
+    /// last result; `dry-run <id>` checks prerequisites without starting work;
+    /// `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "preview", "permissions", "uncertain", "claims", "worktrees", "review-worktree", "open-worktree", "worktree-cleanup-preview", "worktree-cleanup", "reconcile-coding", "correction-preview", "plan-correction", "permission-waits", "renew-permission", "run", "run-graph", "test-project", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "preview", "dry-run", "permissions", "uncertain", "claims", "worktrees", "review-worktree", "open-worktree", "worktree-cleanup-preview", "worktree-cleanup", "reconcile-coding", "correction-preview", "plan-correction", "permission-waits", "renew-permission", "run", "run-graph", "test-project", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
         command: String,
         /// Workflow/project ID, worktree run UUID, failure run/node, task ID, or import path.
         #[arg(default_value = "")]

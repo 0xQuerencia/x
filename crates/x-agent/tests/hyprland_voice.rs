@@ -205,6 +205,10 @@ fn saved_workflow_inserts_literal_text_once_and_rejects_a_reused_editor() {
         ],
     };
     service.workflow_store().save(&workflow).unwrap();
+    service.check_workflow(&workflow).unwrap();
+    assert_eq!(service.snapshot(0).phase, Phase::Idle);
+    assert!(x_agent::wm::view().unwrap().windows.is_empty());
+    assert!(!output.exists());
     let preview = service.plan_workflow_by_id("note").unwrap();
     assert_eq!(service.snapshot(0).phase, Phase::AwaitingApproval);
     assert!(preview.steps[1].detail.contains(literal));
