@@ -23,6 +23,14 @@ const MAX_RECORDS: usize = 16;
 const MAX_CORRECTIONS: u8 = 2;
 const RETENTION: Duration = Duration::from_secs(30 * 60);
 
+/// Native and CLI views share the same bounded local diagnostic review.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct CorrectionReview {
+    pub failure: CorrectionDraft,
+    pub next_attempt: Option<u8>,
+    pub max_attempts: u8,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Binding {
     pub(super) source_run: Uuid,
@@ -239,16 +247,25 @@ impl Service {
     }
 
     /// Explicit operator-only lookup, not part of the automatic task snapshot.
-    pub fn correction_preview(&self, source: &str) -> Result<Value, String> {
+    pub fn review_correction_failure(&self, source: &str) -> Result<CorrectionReview, String> {
         let (run, node) = identity(source)?;
         let mut history = self
             .corrections
             .lock()
             .map_err(|_| "Correction history is unavailable")?;
         let entry = history.find(run, node)?;
+        Ok(CorrectionReview {
+            failure: entry.draft.clone(),
+            next_attempt: entry.binding().ok().map(|binding| binding.attempt),
+            max_attempts: MAX_CORRECTIONS,
+        })
+    }
+
+    pub fn correction_preview(&self, source: &str) -> Result<Value, String> {
+        let review = self.review_correction_failure(source)?;
         Ok(json!({
-            "failure": entry.draft,
-            "next_attempt": entry.binding().ok().map(|binding| binding.attempt),
+            "failure": review.failure,
+            "next_attempt": review.next_attempt,
             "executed": false,
             "note": "Local untrusted test output. Only your explicit correction goal is sent after separate approval.",
         }))

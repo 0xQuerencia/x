@@ -406,7 +406,7 @@ fn use_model(
 ) -> Result<ControlReply, ControlError> {
     let selection = super::model_selection(&load()?, model, language)?;
     let definition = crate::transcription::models::definition(selection.model);
-    let installed = crate::transcription::models::is_installed(definition, &selection.language);
+    let installed = crate::transcription::models::is_installed(&definition, &selection.language);
     let state = host.state()?;
     if same_model(&state.settings.transcription, &selection) && installed {
         return Ok(ControlReply::unchanged(format!(
@@ -445,7 +445,9 @@ fn wait_for_model(
     host: &dyn Host,
     selection: &TranscriptionSelection,
 ) -> Result<ControlReply, ControlError> {
-    let name = crate::transcription::models::definition(selection.model).name;
+    let name = crate::transcription::models::definition(selection.model)
+        .name
+        .clone();
     let started = Instant::now();
     let mut seen_preparing = false;
     while started.elapsed() < CONFIRM_WAIT {
@@ -534,7 +536,7 @@ fn status(host: &dyn Host) -> Result<ControlReply, ControlError> {
     let settings = &state.settings;
     let selection = &settings.transcription;
     let definition = crate::transcription::models::definition(selection.model);
-    let installed = crate::transcription::models::is_installed(definition, &selection.language);
+    let installed = crate::transcription::models::is_installed(&definition, &selection.language);
     let capture = if state.listener.running {
         CaptureReport::from(state.capture)
     } else {
@@ -568,7 +570,7 @@ fn status(host: &dyn Host) -> Result<ControlReply, ControlError> {
         meeting: meeting_report(),
         model: ModelReport {
             id: selection.model.as_str().into(),
-            name: definition.name.into(),
+            name: definition.name.to_string(),
             language: selection.language.clone(),
             installed,
             preparing: state

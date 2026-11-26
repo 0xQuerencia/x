@@ -54,6 +54,17 @@ impl Service {
         task_id: &str,
         start_commit: &str,
     ) -> Result<Task, String> {
+        self.plan_fast_forward_with_head(project_id, run_id, task_id, start_commit, None)
+    }
+
+    pub(super) fn plan_fast_forward_with_head(
+        &self,
+        project_id: &str,
+        run_id: &str,
+        task_id: &str,
+        start_commit: &str,
+        expected_head: Option<&str>,
+    ) -> Result<Task, String> {
         if self.lock().phase.is_busy() {
             return Err(busy(self.lock().phase));
         }
@@ -73,6 +84,9 @@ impl Service {
         let manager = Arc::new(Manager::new(base, home));
         let worktree = manager.reattach(&project, id, task_id, start_commit)?;
         let preview = merge::preview(&manager, &project, &worktree)?;
+        if expected_head.is_some_and(|head| head != preview.task_head) {
+            return Err("The coding result changed; inspect its current commit again".into());
+        }
         if !merge::eligible_fast_forward(&project, &preview)? {
             return Err(
                 "Only a clean, conflict-free fast-forward with no unrelated owner changes can be approved".into()

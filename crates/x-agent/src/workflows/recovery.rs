@@ -62,6 +62,31 @@ pub struct Claim {
     pub desktop: Option<DesktopClaim>,
 }
 
+impl Claim {
+    pub(crate) fn validate_undispatched_retry(&self) -> Result<(), String> {
+        if self.dispatch != Some(Dispatch::Pending)
+            || self.desktop.is_some()
+            || self.worktree.is_none()
+            || self.evidence_id.is_some()
+            || self.artifact.is_some()
+            || self.test_evidence.is_some()
+            || !matches!(
+                self.state,
+                State::Failed | State::Unverified | State::Cancelled
+            )
+        {
+            return Err(
+                "A stopped or failed coding attempt with durable proof of no dispatch is required"
+                    .into(),
+            );
+        }
+        if self.attempt >= MAX_ATTEMPTS {
+            return Err("Retry budget exhausted".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesktopClaim {
@@ -367,9 +392,27 @@ impl Journal {
         })
     }
 
+    /// Starts a single freshly approved attempt, only if the exact claim
+    /// still carries independent durable proof that no dispatch started.
+    pub(super) fn begin_undispatched_retry(&self, expected: &Claim) -> Result<Claim, String> {
+        self.update(|data| {
+            let claim = data
+                .entries
+                .iter_mut()
+                .find(|entry| entry.run_id == expected.run_id && entry.node_id == expected.node_id)
+                .filter(|entry| *entry == expected)
+                .ok_or("The recorded attempt changed after retry review")?;
+            claim.validate_undispatched_retry()?;
+            claim.attempt += 1;
+            claim.state = State::Claimed;
+            Ok((claim.clone(), true))
+        })
+    }
+
     /// Retry is deliberately not automatic. A fresh owner grant and an
     /// independent check that the prior attempt wasn't delivered are required.
-    pub fn approve_retry_after_reconciliation(
+    #[cfg(test)]
+    fn approve_retry_after_reconciliation(
         &self,
         run_id: Uuid,
         node_id: &str,

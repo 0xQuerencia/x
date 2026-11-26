@@ -50,6 +50,9 @@ pub fn preview(
         &task_root,
         &["status", "--porcelain=v1", "--untracked-files=all"],
     )?;
+    if !dirty.0 {
+        return Err("Git could not inspect the task worktree status".into());
+    }
     if !dirty.1.trim().is_empty() {
         return Err("The task worktree has uncommitted files. Review and commit them first".into());
     }

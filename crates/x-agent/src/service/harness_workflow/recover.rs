@@ -1,10 +1,121 @@
 //! Exact local checkout recovery. Historic claims carry no execution authority.
 
 use super::*;
+use crate::grants::Scope;
 use crate::workflows::{recovery::Dispatch, roadmap::digest};
 use crate::worktrees::Inspection;
 
+#[derive(Debug)]
+pub struct CodingReviewEntry {
+    pub run_id: String,
+    pub node_id: String,
+    pub state: State,
+}
+
 impl Service {
+    pub fn recent_coding_reviews(&self) -> Result<Vec<CodingReviewEntry>, String> {
+        let (dir, _) = self
+            .workflow_dirs
+            .lock()
+            .map_err(|_| "Workflow storage is unavailable")?
+            .clone()
+            .ok_or("Workflow storage is not configured")?;
+        let support = dir.parent().ok_or("Local data directory unavailable")?;
+        let claims = Journal::new(support.join("workflow-journal")).snapshot()?;
+        Ok(claims
+            .into_iter()
+            .rev()
+            .filter(|claim| claim.worktree.is_some())
+            .take(24)
+            .map(|claim| CodingReviewEntry {
+                run_id: claim.run_id.to_string(),
+                node_id: claim.node_id,
+                state: claim.state,
+            })
+            .collect())
+    }
+
+    pub fn plan_coding_result_integration(
+        &self,
+        run: &str,
+        node: &str,
+        reviewed_head: &str,
+    ) -> Result<Task, String> {
+        self.with_recovery_checkout(run, node, |_, project, claim, inspection| {
+            let Inspection::Owned { current_commit, .. } = inspection else {
+                return Err("The checkout is missing or changed since Work review".into());
+            };
+            if claim.state != State::Verified
+                || current_commit != reviewed_head
+                || claim
+                    .artifact
+                    .as_ref()
+                    .is_none_or(|proof| proof.commit() != reviewed_head)
+                || claim.test_evidence.as_ref().is_some_and(|evidence| {
+                    evidence.passed != Some(true) || evidence.commit != reviewed_head
+                })
+            {
+                return Err(
+                    "A current clean checkout with exact committed evidence is required".into(),
+                );
+            }
+            let reservation = claim.worktree.as_ref().ok_or("No recorded checkout")?;
+            self.plan_fast_forward_with_head(
+                &project.id.to_string(),
+                run,
+                node,
+                reservation.approved_base(),
+                Some(reviewed_head),
+            )
+        })
+    }
+
+    pub fn plan_coding_retry(&self, workflow: &str, run: &str, node: &str) -> Result<Task, String> {
+        self.with_recovery_checkout(run, node, |manager, project, claim, inspection| {
+            claim.validate_undispatched_retry()?;
+            let reservation = claim
+                .worktree
+                .as_ref()
+                .ok_or("This job has no recorded checkout")?;
+            let mut graph = self.workflow_store().get_graph(workflow)?;
+            if graph.id != workflow || graph.roadmap.is_some() {
+                return Err(
+                    "Choose the original saved coding workflow with no linked roadmap source"
+                        .into(),
+                );
+            }
+            graph.nodes.retain(|candidate| candidate.id == node);
+            let candidate = graph
+                .nodes
+                .first()
+                .filter(|node| {
+                    matches!(node.job, Job::Harness { .. })
+                        && node.after.is_empty()
+                        && node.requires.is_empty()
+                        && node.requires_verified.is_empty()
+                        && node.inputs.is_empty()
+                })
+                .ok_or(
+                    "Retry requires an independent coding node from the original saved workflow",
+                )?;
+            let Scope::Task { intent, .. } = planned_scope(
+                candidate,
+                project.id,
+                claim.run_id,
+                reservation.approved_base(),
+                &proof_for(candidate),
+            )?
+            else {
+                return Err("The approved coding request has the wrong scope".into());
+            };
+            if digest(intent.as_bytes()) != claim.request_fingerprint {
+                return Err("The saved coding request changed since the recorded attempt".into());
+            }
+            manager.retry_checkout(project, claim.run_id, node, reservation, inspection)?;
+            self.plan_graph_review_with_retry(graph, None, None, Some(claim.clone()))
+        })
+    }
+
     pub fn open_coding_worktree(&self, run: &str, node: &str) -> Result<(), String> {
         self.with_desktop_control(|| {
             self.with_recovery_checkout(run, node, |_, _, _, inspection| match inspection {

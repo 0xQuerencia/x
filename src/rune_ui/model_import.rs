@@ -243,7 +243,8 @@ pub(super) fn poll(ui: &mut Ui) -> bool {
 
 /// Why an import can't be used now, for its card and General's model row.
 pub(super) fn status_note(model: &ModelDefinition) -> Option<String> {
-    let TranscriptionModelId::Custom(id) = model.id else {
+    let model_id = model.id;
+    let TranscriptionModelId::Custom(id) = model_id else {
         return None;
     };
     match custom_models::status(id) {
@@ -259,18 +260,19 @@ pub(super) fn status_note(model: &ModelDefinition) -> Option<String> {
 /// keeps the choice and runs the default model until it is fixed.
 pub(super) fn selection_notice(ui: &Ui) -> Option<String> {
     let model = crate::transcription::models::definition(ui.settings.transcription.model);
-    let fallback = crate::transcription::models::definition(custom_models::fallback().model).name;
+    let fallback = crate::transcription::models::definition(custom_models::fallback().model);
     if model.id == TranscriptionModelId::ParakeetUltra && !model.available() {
         return Some(tr_named(
             "{model} needs Labs › Parakeet Ultra, so Hex uses {fallback} until you turn it on or choose another model",
-            &[("model", model.name), ("fallback", fallback)],
+            &[("model", &model.name), ("fallback", &fallback.name)],
         ));
     }
-    let TranscriptionModelId::Custom(id) = model.id else {
+    let model_id = model.id;
+    let TranscriptionModelId::Custom(id) = model_id else {
         return None;
     };
     let name = if custom_models::is_registered(id) {
-        model.name
+        model.name.as_ref()
     } else {
         tr("The imported model")
     };
@@ -283,7 +285,10 @@ pub(super) fn selection_notice(ui: &Ui) -> Option<String> {
             "{model} changed since it was added, so Hex uses {fallback} until you check it again in the speech model picker or choose another model"
         }
     };
-    Some(tr_named(notice, &[("model", name), ("fallback", fallback)]))
+    Some(tr_named(
+        notice,
+        &[("model", name), ("fallback", &fallback.name)],
+    ))
 }
 
 /// What an imported card's metadata line says.
@@ -291,7 +296,7 @@ pub(super) fn metadata(model: &ModelDefinition) -> String {
     let import = custom_models::imported()
         .into_iter()
         .find(|import| import.definition.id == model.id);
-    let languages = match model.languages {
+    let languages = match model.languages.as_ref() {
         [only] => crate::transcription::models::language_name(only).to_owned(),
         languages => crate::desktop::i18n::tr_fill("{} languages", &languages.len().to_string()),
     };
@@ -304,7 +309,7 @@ pub(super) fn metadata(model: &ModelDefinition) -> String {
             (None, false) => tr("Imported"),
         }
         .to_owned(),
-        custom_models::family(import.as_ref().map_or("", |import| import.architecture)).to_owned(),
+        custom_models::family(import.as_ref().map_or("", |import| &import.architecture)).to_owned(),
         languages,
         tr("Not benchmarked").to_owned(),
     ];
@@ -327,13 +332,9 @@ fn in_place(id: CustomModelId) -> bool {
 }
 
 /// Rename and Remove for an imported card, or its name field while renaming.
-pub(super) fn actions(
-    ui: &Ui,
-    p: Paint,
-    model: &'static ModelDefinition,
-    removable: bool,
-) -> Vec<El> {
-    let TranscriptionModelId::Custom(id) = model.id else {
+pub(super) fn actions(ui: &Ui, p: Paint, model: &ModelDefinition, removable: bool) -> Vec<El> {
+    let model_id = model.id;
+    let TranscriptionModelId::Custom(id) = model_id else {
         return Vec::new();
     };
     if let Some((renaming, field)) = &ui.picker.import.renaming
@@ -389,7 +390,7 @@ pub(super) fn actions(
             move |ui: &mut Ui, _| {
                 choose(ui);
                 ui.picker.import.reselect = ui.picker.import.chooser.is_some()
-                    && ui.settings.transcription.model == model.id;
+                    && ui.settings.transcription.model == model_id;
             },
         ));
     }
@@ -397,13 +398,14 @@ pub(super) fn actions(
     if ui.settings.transcription.model == model.id {
         return actions;
     }
+    let name = model.name.to_string();
     actions.push(button(
         p,
         "rename-model",
         tr("Rename"),
         ButtonKind::Secondary,
         move |ui: &mut Ui, _| {
-            ui.picker.import.renaming = Some((id, TextEdit::new(model.name)));
+            ui.picker.import.renaming = Some((id, TextEdit::new(&name)));
         },
     ));
     if removable {

@@ -1090,7 +1090,7 @@ fn paste_meeting_delta(
 }
 
 pub(crate) fn default_model_path() -> Result<std::path::PathBuf> {
-    model_path(crate::transcription::models::definition(
+    model_path(&crate::transcription::models::definition(
         crate::transcription::models::TranscriptionModelId::default(),
     ))
 }
@@ -1104,15 +1104,17 @@ impl Parakeet {
 
     pub fn load_selection(selection: &TranscriptionSelection) -> Result<Self> {
         let definition = validate(selection)?;
-        if !crate::transcription::models::is_installed(definition, &selection.language) {
+        if !crate::transcription::models::is_installed(&definition, &selection.language) {
             return Err(eyre!("{} is not installed", definition.name));
         }
-        let path = model_path(definition)?;
+        let path = model_path(&definition)?;
         let mut parakeet = Self::load_from(&path, true, Some(selection))?;
         parakeet.prewarm()?;
         let stream_run = parakeet.stream_run_options();
-        let architecture = match definition.runtime {
-            crate::transcription::models::ModelRuntime::Gguf(artifact) => artifact.architecture,
+        let architecture = match &definition.runtime {
+            crate::transcription::models::ModelRuntime::Gguf(artifact) => {
+                artifact.architecture.as_ref()
+            }
             crate::transcription::models::ModelRuntime::AppleSpeech => "",
         };
         parakeet.stream = parakeet.session.probe_stream(&stream_run, architecture);
@@ -1203,7 +1205,7 @@ impl Parakeet {
         if let (Some(selection), Some(definition)) = (selection, definition) {
             let runtime_language = crate::transcription::gguf_session::validate_gguf_artifact(
                 model_path,
-                definition,
+                &definition,
                 &architecture,
                 &variant,
                 selection,
