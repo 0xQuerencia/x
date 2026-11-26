@@ -294,6 +294,7 @@ mod tests {
             errors: vec![],
             stderr: vec![],
             changed_files: None,
+            termination: None,
         }
     }
 

@@ -1,20 +1,21 @@
 //! One app window: Hyprland finds and focuses it, `agent-desktop` reads its accessibility
 //! tree and acts by ref, `wtype` sends the keys AT-SPI cannot. Everything read is untrusted.
 
-use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::cancellation::Cancellation;
 use crate::tools;
 
+pub(crate) mod capture;
+pub(crate) use capture::{capture, capture_prefix, capture_scoped};
+
 const MAX_ELEMENTS: usize = 120;
 const MAX_TEXTS: usize = 60;
 const MAX_NAME: usize = 160;
-const OUTPUT_CAP: u64 = 4_000_000;
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 
 const ACTIONABLE: &[&str] = &[
@@ -335,66 +336,6 @@ fn valid_args(args: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs `cmd` with a deadline and capped output. Returns success and stdout.
-pub(crate) fn capture(cmd: &mut Command, limit: Duration) -> Result<(bool, Vec<u8>), String> {
-    capture_scoped(cmd, limit, None)
-}
-
-pub(crate) fn capture_scoped(
-    cmd: &mut Command,
-    limit: Duration,
-    stop: Option<&Cancellation>,
-) -> Result<(bool, Vec<u8>), String> {
-    if let Some(stop) = stop {
-        stop.check()?;
-    }
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = crate::retry_busy(|| cmd.spawn())
-        .map_err(|e| format!("could not run {:?}: {e}", cmd.get_program()))?;
-    let mut stdout = child.stdout.take().ok_or("no output pipe")?;
-    let (send, output) = std::sync::mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let result = (&mut stdout)
-            .take(OUTPUT_CAP + 1)
-            .read_to_end(&mut buf)
-            .map(|_| buf);
-        let _ = send.send(result);
-    });
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if stop.is_some_and(Cancellation::requested) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("Stopped the owned desktop helper".into());
-            }
-            Ok(None) if start.elapsed() > limit => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("{:?} timed out", cmd.get_program()));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(15)),
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(e.to_string());
-            }
-        }
-    };
-    let bytes = output
-        .recv_timeout(limit.saturating_sub(start.elapsed()))
-        .map_err(|_| format!("{:?} did not close its output in time", cmd.get_program()))?
-        .map_err(|e| format!("Could not read helper output: {e}"))?;
-    if bytes.len() as u64 > OUTPUT_CAP {
-        return Err("Helper output exceeded the capture limit".into());
-    }
-    Ok((status.success(), bytes))
-}
-
 pub(crate) fn hypr(args: &[&str]) -> Result<Value, String> {
     let (ok, buf) = capture(Command::new("hyprctl").args(args), Duration::from_secs(5))?;
     if !ok {
@@ -586,6 +527,11 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
             s.iter()
                 .any(|s| matches!(s.as_str(), Some("hidden" | "disabled" | "offscreen")))
         });
+    // Inaccessible containers cannot supply actionable descendants.
+    if hidden {
+        return;
+    }
+    let protected = role.contains("password") || mentions(&name, SECRET_WORDS);
     let actions: Vec<String> = node
         .get("available_actions")
         .and_then(Value::as_array)
@@ -596,7 +542,7 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
         .map(String::from)
         .collect();
     let reference = str_of("ref_id");
-    if !hidden && !SKIP_ROLES.contains(&role.as_str()) {
+    if !SKIP_ROLES.contains(&role.as_str()) {
         let keep_control = !reference.is_empty()
             && !actions.is_empty()
             && (!name.is_empty() || role == "textfield")
@@ -620,7 +566,8 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
                 },
                 actions,
             });
-        } else if !name.is_empty()
+        } else if !protected
+            && !name.is_empty()
             && name != parent_name
             && matches!(
                 role.as_str(),
@@ -630,6 +577,10 @@ fn collect(node: &Value, parent_name: &str, obs: &mut Observation) {
         {
             obs.texts.push(name.clone());
         }
+    }
+    // Retain the protected field marker, but never expose its subtree.
+    if protected {
+        return;
     }
     for child in node
         .get("children")
@@ -675,27 +626,5 @@ mod accessibility_window_tests {
             {"pid": 7, "title": "Tab", "id": "b"}
         ]});
         assert_eq!(accessibility_window_id(&listed, &window()).unwrap(), "b");
-    }
-}
-
-#[cfg(all(test, unix))]
-mod capture_limit_tests {
-    use super::*;
-
-    #[test]
-    fn oversized_helper_output_is_not_a_successful_partial_capture() {
-        let mut command = Command::new("head");
-        command.args(["-c", &(OUTPUT_CAP + 1).to_string(), "/dev/zero"]);
-        assert!(capture(&mut command, Duration::from_secs(5)).is_err());
-    }
-
-    #[test]
-    fn complete_helper_output_is_preserved() {
-        let mut command = Command::new("printf");
-        command.arg("complete");
-        assert_eq!(
-            capture(&mut command, Duration::from_secs(5)).unwrap(),
-            (true, b"complete".to_vec())
-        );
     }
 }

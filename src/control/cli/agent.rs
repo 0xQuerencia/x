@@ -286,14 +286,24 @@ pub enum AgentCommand {
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "preview", "permissions", "uncertain", "claims", "worktrees", "correction-preview", "plan-correction", "run", "run-graph", "test-project", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "preview", "permissions", "uncertain", "claims", "worktrees", "review-worktree", "correction-preview", "plan-correction", "run", "run-graph", "test-project", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
         command: String,
-        /// Workflow/project id, exact failure run/node, or import path.
+        /// Workflow/project ID, worktree run UUID, failure run/node, or import path.
         #[arg(default_value = "")]
         value: String,
-        /// Fixed test preset, or quoted correction goal for 'plan-correction'.
+        /// Test preset, worktree node ID, or quoted correction goal.
         #[arg(default_value = "")]
         suite: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Read one GitHub pull request via your installed GitHub CLI, without writes.
+    GithubPr {
+        repository: String,
+        number: u32,
+        /// Exact expected authenticated GitHub login.
+        #[arg(long)]
+        account: String,
         #[command(flatten)]
         output: Output,
     },
@@ -635,6 +645,19 @@ pub(super) fn run(command: AgentCommand) -> u8 {
             },
             output,
         ),
+        AgentCommand::GithubPr {
+            repository,
+            number,
+            account,
+            output,
+        } => (
+            AgentAction::GithubPr {
+                repository,
+                number,
+                account,
+            },
+            output,
+        ),
         AgentCommand::Workflow {
             command,
             mut value,
@@ -649,6 +672,11 @@ pub(super) fn run(command: AgentCommand) -> u8 {
             } else if command == "plan-correction" {
                 if value.is_empty() || suite.is_empty() {
                     return fail("Usage: agent workflow plan-correction <run-id>/<node-id> <goal>");
+                }
+                value = format!("{value} {suite}");
+            } else if command == "review-worktree" {
+                if value.is_empty() || suite.is_empty() {
+                    return fail("Usage: agent workflow review-worktree <run-id> <node-id>");
                 }
                 value = format!("{value} {suite}");
             } else if !suite.is_empty() {

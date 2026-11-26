@@ -493,6 +493,12 @@ impl ApprovedHarnessExecutor {
             Err(_) => return self.finish_failed(claim, stop, Outcome::Failed),
         };
         let result = owned.join();
+        if result.status != RunStatus::Completed
+            && let Some(termination) = result.termination
+            && let Ok(mut reasons) = self.reasons.lock()
+        {
+            reasons.insert(assignment.node.id.clone(), termination.summary().into());
+        }
         let delivery = Verification::harness_delivery(&result, None, unix_now());
         let evidence_id = result
             .accepted_session

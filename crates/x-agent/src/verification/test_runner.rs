@@ -2,11 +2,9 @@
 //! Test commands can run arbitrary project scripts: approval is required for
 //! each run and this API is not exposed to model output.
 
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::process::Command;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -232,7 +230,16 @@ impl Runner for SystemRunner {
             .env_remove("PYTHONSTARTUP")
             .env_remove("RUSTC_WRAPPER")
             .env_remove("CARGO_TARGET_DIR");
-        capture_test(&mut command, MAX_TEST_TIME, stop)
+        let output = crate::harness::process::capture_test(&mut command, MAX_TEST_TIME, stop)?;
+        Ok(ProcessResult {
+            success: output.success,
+            excerpt: FailureExcerpt {
+                stdout: output.stdout.0,
+                stderr: output.stderr.0,
+                stdout_truncated: output.stdout.1,
+                stderr_truncated: output.stderr.1,
+            },
+        })
     }
 }
 
@@ -340,112 +347,6 @@ fn evaluate(
     )
 }
 
-// Continuously drain both streams. Memory stays bounded even when a noisy
-// test produces more output than the review can display.
-const EXCERPT_BYTES: usize = 8_192;
-
-fn read_tail(mut stream: impl Read) -> std::io::Result<(String, bool)> {
-    let mut tail = Vec::with_capacity(EXCERPT_BYTES);
-    let mut buffer = [0; EXCERPT_BYTES];
-    let mut truncated = false;
-    loop {
-        let read = stream.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        let discard = (tail.len() + read).saturating_sub(EXCERPT_BYTES);
-        if discard > 0 {
-            tail.drain(..discard);
-            truncated = true;
-        }
-        tail.extend_from_slice(&buffer[..read]);
-    }
-    let text = String::from_utf8_lossy(&tail)
-        .chars()
-        .filter(|ch| !ch.is_control() || matches!(*ch, '\n' | '\t'))
-        .collect();
-    Ok((text, truncated))
-}
-
-type Tail = std::io::Result<(String, bool)>;
-
-fn drain(stream: impl Read + Send + 'static) -> Receiver<Tail> {
-    let (tx, rx) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let _ = tx.send(read_tail(stream));
-    });
-    rx
-}
-
-fn receive_tail(
-    rx: Receiver<Tail>,
-    started: Instant,
-    limit: Duration,
-    stop: &Cancellation,
-) -> std::result::Result<(String, bool), String> {
-    loop {
-        stop.check()?;
-        let remaining = limit.saturating_sub(started.elapsed());
-        if remaining.is_zero() {
-            return Err("The approved test output did not close in time".into());
-        }
-        match rx.recv_timeout(remaining.min(Duration::from_millis(25))) {
-            Ok(result) => return result.map_err(|_| "Could not read test output".into()),
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return Err("Test output reader stopped".into()),
-        }
-    }
-}
-
-fn capture_test(
-    command: &mut Command,
-    limit: Duration,
-    stop: &Cancellation,
-) -> std::result::Result<ProcessResult, String> {
-    stop.check()?;
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child =
-        crate::retry_busy(|| command.spawn()).map_err(|_| "Could not start approved tests")?;
-    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err("Could not open test output pipes".into());
-    };
-    let stdout = drain(stdout);
-    let stderr = drain(stderr);
-    let started = Instant::now();
-    let success = loop {
-        if stop.requested() || started.elapsed() >= limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("Approved tests stopped or timed out".into());
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break status.success(),
-            Ok(None) => std::thread::sleep(Duration::from_millis(15)),
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("Could not observe the approved test process".into());
-            }
-        }
-    };
-    let (stdout, stdout_truncated) = receive_tail(stdout, started, limit, stop)?;
-    let (stderr, stderr_truncated) = receive_tail(stderr, started, limit, stop)?;
-    Ok(ProcessResult {
-        success,
-        excerpt: FailureExcerpt {
-            stdout,
-            stderr,
-            stdout_truncated,
-            stderr_truncated,
-        },
-    })
-}
-
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -488,16 +389,6 @@ mod tests {
                 },
             })
         }
-    }
-
-    #[test]
-    fn output_tail_preserves_end_and_bounds_memory() {
-        let mut bytes = vec![b'x'; EXCERPT_BYTES * 3];
-        bytes.extend_from_slice(b"failure at the end");
-        let (tail, truncated) = read_tail(bytes.as_slice()).unwrap();
-        assert!(truncated);
-        assert_eq!(tail.len(), EXCERPT_BYTES);
-        assert!(tail.ends_with("failure at the end"));
     }
 
     #[cfg(unix)]

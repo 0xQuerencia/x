@@ -109,6 +109,8 @@ pub enum EventKind {
     StepFinish,
     Activity,
     Stall,
+    /// Native closure has not been proved; the owner still holds the run lease.
+    TerminationUnconfirmed,
     Raw,
 }
 
@@ -123,6 +125,7 @@ impl EventKind {
             Self::StepFinish => "step_finish",
             Self::Activity => "event",
             Self::Stall => "stall",
+            Self::TerminationUnconfirmed => "termination_unconfirmed",
             Self::Raw => "raw",
         }
     }
@@ -167,6 +170,23 @@ pub enum RunStatus {
     Cancelled,
 }
 
+/// A native ownership postcondition, independent of provider output or exit text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+pub enum TerminationEvidence {
+    /// The retained direct process exited and the private Windows Job reports
+    /// zero active processes. This says nothing about external services.
+    WindowsJobEmpty { elapsed_ms: u64, forced: bool },
+}
+
+impl TerminationEvidence {
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::WindowsJobEmpty { .. } => "Windows confirmed the owned Job is empty.",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RunResult {
     pub status: RunStatus,
@@ -176,4 +196,7 @@ pub struct RunResult {
     pub stderr: Vec<String>,
     /// Files whose git status changed. Evidence may be unavailable outside a Git repository.
     pub changed_files: Option<Vec<String>>,
+    /// Omitted where the adapter has no independent native closure evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub termination: Option<TerminationEvidence>,
 }

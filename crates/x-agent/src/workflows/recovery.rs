@@ -489,23 +489,25 @@ impl Journal {
             .map_err(|error| format!("Cannot create job journal directory: {error}"))?;
         let lock = open_regular(&self.directory.join(LOCK), true)
             .map_err(|error| format!("Cannot open job journal lock: {error}"))?;
-        let mut locked = false;
-        for _ in 0..20 {
+        // Independent jobs can contend while a previous writer syncs both the
+        // journal and its directory. Give that durable write time to finish,
+        // but keep the wait bounded if the lock holder is stuck.
+        let started = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(5);
+        loop {
             match lock.try_lock() {
-                Ok(()) => {
-                    locked = true;
-                    break;
-                }
+                Ok(()) => break,
                 Err(std::fs::TryLockError::WouldBlock) => {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    let remaining = timeout.saturating_sub(started.elapsed());
+                    if remaining.is_zero() {
+                        return Err("Another job-journal operation is in progress".into());
+                    }
+                    std::thread::sleep(remaining.min(std::time::Duration::from_millis(5)));
                 }
                 Err(std::fs::TryLockError::Error(_)) => {
                     return Err("Cannot lock job journal".into());
                 }
             }
-        }
-        if !locked {
-            return Err("Another job-journal operation is in progress".into());
         }
         let result: Result<T, String> = (|| {
             let mut data = self.read()?;
@@ -620,6 +622,37 @@ mod tests {
             panic!("expected a fresh claim");
         };
         claim
+    }
+
+    #[test]
+    fn a_contending_job_waits_for_a_slow_journal_writer() {
+        let (_directory, journal, run, digest) = fixture();
+        fs::create_dir_all(&journal.directory).unwrap();
+        let lock = open_regular(&journal.directory.join(LOCK), true).unwrap();
+        lock.try_lock().unwrap();
+
+        std::thread::scope(|scope| {
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let journal = &journal;
+            let digest = &digest;
+            let worker = scope.spawn(move || {
+                started_tx.send(()).unwrap();
+                journal.begin(run, "backend", digest)
+            });
+            started_rx.recv().unwrap();
+            // Exceed the previous 100 ms retry window without changing the
+            // journal or allowing the waiting job to claim it prematurely.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let finished_early = worker.is_finished();
+            let before_release = journal.snapshot();
+            lock.unlock().unwrap();
+
+            let outcome = worker.join().unwrap().unwrap();
+            assert!(!finished_early);
+            assert!(before_release.unwrap().is_empty());
+            assert!(matches!(outcome, Begin::Fresh(_)));
+        });
+        assert_eq!(journal.snapshot().unwrap().len(), 1);
     }
 
     #[test]

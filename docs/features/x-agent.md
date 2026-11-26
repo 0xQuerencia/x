@@ -645,6 +645,52 @@ run to a different session. A process that closes its output but needs
 forced termination is reported as failed even if its termination handler
 exits with code zero.
 
+On Windows, an owned provider starts with its primary thread suspended. X
+assigns it to a private, unnamed Job with kill-on-close and no breakaway before
+resuming the one freshly validated primary thread. Assignment, thread identity
+or resume failure refuses startup and cleans up the retained process handle.
+Stop uses `TerminateJobObject`, without an external `taskkill` helper or a PID
+lookup. Linux retains the direct child unreaped while checking the owned
+process group and bounding output drain after the root exits. A nonempty group
+is terminated before the worker releases its lease; failed observation keeps
+cleanup pending instead of claiming success. This Linux procfs observation is
+not a kernel Job guarantee, and cannot cover processes that leave the group
+or external services. Other Unix systems retain their existing termination
+path. Linux fixtures check a surviving descendant and independent group Stop;
+actual desktop/provider acceptance remains separate.
+
+Windows closure requires both the direct process to exit and
+`QueryInformationJobObject` to report zero active processes. X closes the
+exited direct process handle before waiting for Job accounting to drain.
+The five-second closure threshold publishes a bounded
+`termination_unconfirmed` event; it does **not** finish the worker, release its
+project lease, or permit another writer. X keeps requesting native termination
+and observing the same Job until closure is confirmed. Dropping the run or a
+supervisor startup failure uses the same ownership guard. An exited provider
+whose remaining Job members require termination cannot report successful
+completion, even when the provider exited zero.
+
+The Windows supervisor observes the direct process exit independently of pipe
+EOF. A descendant can retain an inherited output handle after that exit,
+including when its own standard streams were redirected. X drains remaining
+events for at most five seconds after the direct process exits, preserving an
+acknowledged session, then records failure and enters the same owned Job
+cleanup. Continuous descendant output cannot extend that drain deadline. This
+adds no total deadline to a provider whose direct process is still running.
+
+`harness::RunResult` adds optional typed `termination` evidence with
+`scope: windows_job_empty`, elapsed milliseconds and whether forced termination
+was requested. Its absence grants no native closure proof. Work summaries and
+stopped/failed graph job details retain the confirmed closure message. This
+evidence concerns the owned Job, including ordinary inherited descendants;
+it does not establish rollback, code correctness or termination of work
+delegated to an external service. Windows Jobs are not an application sandbox.
+The API contracts are documented by Microsoft for
+[Job inheritance](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
+[suspended creation](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags),
+[resume counts](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-resumethread)
+and [active-process accounting](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_accounting_information).
+
 Independent Git status evidence uses a deadline and a bounded, complete
 capture. Inherited checkout overrides, malformed porcelain records,
 duplicate paths and truncated helper output cannot become proof of a
@@ -655,6 +701,16 @@ Checks live in `harness::process::tests`, `harness::evidence::tests`,
 `opencode::tests` and `desktop::capture_limit_tests`. The disposable X11
 smoke test waits for its own test window to become readable before checking
 window operations; all later reads and observed effects remain required.
+
+`harness::process::closure::tests` checks that timeout and unavailable readback
+retain an execution lease until an independent empty result arrives.
+`harness::process::windows::tests` re-executes the actual Rust test executable
+to spawn an immediate child and grandchild (including a nested child Job), keeps an unrelated process alive,
+checks Stop before resume and Drop cleanup, and rejects a zero-exit parent
+that leaves a live child. These native tests run under the existing Windows
+Compile job's `cargo test --locked -p x-agent --all-targets`; a Linux target
+check alone is not execution evidence for them. They exercise process
+ownership rather than installed desktop or commercial-provider acceptance.
 
 ### Coding workflow result history (development)
 
