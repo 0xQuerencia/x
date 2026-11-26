@@ -51,6 +51,7 @@ pub use computer_dialogue::ComputerQuestion;
 pub use coordinator::BackgroundSnapshot;
 pub use edit::Preview;
 pub use effects::ActionCompletion;
+pub use harness_workflow::PermissionWait;
 pub use launch::{Launcher, RealLauncher};
 use ledger::{Kind as AuditKind, Ledger};
 pub use notices::{NoticeKind, TaskAttention, TaskNotice};
@@ -194,6 +195,9 @@ pub struct Snapshot {
     /// Reviewed graph step indices for which a local Stop request is available.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cancellable_coding_jobs: Vec<usize>,
+    /// Live native review controls. The CLI has its own exact-task lookup.
+    #[serde(skip)]
+    pub permission_waits: Vec<PermissionWait>,
     pub can_run_in_background: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub background_runs: Vec<BackgroundSnapshot>,
@@ -554,6 +558,7 @@ impl Service {
             autonomy_mode: s.autonomy_mode,
             pending_job_approvals,
             cancellable_coding_jobs: coordinator::cancellable_jobs(&s),
+            permission_waits: harness_workflow::permission_waits(&s),
             can_run_in_background: s.can_background(),
             background_runs,
             computer_apps: s.computer_apps.clone(),

@@ -22,6 +22,8 @@ pub struct BackgroundSnapshot {
     pub started_at: u64,
     pub events: Vec<Event>,
     pub cancellable_coding_jobs: Vec<usize>,
+    #[serde(skip)]
+    pub permission_waits: Vec<super::PermissionWait>,
 }
 
 #[derive(Clone)]
@@ -330,6 +332,7 @@ impl Service {
                     .collect();
                 Some(BackgroundSnapshot {
                     cancellable_coding_jobs: cancellable_jobs(&state),
+                    permission_waits: super::harness_workflow::permission_waits(&state),
                     task,
                     started_at: run.started_at,
                     events,
