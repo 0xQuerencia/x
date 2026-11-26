@@ -575,14 +575,11 @@ impl Service {
         emit(
             &mut s,
             "plan",
-            &format!(
-                "Planned {}: {text}",
-                if mode == Mode::Work {
-                    "work"
-                } else {
-                    "actions"
-                }
-            ),
+            if mode == Mode::Work {
+                "Planned work"
+            } else {
+                "Planned actions"
+            },
         );
         Ok(task)
     }

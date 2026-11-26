@@ -134,7 +134,16 @@ ordinary dictation. Smart only runs after you use the shortcut.
 
 **The Agent shortcut.** Bind `hex agent toggle` (and `hex agent stop`) to a key in your
 desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
-once: X refuses to start while any task or recording of its own is in flight.
+once: X refuses to start while any task or recording of its own is in flight. After
+Stop, an outstanding transcription request must return before another Agent
+recording starts. Its late transcript is discarded. Transcription activity
+reports status without adding the utterance to the event stream. The exact
+submitted command is still visible in the task preview.
+
+The [isolated Hyprland voice test](../../scripts/smoke-x/hyprland-voice.sh)
+supplies a finished transcript at the speech-to-text boundary. It exercises
+the Agent voice service and real compositor readback, including approval and
+Stop. This check begins after speech recognition and does not use a microphone.
 
 ### Register a project
 

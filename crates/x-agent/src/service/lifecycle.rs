@@ -91,6 +91,7 @@ impl Service {
     }
 
     fn cancel_foreground_matching(&self, task_id: Option<u64>) -> Result<(), String> {
+        let _voice_control = self.lock_voice_control();
         let mut s = self.lock();
         if let Some(id) = task_id
             && (s.task.as_ref().is_none_or(|task| task.id != id)
@@ -143,8 +144,7 @@ impl Service {
                 }
             }
             Phase::Listening | Phase::Transcribing => {
-                drop(s);
-                self.voice_cancel();
+                self.discard_voice(s);
             }
             _ => {}
         }
@@ -153,76 +153,84 @@ impl Service {
 
     // ---- voice -------------------------------------------------------------------------
 
+    fn lock_voice_control(&self) -> MutexGuard<'_, ()> {
+        self.voice_control.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     pub fn voice_start(&self, mode: Mode) -> Result<(), String> {
+        let _voice_control = self.lock_voice_control();
         {
             let mut s = self.lock();
             if s.phase.is_busy() {
                 return Err(busy(s.phase));
             }
+            if s.voice_draining {
+                return Err("The previous recording is still stopping".into());
+            }
             s.voice_mode = mode;
             set_phase(&mut s, Phase::Listening);
         }
         if let Err(e) = self.stt.start() {
-            let mut s = self.lock();
-            if s.phase == Phase::Listening {
-                set_phase(&mut s, Phase::Idle);
-            }
+            set_phase(&mut self.lock(), Phase::Idle);
             return Err(e.to_string());
-        }
-        if self.lock().phase == Phase::Idle {
-            let _ = self.stt.cancel(); // cancelled while the recording was starting
-            return Ok(());
         }
         self.emit("info", "Listening (Hex microphone)");
         Ok(())
     }
 
     pub fn voice_stop(&self) -> Result<(), String> {
+        let _voice_control = self.lock_voice_control();
         let mode = {
             let mut s = self.lock();
             if s.phase != Phase::Listening {
                 return Err("Not listening".into());
             }
             set_phase(&mut s, Phase::Transcribing);
+            s.voice_draining = true;
             s.voice_mode
         };
         let me = self.clone();
-        thread::spawn(move || me.transcribe(mode));
+        if let Err(error) = thread::Builder::new()
+            .name("x-transcribe".into())
+            .spawn(move || me.transcribe(mode))
+        {
+            let mut s = self.lock();
+            s.voice_draining = false;
+            self.discard_voice(s);
+            return Err(format!("Could not finish the recording: {error}"));
+        }
         Ok(())
     }
 
-    pub(super) fn transcribe(&self, mode: Mode) {
+    fn transcribe(&self, mode: Mode) {
         let result = self.stt.stop_print();
         {
             let mut s = self.lock();
+            s.voice_draining = false;
             if s.phase != Phase::Transcribing {
-                return; // cancelled while Hex was transcribing
+                return; // Only this worker can release its stop request.
+            }
+            match &result {
+                Ok(_) => emit(&mut s, "heard", "Finished local transcription"),
+                Err(SttError::NoSpeech) => emit(&mut s, "info", "No speech heard"),
+                Err(_) => emit(&mut s, "error", "Local transcription failed"),
             }
             set_phase(&mut s, Phase::Idle);
         }
-        match result {
-            Ok(text) => {
-                self.emit("heard", &text.chars().take(250).collect::<String>());
-                if let Err(e) = self.plan_spoken(&text, mode) {
-                    self.emit("error", &e);
-                }
-            }
-            Err(SttError::NoSpeech) => self.emit("info", "No speech heard"),
-            Err(e) => self.emit("error", &format!("Transcription failed: {e}")),
+        if let Ok(text) = result
+            && let Err(error) = self.plan_spoken(&text, mode)
+        {
+            self.emit("error", &error);
         }
     }
 
-    pub fn voice_cancel(&self) {
-        {
-            let mut s = self.lock();
-            if !matches!(s.phase, Phase::Listening | Phase::Transcribing) {
-                return;
-            }
-            set_phase(&mut s, Phase::Idle);
-        }
+    // Called with voice control held, so the CLI cannot cancel a newer capture.
+    fn discard_voice(&self, mut s: MutexGuard<'_, State>) {
+        set_phase(&mut s, Phase::Idle);
+        drop(s);
         match self.stt.cancel() {
             Ok(()) => self.emit("info", "Recording discarded"),
-            Err(e) => self.emit("error", &format!("Could not cancel recording: {e}")),
+            Err(_) => self.emit("error", "Could not cancel recording"),
         }
     }
 
@@ -231,7 +239,11 @@ impl Service {
         self.forget_edits();
         self.cancel();
         for _ in 0..200 {
-            if !self.lock().phase.is_busy() && self.workers_finished() {
+            if {
+                let state = self.lock();
+                !state.phase.is_busy() && !state.voice_draining
+            } && self.workers_finished()
+            {
                 return;
             }
             thread::sleep(std::time::Duration::from_millis(50));

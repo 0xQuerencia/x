@@ -82,6 +82,7 @@ impl State {
             stop: Cancellation::default(),
             model_stop: None,
             voice_mode: self.voice_mode,
+            voice_draining: self.voice_draining,
             workspace: self.workspace.clone(),
             selected_session: self.selected_session.clone(),
             session_list: self.session_list.clone(),
