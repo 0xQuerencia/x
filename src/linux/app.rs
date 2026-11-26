@@ -701,8 +701,10 @@ impl LinuxDesktopHost {
             return;
         }
         let model = crate::transcription::models::definition(self.settings.transcription.model);
-        if !crate::transcription::models::is_installed(model, &self.settings.transcription.language)
-        {
+        if !crate::transcription::models::is_installed(
+            &model,
+            &self.settings.transcription.language,
+        ) {
             self.status = "Model required".into();
             return;
         }
@@ -1126,10 +1128,10 @@ impl LinuxDesktopHost {
         let worker = std::thread::spawn(move || {
             (|| {
                 if automatic {
-                    crate::transcription::models::verify_installed(definition, &worker_canceled)?;
+                    crate::transcription::models::verify_installed(&definition, &worker_canceled)?;
                 } else {
                     crate::transcription::models::download_with_stage_progress(
-                        definition,
+                        &definition,
                         &worker_canceled,
                         &worker_progress,
                         &worker_stage,

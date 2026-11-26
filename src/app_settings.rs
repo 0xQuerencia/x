@@ -1444,7 +1444,7 @@ impl AppSettings {
         }
         let model =
             crate::transcription::models::definition(TranscriptionModelId::ParakeetUnifiedEnglish);
-        if !installed(model) {
+        if !installed(&model) {
             return;
         }
         let selection = TranscriptionSelection {

@@ -632,6 +632,10 @@ fn worktree_review_reads_exact_committed_changes_and_distinguishes_stale_tests()
     assert_eq!(review.test_matches_checkout, Some(true));
     assert!(!review.diff_truncated);
     assert_eq!(review.binary_changes, Some(false));
+    assert!(!review.files_truncated);
+    assert_eq!(review.files.len(), 1);
+    assert_eq!(review.files[0].status, 'A');
+    assert_eq!(review.files[0].path, "review.txt");
     assert!(!review.tracked_changes);
     assert!(!review.untracked_files);
     assert!(!project.root.join("review.txt").exists());

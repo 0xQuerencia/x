@@ -344,3 +344,190 @@ fn exact_permission_renewal_is_reachable_by_keyboard_and_stale_reviews_have_no_b
 fn render_native_permission_wait_light_and_dark() {
     render_pair("permission-wait", permission_runtime);
 }
+
+fn work_result_runtime(dark: bool, stale: bool, size: (f32, f32)) -> Runtime<Ui> {
+    result_runtime(dark, super::super::results::fixture(stale), size)
+}
+
+fn result_runtime(
+    dark: bool,
+    results: super::super::results::Results,
+    size: (f32, f32),
+) -> Runtime<Ui> {
+    fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
+        let p = Paint::new(cx.system_dark(), cx.env().scale);
+        col()
+            .key("root")
+            .w_full()
+            .h_full()
+            .padding(24.0)
+            .fill(p.k.c.bg_base)
+            .child(super::super::results::panel(p, &ui.agent.results))
+    }
+    let mut ui = fixture(false);
+    ui.agent.results = results;
+    let mut rt = crate::rune_ui::offscreen::runtime(
+        ui,
+        view,
+        size,
+        Env::new(dark, 1.0),
+        TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES),
+    );
+    rt.frame(0.0);
+    rt
+}
+
+#[test]
+fn native_work_result_reviews_exact_artifacts_with_narrow_keyboard_controls() {
+    let mut rt = work_result_runtime(false, false, (410.0, 700.0));
+    let reached = (0..12).any(|_| {
+        rt.key(KeyEvent {
+            key: Key::Tab,
+            mods: Mods::default(),
+        });
+        rt.frame(0.0);
+        rt.elements()
+            .iter()
+            .any(|el| el.focused && el.path.contains("work-result-integrate"))
+    });
+    assert!(reached);
+    rt.update(|ui, _| ui.agent.results = super::super::results::fixture(true));
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.elements()
+            .iter()
+            .all(|el| !el.path.contains("work-result-integrate"))
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains("work-result-open"))
+    );
+}
+
+#[test]
+#[ignore = "writes light/dark native Work result renders for visual inspection"]
+fn render_native_work_results_light_and_dark() {
+    render_pair("work-result", |dark| work_result_runtime(dark, false, SIZE));
+    render_pair("work-result-stale", |dark| {
+        work_result_runtime(dark, true, SIZE)
+    });
+}
+
+fn run_activity_runtime(dark: bool) -> Runtime<Ui> {
+    use ::x_agent::service::{GraphJobPhase, GraphJobView};
+
+    let mut ui = permission_fixture();
+    let snapshot = ui.agent.snapshot.as_mut().unwrap();
+    snapshot.permission_waits.clear();
+    snapshot.cancellable_coding_jobs = vec![0, 1, 2];
+    let task = snapshot.task.as_mut().unwrap();
+    task.text = "Review two independent changes and run the fixed suite.".into();
+    let first = task.steps.remove(0);
+    let run = "7e7b7f09-8fc7-48ac-a990-19ad8a69eee1".parse().unwrap();
+    for (index, (name, phase, status, seconds, dependencies)) in [
+        ("Catalog", GraphJobPhase::Running, "running", 28, Vec::new()),
+        ("Index", GraphJobPhase::Preparing, "running", 12, Vec::new()),
+        (
+            "Tests",
+            GraphJobPhase::Queued,
+            "pending",
+            28,
+            vec!["Catalog".into(), "Index".into()],
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        task.steps.push(Step {
+            title: name.into(),
+            status: status.into(),
+            risk: String::new(),
+            ..first.clone()
+        });
+        snapshot.graph_jobs.push(GraphJobView {
+            run,
+            index,
+            node: Arc::from(name),
+            dependencies: Arc::from(dependencies),
+            phase,
+            elapsed_seconds: seconds,
+            has_checkout: false,
+        });
+    }
+    let mut rt = crate::rune_ui::offscreen::runtime(
+        ui,
+        drawn,
+        SIZE,
+        Env::new(dark, 1.0),
+        TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES),
+    );
+    rt.frame(0.0);
+    rt
+}
+
+#[test]
+fn native_run_activity_keeps_exact_checkout_links_and_scoped_stop() {
+    let mut rt = run_activity_runtime(false);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains("stop-coding-job-1"))
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .all(|el| !el.path.contains("inspect-job-result"))
+    );
+    rt.update(|ui, _| {
+        let snapshot = ui.agent.snapshot.as_mut().unwrap();
+        snapshot.graph_jobs[0].phase = ::x_agent::service::GraphJobPhase::Verified;
+        snapshot.graph_jobs[0].has_checkout = true;
+    });
+    rt.frame(0.0);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains("inspect-job-result-42-0"))
+    );
+}
+
+#[test]
+#[ignore = "writes light/dark native run activity renders"]
+fn render_native_run_activity_light_and_dark() {
+    render_pair("run-activity", run_activity_runtime);
+}
+
+#[test]
+fn native_correction_review_requires_a_live_budget_and_an_explicit_goal_field() {
+    let mut rt = result_runtime(
+        false,
+        super::super::results::correction_fixture(false),
+        SIZE,
+    );
+    for key in ["work-result-correction-goal", "work-result-plan-correction"] {
+        assert!(
+            rt.elements().iter().any(|el| el.path.contains(key)),
+            "missing {key}"
+        );
+    }
+    rt.update(|ui, _| ui.agent.results = super::super::results::correction_fixture(true));
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.elements()
+            .iter()
+            .all(|el| !el.path.contains("work-result-plan-correction"))
+    );
+}
+
+#[test]
+#[ignore = "writes light/dark native correction review renders"]
+fn render_native_correction_review_light_and_dark() {
+    render_pair("correction-review", |dark| {
+        result_runtime(dark, super::super::results::correction_fixture(false), SIZE)
+    });
+}

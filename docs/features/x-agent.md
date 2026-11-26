@@ -1450,8 +1450,16 @@ is rejected even when the same window still exists and even after an approval
 prompt temporarily changes focus. The user must issue the command again to
 obtain fresh evidence.
 
+### Inspect a coding graph in native Work
+
+Foreground and background graph steps show their actual scheduling stage,
+elapsed time, and earlier jobs that must settle before they can proceed.
+Provider and fixed-suite jobs show preparation until X has recorded dispatch.
+A completed job links to its exact recorded checkout once X has durable
+checkout evidence. Stop and renewal continue to use the exact task and step.
+
 ### Review an expired queued coding approval (A05)
 
 A ready coding or fixed-suite test node whose exact queued receipt expired enters `waiting_for_permission` without launching or holding a worker slot. The scheduler releases idle project reservations and requires a fresh project lease before dispatch. Independent jobs keep running; required dependents still wait. The operator can inspect the original reviewed step using `hex agent workflow permission-waits <task-id>`, then explicitly approve only that unchanged step with `hex agent workflow renew-permission <task-id> <review-token>`. The token expires after ten minutes; renewal grants up to five minutes of queue time once. The original dispatch revalidates project, immutable base, inputs, provider role and the one-use launch receipt. A Stop, revocation, missing receipt, changed identity, stale token or second renewal cannot recreate authority. The foreground or exact background task remains identifiable by its task ID; no restart restores renewal authority.
 
-The first slice covers queued coding and test nodes before worker dispatch, not expired desktop grants or expiry during checkout preparation. The native task card and each background run show the exact waiting step, its original work scope, a single Renew approval button while its review is live, and the existing scoped Stop. The button disappears when the token expires or is revoked. Physical queue/desktop acceptance remains pending. Deterministic grant fixtures and a 61-second subprocess predecessor exercise expiry, one-use renewal and predecessor non-replay. No test or review token is a general process-launch grant.
+The renewal control covers queued coding and test nodes before worker dispatch. If approval expires during checkout preparation, the job fails without launching and the exact checkout remains available for inspection. An expired desktop approval prevents native input, including expiry while waiting for the input lease. The owner can review a fresh plan for either case. The native task card and each background run show the exact waiting step, its original work scope, a single Renew approval button while its review is live, and the existing scoped Stop. The button disappears when the token expires or is revoked. Physical queue/desktop acceptance remains pending. Deterministic grant fixtures and a 61-second subprocess predecessor exercise expiry, one-use renewal and predecessor non-replay. No test or review token is a general process-launch grant.

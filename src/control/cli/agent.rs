@@ -292,7 +292,7 @@ pub enum AgentCommand {
     /// last result; `run <id>` plans a run (approve it as usual); `import <file>` adds one from a
     /// JSON file after the same validation as the editor; `undo` puts back the last run's changes.
     Workflow {
-        #[arg(value_parser = ["list", "show", "preview", "permissions", "uncertain", "claims", "worktrees", "review-worktree", "open-worktree", "worktree-cleanup-preview", "worktree-cleanup", "reconcile-coding", "correction-preview", "plan-correction", "permission-waits", "renew-permission", "run", "run-graph", "test-project", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
+        #[arg(value_parser = ["list", "show", "preview", "permissions", "uncertain", "claims", "worktrees", "review-worktree", "open-worktree", "worktree-cleanup-preview", "worktree-cleanup", "reconcile-coding", "plan-coding-retry", "artifact-review-preview", "plan-artifact-review", "correction-preview", "plan-correction", "permission-waits", "renew-permission", "run", "run-graph", "test-project", "last", "last-graph", "delete", "duplicate", "import", "import-graph", "undo", "dir"])]
         command: String,
         /// Workflow/project ID, worktree run UUID, failure run/node, task ID, or import path.
         #[arg(default_value = "")]
@@ -705,6 +705,23 @@ pub(super) fn run(command: AgentCommand) -> u8 {
                     return fail(&format!(
                         "Usage: agent workflow {command} <run-id> <node-id>"
                     ));
+                }
+                value = format!("{value} {suite}");
+            } else if matches!(
+                command.as_str(),
+                "artifact-review-preview" | "plan-artifact-review"
+            ) {
+                if value.is_empty() || suite.is_empty() {
+                    return fail(&format!(
+                        "Usage: agent workflow {command} <run-id>/<node-id> '<commit> [review-token]'"
+                    ));
+                }
+                value = format!("{value} {suite}");
+            } else if command == "plan-coding-retry" {
+                if value.is_empty() || suite.is_empty() {
+                    return fail(
+                        "Usage: agent workflow plan-coding-retry <workflow-id> <run-id>/<node-id>",
+                    );
                 }
                 value = format!("{value} {suite}");
             } else if command == "worktree-cleanup" {

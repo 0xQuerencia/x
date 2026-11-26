@@ -939,17 +939,16 @@ pub fn model_infos(
     use crate::transcription::models::VocabularyUse;
     // Listing models looks for ones already on this computer: headers only.
     let found = found_models::scan();
-    let source = |model| model_source(model, &selection.language);
     let mut infos: Vec<ModelInfo> = crate::transcription::models::all_models()
         .into_iter()
         .filter(|model| model.available())
         .map(|model| ModelInfo {
-            source: source(model),
+            source: model_source(&model, &selection.language),
             id: model.id.as_str().into(),
-            name: model.name.into(),
+            name: model.name.to_string(),
             languages: model.languages.iter().map(|&code| code.into()).collect(),
             size: model.size_label(),
-            installed: crate::transcription::models::is_installed(model, &selection.language),
+            installed: crate::transcription::models::is_installed(&model, &selection.language),
             selected: model.id == selection.model,
             streams: model.streams,
             vocabulary: match model.vocabulary_use() {

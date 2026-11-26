@@ -13,7 +13,7 @@ use crate::cancellation::Cancellation;
 use crate::projects::Project;
 
 mod inspection;
-pub use inspection::{Inspection, Reservation, WorktreeReview};
+pub use inspection::{ChangedFile, Inspection, Reservation, WorktreeReview};
 
 const TIMEOUT: Duration = Duration::from_secs(12);
 

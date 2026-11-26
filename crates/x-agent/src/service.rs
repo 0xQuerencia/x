@@ -21,15 +21,21 @@ use crate::projects::Registry;
 use crate::session_links::{Link as SessionLink, Store as SessionStore};
 use crate::tools::{self, Action, Risk};
 
+mod artifact_review;
 pub mod composer;
 mod computer_dialogue;
+pub use artifact_review::ArtifactReviewPreview;
 mod coordinator;
 mod corrections;
+pub use corrections::CorrectionReview;
 mod desktop_lease;
 mod edit;
 mod effects;
 mod execution;
+mod graph_activity;
+pub use graph_activity::{GraphJobPhase, GraphJobView};
 mod harness_workflow;
+pub use harness_workflow::CodingReviewEntry;
 mod integration;
 mod launch;
 mod ledger;
@@ -198,6 +204,8 @@ pub struct Snapshot {
     /// Live native review controls. The CLI has its own exact-task lookup.
     #[serde(skip)]
     pub permission_waits: Vec<PermissionWait>,
+    #[serde(skip)]
+    pub graph_jobs: Vec<GraphJobView>,
     pub can_run_in_background: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub background_runs: Vec<BackgroundSnapshot>,
@@ -279,6 +287,8 @@ struct State {
     workflow: Option<crate::workflows::Workflow>,
     graph_workflow: Option<harness_workflow::PendingGraph>,
     active_graph_stops: Option<crate::workflows::scheduler::JobStops>,
+    graph_activity: Option<graph_activity::GraphActivity>,
+    artifact_review: Option<artifact_review::Binding>,
     pending_tests: Option<test_worktree::PendingTests>,
     pending_integration: Option<integration::PendingIntegration>,
     project_command: Option<project_commands::Pending>,
@@ -290,6 +300,7 @@ struct State {
 #[derive(Default)]
 struct PlanOptions {
     composer_selection: Option<composer::Selection>,
+    artifact_review: Option<artifact_review::Binding>,
     origin: Origin,
     source: InputSource,
     guard: Option<Guard>,
@@ -390,6 +401,8 @@ impl Service {
             workflow: None,
             graph_workflow: None,
             active_graph_stops: None,
+            graph_activity: None,
+            artifact_review: None,
             pending_tests: None,
             pending_integration: None,
             project_command: None,
@@ -564,6 +577,7 @@ impl Service {
             pending_job_approvals,
             cancellable_coding_jobs: coordinator::cancellable_jobs(&s),
             permission_waits: harness_workflow::permission_waits(&s),
+            graph_jobs: s.graph_jobs(),
             can_run_in_background: s.can_background(),
             background_runs,
             computer_apps: s.computer_apps.clone(),

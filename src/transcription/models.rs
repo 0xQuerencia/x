@@ -1,9 +1,11 @@
 use crate::durable::{sync_directory, sync_file};
+use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -178,15 +180,16 @@ pub enum Recommendation {
     Vocabulary,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ModelChoice {
-    pub model: &'static ModelDefinition,
+    pub model: Arc<ModelDefinition>,
     pub recommendation: Recommendation,
 }
 
+#[derive(Clone)]
 pub struct ModelDefinition {
     pub id: TranscriptionModelId,
-    pub name: &'static str,
+    pub name: Cow<'static, str>,
     pub realtime: &'static str,
     /// Word error rate on the model's own benchmark, in percent;
     /// `None` when the system manages the model and publishes none.
@@ -196,7 +199,7 @@ pub struct ModelDefinition {
     /// after its load probe succeeds; otherwise it transcribes the whole clip.
     pub streams: bool,
     pub runtime: ModelRuntime,
-    pub languages: &'static [&'static str],
+    pub languages: Cow<'static, [&'static str]>,
     pub accepts_language_hint: bool,
     pub supports_language_detection: bool,
 }
@@ -212,20 +215,21 @@ pub enum VocabularyUse {
     None,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum ModelRuntime {
-    Gguf(&'static GgufArtifact),
+    Gguf(Cow<'static, GgufArtifact>),
     AppleSpeech,
 }
 
+#[derive(Clone)]
 pub struct GgufArtifact {
-    pub filename: &'static str,
+    pub filename: Cow<'static, str>,
     pub revision: &'static str,
     pub repository: &'static str,
     pub bytes: u64,
-    pub sha256: &'static str,
-    pub architecture: &'static str,
-    pub variant: &'static str,
+    pub sha256: Cow<'static, str>,
+    pub architecture: Cow<'static, str>,
+    pub variant: Cow<'static, str>,
 }
 
 impl GgufArtifact {
@@ -240,7 +244,7 @@ impl GgufArtifact {
 impl ModelDefinition {
     /// A catalog GGUF model, or an import that is on, present, and unchanged.
     pub fn available(&self) -> bool {
-        match (self.runtime, self.id) {
+        match (&self.runtime, self.id) {
             (ModelRuntime::AppleSpeech, _) => false,
             (ModelRuntime::Gguf(_), TranscriptionModelId::Custom(id)) => {
                 super::custom_models::usable(id)
@@ -316,7 +320,7 @@ impl ModelDefinition {
     }
 
     pub fn size_label(&self) -> String {
-        match self.runtime {
+        match &self.runtime {
             ModelRuntime::AppleSpeech => "Managed".into(),
             ModelRuntime::Gguf(artifact) if artifact.bytes >= 1_000_000_000 => {
                 format!("{:.1} GB", artifact.bytes as f64 / 1_000_000_000.0)
@@ -329,12 +333,12 @@ impl ModelDefinition {
     /// checks the model itself before it adds the list to a run). Rewriting
     /// and search use the vocabulary with every model.
     pub fn vocabulary_use(&self) -> VocabularyUse {
-        match self.runtime {
+        match &self.runtime {
             ModelRuntime::Gguf(artifact) if artifact.architecture == "parakeet" => {
                 VocabularyUse::Bias
             }
             ModelRuntime::Gguf(artifact)
-                if matches!(artifact.architecture, "whisper" | "qwen3_asr") =>
+                if matches!(artifact.architecture.as_ref(), "whisper" | "qwen3_asr") =>
             {
                 VocabularyUse::Prompt
             }
@@ -346,8 +350,8 @@ impl ModelDefinition {
         self.vocabulary_use() != VocabularyUse::None
     }
 
-    pub const fn download_bytes(&self) -> Option<u64> {
-        match self.runtime {
+    pub fn download_bytes(&self) -> Option<u64> {
+        match &self.runtime {
             ModelRuntime::Gguf(artifact) => Some(artifact.bytes),
             ModelRuntime::AppleSpeech => None,
         }
@@ -358,13 +362,13 @@ impl ModelDefinition {
 /// because models hallucinate closing phrases such as "thank you" on silence
 /// and room noise. It downloads with every transcription model.
 pub const SPEECH_DETECTOR_ARTIFACT: GgufArtifact = GgufArtifact {
-    filename: "silero-vad-v6.2-F32.gguf",
+    filename: Cow::Borrowed("silero-vad-v6.2-F32.gguf"),
     revision: "a9b2d61c20ae4ddf3644edb34969e8185a485448",
     repository: "handy-computer/silero-vad-v6.2-gguf",
     bytes: 1_241_056,
-    sha256: "0d871a800c420fdd5d1b17a3aea4296d1c39608f0ff4a9295eb76457eb1c88e6",
-    architecture: "silero_vad",
-    variant: "v6.2",
+    sha256: Cow::Borrowed("0d871a800c420fdd5d1b17a3aea4296d1c39608f0ff4a9295eb76457eb1c88e6"),
+    architecture: Cow::Borrowed("silero_vad"),
+    variant: Cow::Borrowed("v6.2"),
 };
 #[cfg_attr(test, allow(dead_code))]
 const SPEECH_DETECTOR_NAME: &str = "the speech detector";
@@ -372,136 +376,136 @@ const SPEECH_DETECTOR_NAME: &str = "the speech detector";
 pub const MODELS: &[ModelDefinition] = &[
     ModelDefinition {
         id: TranscriptionModelId::ParakeetUnifiedEnglish,
-        name: "Parakeet Unified English",
+        name: Cow::Borrowed("Parakeet Unified English"),
         realtime: "~163x",
         word_error_rate: Some(1.60),
         streams: true,
-        runtime: ModelRuntime::Gguf(&PARAKEET_UNIFIED_ENGLISH_ARTIFACT),
-        languages: &["en"],
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&PARAKEET_UNIFIED_ENGLISH_ARTIFACT)),
+        languages: Cow::Borrowed(&["en"]),
         accepts_language_hint: true,
         supports_language_detection: false,
     },
     ModelDefinition {
         id: TranscriptionModelId::ParakeetV2,
-        name: "Parakeet v2",
+        name: Cow::Borrowed("Parakeet v2"),
         realtime: "~55x",
         word_error_rate: Some(1.69),
         streams: false,
-        runtime: ModelRuntime::Gguf(&PARAKEET_V2_ARTIFACT),
-        languages: &["en"],
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&PARAKEET_V2_ARTIFACT)),
+        languages: Cow::Borrowed(&["en"]),
         accepts_language_hint: true,
         supports_language_detection: false,
     },
     ModelDefinition {
         id: TranscriptionModelId::ParakeetV3,
-        name: "Parakeet v3",
+        name: Cow::Borrowed("Parakeet v3"),
         realtime: "~33x",
         word_error_rate: Some(1.94),
         streams: false,
-        runtime: ModelRuntime::Gguf(&PARAKEET_V3_ARTIFACT),
-        languages: PARAKEET_V3_LANGUAGES,
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&PARAKEET_V3_ARTIFACT)),
+        languages: Cow::Borrowed(PARAKEET_V3_LANGUAGES),
         // The pinned v3 artifact detects language from audio and has no prompt input.
         accepts_language_hint: false,
         supports_language_detection: false,
     },
     ModelDefinition {
         id: TranscriptionModelId::WhisperLargeV3Turbo,
-        name: "Whisper large-v3-turbo",
+        name: Cow::Borrowed("Whisper large-v3-turbo"),
         realtime: "~19x",
         word_error_rate: Some(2.01),
         streams: false,
-        runtime: ModelRuntime::Gguf(&WHISPER_ARTIFACT),
-        languages: &["*"],
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&WHISPER_ARTIFACT)),
+        languages: Cow::Borrowed(&["*"]),
         accepts_language_hint: true,
         supports_language_detection: true,
     },
     ModelDefinition {
         id: TranscriptionModelId::Qwen3Asr06B,
-        name: "Qwen3-ASR 0.6B",
+        name: Cow::Borrowed("Qwen3-ASR 0.6B"),
         realtime: "~16x",
         word_error_rate: Some(7.64),
         streams: false,
-        runtime: ModelRuntime::Gguf(&QWEN_ARTIFACT),
-        languages: QWEN_LANGUAGES,
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&QWEN_ARTIFACT)),
+        languages: Cow::Borrowed(QWEN_LANGUAGES),
         accepts_language_hint: true,
         supports_language_detection: true,
     },
     ModelDefinition {
         id: TranscriptionModelId::QwenCleoAsr17B,
-        name: "QwenCleo-ASR 1.7B",
+        name: Cow::Borrowed("QwenCleo-ASR 1.7B"),
         // Half Qwen3-ASR 0.6B's speed on apollo's Vulkan GPU (22x against 41x).
         realtime: "~9x",
         // The author's own 3,699-utterance evaluation, not a public test set.
         word_error_rate: Some(19.85),
         streams: false,
-        runtime: ModelRuntime::Gguf(&QWENCLEO_ARTIFACT),
-        languages: &["ar"],
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&QWENCLEO_ARTIFACT)),
+        languages: Cow::Borrowed(&["ar"]),
         accepts_language_hint: true,
         supports_language_detection: false,
     },
     ModelDefinition {
         id: TranscriptionModelId::IvritWhisperLargeV3Turbo,
-        name: "ivrit.ai Whisper large-v3-turbo",
+        name: Cow::Borrowed("ivrit.ai Whisper large-v3-turbo"),
         // The same architecture and size as Whisper large-v3-turbo; on apollo
         // it ran a 9.8 s Hebrew clip as fast as the stock model (38x and 36x).
         realtime: "~19x",
         word_error_rate: Some(18.45),
         streams: false,
-        runtime: ModelRuntime::Gguf(&IVRIT_WHISPER_ARTIFACT),
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&IVRIT_WHISPER_ARTIFACT)),
         // ivrit.ai: the fine-tune lost language detection and translation, so
         // it always runs with the Hebrew hint.
-        languages: &["he"],
+        languages: Cow::Borrowed(&["he"]),
         accepts_language_hint: true,
         supports_language_detection: false,
     },
     ModelDefinition {
         id: TranscriptionModelId::SenseVoiceSmall,
-        name: "SenseVoice Small",
+        name: Cow::Borrowed("SenseVoice Small"),
         realtime: "~72x",
         word_error_rate: Some(10.11),
         streams: false,
-        runtime: ModelRuntime::Gguf(&SENSEVOICE_ARTIFACT),
-        languages: &["zh", "yue", "en", "ja", "ko"],
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&SENSEVOICE_ARTIFACT)),
+        languages: Cow::Borrowed(&["zh", "yue", "en", "ja", "ko"]),
         accepts_language_hint: true,
         supports_language_detection: true,
     },
     ModelDefinition {
         id: TranscriptionModelId::CohereTranscribe,
-        name: "Cohere Transcribe",
+        name: Cow::Borrowed("Cohere Transcribe"),
         realtime: "73x",
         word_error_rate: Some(1.27),
         streams: false,
-        runtime: ModelRuntime::Gguf(&COHERE_ARTIFACT),
-        languages: COHERE_LANGUAGES,
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&COHERE_ARTIFACT)),
+        languages: Cow::Borrowed(COHERE_LANGUAGES),
         accepts_language_hint: true,
         supports_language_detection: false,
     },
     ModelDefinition {
         id: TranscriptionModelId::UnderdogBark3Pro,
-        name: "Underdog Bark 3.0 Pro",
+        name: Cow::Borrowed("Underdog Bark 3.0 Pro"),
         realtime: "~33x",
         word_error_rate: Some(1.38),
         streams: false,
-        runtime: ModelRuntime::Gguf(&UNDERDOG_BARK_3_PRO_ARTIFACT),
-        languages: &["en"],
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&UNDERDOG_BARK_3_PRO_ARTIFACT)),
+        languages: Cow::Borrowed(&["en"]),
         // Like Parakeet v3, its base, the artifact has no language input.
         accepts_language_hint: false,
         supports_language_detection: false,
     },
     ModelDefinition {
         id: TranscriptionModelId::UnderdogBark3Clean,
-        name: "Underdog Bark 3.0 Clean",
+        name: Cow::Borrowed("Underdog Bark 3.0 Clean"),
         realtime: "~33x",
         word_error_rate: Some(1.71),
         streams: false,
-        runtime: ModelRuntime::Gguf(&UNDERDOG_BARK_3_CLEAN_ARTIFACT),
-        languages: &["en"],
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&UNDERDOG_BARK_3_CLEAN_ARTIFACT)),
+        languages: Cow::Borrowed(&["en"]),
         accepts_language_hint: false,
         supports_language_detection: false,
     },
     ModelDefinition {
         id: TranscriptionModelId::ParakeetUltra,
-        name: "Parakeet Ultra",
+        name: Cow::Borrowed("Parakeet Ultra"),
         // As fast as Parakeet v3 on apollo's Vulkan GPU (191x against 211x
         // on a FLEURS English clip), so it keeps v3's figure.
         realtime: "~33x",
@@ -509,8 +513,8 @@ pub const MODELS: &[ModelDefinition] = &[
         // benchmark (`model_benchmarks`); not measured in Hex.
         word_error_rate: Some(1.80),
         streams: false,
-        runtime: ModelRuntime::Gguf(&PARAKEET_ULTRA_ARTIFACT),
-        languages: PARAKEET_V3_LANGUAGES,
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&PARAKEET_ULTRA_ARTIFACT)),
+        languages: Cow::Borrowed(PARAKEET_V3_LANGUAGES),
         // Like v3, its base: it detects the language from the audio and has
         // no language input.
         accepts_language_hint: false,
@@ -518,7 +522,7 @@ pub const MODELS: &[ModelDefinition] = &[
     },
     ModelDefinition {
         id: TranscriptionModelId::Nemotron35Asr,
-        name: "Nemotron 3.5 ASR",
+        name: Cow::Borrowed("Nemotron 3.5 ASR"),
         // On apollo's Vulkan GPU it ran 0.55 to 0.97 times as fast as
         // Parakeet v3 (17.9 s and 54.6 s German clips), against v3's ~33x.
         realtime: "~25x",
@@ -528,8 +532,8 @@ pub const MODELS: &[ModelDefinition] = &[
         // 10.46% with Auto). It is here to stream with the language set.
         word_error_rate: Some(3.05),
         streams: true,
-        runtime: ModelRuntime::Gguf(&NEMOTRON_3_5_ASR_ARTIFACT),
-        languages: NEMOTRON_3_5_LANGUAGES,
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&NEMOTRON_3_5_ASR_ARTIFACT)),
+        languages: Cow::Borrowed(NEMOTRON_3_5_LANGUAGES),
         // Its prompt takes the language (`runtime_language`), and Auto leaves
         // it to the model.
         accepts_language_hint: true,
@@ -537,7 +541,7 @@ pub const MODELS: &[ModelDefinition] = &[
     },
     ModelDefinition {
         id: TranscriptionModelId::GigaAmV3,
-        name: "GigaAM v3",
+        name: Cow::Borrowed("GigaAM v3"),
         // On apollo's Vulkan GPU it ran 1.2 to 1.4 times as fast as Parakeet
         // v3 (the FLEURS Russian test split, and a 10 s clip of it).
         realtime: "~40x",
@@ -545,20 +549,20 @@ pub const MODELS: &[ModelDefinition] = &[
         // scored 6.52% on the same run and Whisper large-v3-turbo 5.36%.
         word_error_rate: Some(5.37),
         streams: false,
-        runtime: ModelRuntime::Gguf(&GIGAAM_V3_E2E_RNNT_ARTIFACT),
-        languages: &["ru"],
+        runtime: ModelRuntime::Gguf(Cow::Borrowed(&GIGAAM_V3_E2E_RNNT_ARTIFACT)),
+        languages: Cow::Borrowed(&["ru"]),
         // Russian only: it has no language input.
         accepts_language_hint: false,
         supports_language_detection: false,
     },
     ModelDefinition {
         id: TranscriptionModelId::AppleSpeech,
-        name: "Apple Speech",
+        name: Cow::Borrowed("Apple Speech"),
         realtime: "On device",
         word_error_rate: None,
         streams: false,
         runtime: ModelRuntime::AppleSpeech,
-        languages: &["*"],
+        languages: Cow::Borrowed(&["*"]),
         accepts_language_hint: true,
         supports_language_detection: false,
     },
@@ -566,20 +570,25 @@ pub const MODELS: &[ModelDefinition] = &[
 
 pub const AUTO_LANGUAGE: &str = "auto";
 
-pub fn definition(id: TranscriptionModelId) -> &'static ModelDefinition {
+static CATALOG: LazyLock<Vec<Arc<ModelDefinition>>> =
+    LazyLock::new(|| MODELS.iter().cloned().map(Arc::new).collect());
+
+pub fn definition(id: TranscriptionModelId) -> Arc<ModelDefinition> {
     if let TranscriptionModelId::Custom(id) = id {
         return super::custom_models::definition(id);
     }
-    MODELS
+    CATALOG
         .iter()
         .find(|model| model.id == id)
         .expect("every transcription model id has a definition")
+        .clone()
 }
 
 /// Every catalog model, then the imports while their Labs toggle is on.
-pub fn all_models() -> Vec<&'static ModelDefinition> {
-    MODELS
+pub fn all_models() -> Vec<Arc<ModelDefinition>> {
+    CATALOG
         .iter()
+        .cloned()
         .chain(
             super::custom_models::imported()
                 .into_iter()
@@ -659,14 +668,13 @@ pub(crate) fn choices_for_runtime(language: &str) -> Vec<ModelChoice> {
 /// Every available model in the picker's order for `language`: its
 /// recommendations first, each with its badge, then the other models that
 /// support it, then those that would change the language.
-pub(crate) fn picker_models(
-    language: &str,
-) -> Vec<(&'static ModelDefinition, Option<Recommendation>)> {
+pub(crate) fn picker_models(language: &str) -> Vec<(Arc<ModelDefinition>, Option<Recommendation>)> {
     let recommended = choices_for_runtime(language);
-    let others = MODELS
+    let others = CATALOG
         .iter()
         .filter(|model| model.available())
-        .filter(|model| recommended.iter().all(|choice| choice.model.id != model.id));
+        .filter(|model| recommended.iter().all(|choice| choice.model.id != model.id))
+        .cloned();
     let (supporting, switching): (Vec<_>, Vec<_>) =
         others.partition(|model| model.supports_language(language));
     // Imports follow, ready or not, so one that can't run can still be removed.
@@ -675,7 +683,7 @@ pub(crate) fn picker_models(
         .map(|import| import.definition);
     recommended
         .iter()
-        .map(|choice| (choice.model, Some(choice.recommendation)))
+        .map(|choice| (choice.model.clone(), Some(choice.recommendation)))
         .chain(
             supporting
                 .into_iter()
@@ -726,7 +734,7 @@ pub fn validate_saved(selection: &TranscriptionSelection) -> Result<()> {
     validate(selection).map(drop)
 }
 
-pub fn validate(selection: &TranscriptionSelection) -> Result<&'static ModelDefinition> {
+pub fn validate(selection: &TranscriptionSelection) -> Result<Arc<ModelDefinition>> {
     if !is_known_language(&selection.language) {
         bail!("unsupported transcription language: {}", selection.language);
     }
@@ -777,10 +785,10 @@ pub fn max_audio_chunk_samples(architecture: &str, max_audio_ms: i64) -> Option<
 }
 
 pub fn model_path(model: &ModelDefinition) -> Result<PathBuf> {
-    let ModelRuntime::Gguf(artifact) = model.runtime else {
+    let ModelRuntime::Gguf(artifact) = &model.runtime else {
         bail!("{} is managed by macOS and has no model path", model.name);
     };
-    let managed = models_dir()?.join(artifact.filename);
+    let managed = models_dir()?.join(artifact.filename.as_ref());
     // A catalog model another app downloaded (one already in use, or an
     // exact match the last scan found), used where it is.
     if !model.id.is_custom()
@@ -807,7 +815,7 @@ pub fn is_installed(model: &ModelDefinition, language: &str) -> bool {
     #[cfg(not(target_os = "macos"))]
     let _ = language;
     match model.runtime {
-        ModelRuntime::Gguf(artifact) => model_path(model)
+        ModelRuntime::Gguf(ref artifact) => model_path(model)
             .and_then(|path| Ok(fs::metadata(path)?.len() == artifact.bytes))
             .unwrap_or(false),
         #[cfg(target_os = "macos")]
@@ -983,7 +991,7 @@ fn lock_downloads(directory: &Path, canceled: &AtomicBool) -> Result<File> {
 }
 
 fn verification_receipt_matches(path: &Path, model: &ModelDefinition) -> bool {
-    let ModelRuntime::Gguf(artifact) = model.runtime else {
+    let ModelRuntime::Gguf(artifact) = &model.runtime else {
         return false;
     };
     artifact_receipt_matches(path, artifact)
@@ -1023,7 +1031,7 @@ pub fn download_with_stage_progress(
     downloaded_bytes: &AtomicU64,
     stage: &AtomicU8,
 ) -> Result<PathBuf> {
-    let ModelRuntime::Gguf(artifact) = model.runtime else {
+    let ModelRuntime::Gguf(artifact) = &model.runtime else {
         bail!("{} is installed and managed by macOS", model.name);
     };
     // An import has nothing to download: Hex checks its own copy. A catalog
@@ -1034,7 +1042,7 @@ pub fn download_with_stage_progress(
         downloaded_bytes.store(artifact.bytes, Ordering::Relaxed);
         path
     } else {
-        download_artifact(artifact, model.name, canceled, downloaded_bytes, stage)?
+        download_artifact(artifact, &model.name, canceled, downloaded_bytes, stage)?
     };
     // In the background, so an installed model activates at once even
     // offline. Until the detector lands, dictation and meetings keep their
@@ -1058,7 +1066,7 @@ pub fn download_speech_detector(canceled: &AtomicBool) -> Result<PathBuf> {
 }
 
 pub fn speech_detector_path() -> Result<PathBuf> {
-    Ok(models_dir()?.join(SPEECH_DETECTOR_ARTIFACT.filename))
+    Ok(models_dir()?.join(SPEECH_DETECTOR_ARTIFACT.filename.as_ref()))
 }
 
 /// Whether the speech detector is installed at its pinned size. Its checksum
@@ -1083,7 +1091,7 @@ fn download_artifact(
     let _lock = lock_downloads(&directory, canceled)?;
     check_canceled(canceled)?;
     delete_set_aside_in(&directory);
-    let destination = directory.join(artifact.filename);
+    let destination = directory.join(artifact.filename.as_ref());
     if destination.exists() {
         if artifact_receipt_matches(&destination, artifact) {
             downloaded_bytes.store(artifact.bytes, Ordering::Relaxed);
@@ -1261,7 +1269,7 @@ pub(crate) fn sha256_hex(path: &Path, canceled: Option<&AtomicBool>) -> Result<S
 }
 
 fn write_verification_receipt(path: &Path, model: &ModelDefinition) -> Result<()> {
-    let ModelRuntime::Gguf(artifact) = model.runtime else {
+    let ModelRuntime::Gguf(artifact) = &model.runtime else {
         bail!("{} has no artifact verification receipt", model.name);
     };
     write_artifact_receipt(path, artifact)
@@ -1271,7 +1279,7 @@ fn write_artifact_receipt(path: &Path, artifact: &GgufArtifact) -> Result<()> {
     let metadata = fs::metadata(path)?;
     let receipt = VerificationReceipt {
         bytes: artifact.bytes,
-        sha256: artifact.sha256.into(),
+        sha256: artifact.sha256.clone().into(),
         modified_ns: modified_ns(&metadata)
             .ok_or_else(|| color_eyre::eyre::eyre!("model modification time is unavailable"))?,
     };
@@ -1295,10 +1303,10 @@ fn verify_file_with_cancel(
     model: &ModelDefinition,
     canceled: &AtomicBool,
 ) -> Result<()> {
-    let ModelRuntime::Gguf(artifact) = model.runtime else {
+    let ModelRuntime::Gguf(artifact) = &model.runtime else {
         bail!("{} has no artifact to verify", model.name);
     };
-    verify_artifact(path, artifact, model.name, canceled)
+    verify_artifact(path, artifact, &model.name, canceled)
 }
 
 fn verify_artifact(
@@ -1333,17 +1341,19 @@ mod tests {
     /// A five-byte artifact whose checksum is `sha256("hello")`.
     fn fixture_model() -> ModelDefinition {
         const FIXTURE_ARTIFACT: GgufArtifact = GgufArtifact {
-            filename: "fixture.gguf",
+            filename: Cow::Borrowed("fixture.gguf"),
             revision: "fixture",
             repository: "fixture",
             bytes: 5,
-            sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-            architecture: "fixture",
-            variant: "fixture",
+            sha256: Cow::Borrowed(
+                "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+            ),
+            architecture: Cow::Borrowed("fixture"),
+            variant: Cow::Borrowed("fixture"),
         };
         ModelDefinition {
-            runtime: ModelRuntime::Gguf(&FIXTURE_ARTIFACT),
-            ..*definition(TranscriptionModelId::ParakeetV2)
+            runtime: ModelRuntime::Gguf(Cow::Borrowed(&FIXTURE_ARTIFACT)),
+            ..(*definition(TranscriptionModelId::ParakeetV2)).clone()
         }
     }
 
@@ -1488,14 +1498,14 @@ mod tests {
     #[test]
     fn only_figures_on_the_same_metric_language_and_dataset_compare() {
         use crate::transcription::model_benchmarks::ErrorMetric;
-        let qwen = benchmark(definition(TranscriptionModelId::Qwen3Asr06B)).unwrap();
-        let sensevoice = benchmark(definition(TranscriptionModelId::SenseVoiceSmall)).unwrap();
+        let qwen = benchmark(&definition(TranscriptionModelId::Qwen3Asr06B)).unwrap();
+        let sensevoice = benchmark(&definition(TranscriptionModelId::SenseVoiceSmall)).unwrap();
         assert_eq!(qwen.rate_label(), "7.57% CER");
         assert_eq!(sensevoice.rate_label(), "10.12% CER");
         assert!(qwen.comparable(&sensevoice));
         assert_eq!(sensevoice.source_revision, Some("7045d1c"));
-        let parakeet = benchmark(definition(TranscriptionModelId::ParakeetV2)).unwrap();
-        let cohere = benchmark(definition(TranscriptionModelId::CohereTranscribe)).unwrap();
+        let parakeet = benchmark(&definition(TranscriptionModelId::ParakeetV2)).unwrap();
+        let cohere = benchmark(&definition(TranscriptionModelId::CohereTranscribe)).unwrap();
         assert!(
             !parakeet.comparable(&cohere),
             "an unknown dataset compares with nothing"
@@ -1510,10 +1520,10 @@ mod tests {
             ..qwen
         }));
         assert!(!most_accurate_is_comparable(
-            definition(TranscriptionModelId::CohereTranscribe),
+            &definition(TranscriptionModelId::CohereTranscribe),
             "en"
         ));
-        assert!(benchmark(definition(TranscriptionModelId::AppleSpeech)).is_none());
+        assert!(benchmark(&definition(TranscriptionModelId::AppleSpeech)).is_none());
         // The catalog's legacy figures stay for the picker without the Lab.
         assert_eq!(
             definition(TranscriptionModelId::Qwen3Asr06B).word_error_rate,
@@ -1527,7 +1537,7 @@ mod tests {
         // Vulkan backend is built for (`CMAKE_ARGS` in .cargo/config.toml).
         // Another quantization needs its type added there, or Vulkan aborts.
         for model in MODELS {
-            if let ModelRuntime::Gguf(artifact) = model.runtime {
+            if let ModelRuntime::Gguf(artifact) = &model.runtime {
                 assert!(
                     artifact.filename.ends_with("-Q8_0.gguf"),
                     "{} needs its tensor types in GGML_VULKAN_SHADER_TYPES",
@@ -1546,8 +1556,8 @@ mod tests {
         let streaming = MODELS
             .iter()
             .filter(|model| model.streams)
-            .map(|model| match model.runtime {
-                ModelRuntime::Gguf(artifact) => artifact.variant,
+            .map(|model| match &model.runtime {
+                ModelRuntime::Gguf(artifact) => artifact.variant.as_ref(),
                 ModelRuntime::AppleSpeech => panic!("a streaming model has a GGUF artifact"),
             })
             .collect::<Vec<_>>();
@@ -1565,7 +1575,7 @@ mod tests {
         assert_eq!(nemotron.runtime_language_hint(AUTO_LANGUAGE), None);
         assert!(nemotron.supports_language(AUTO_LANGUAGE));
         // Every language it offers has its locale.
-        for language in nemotron.languages {
+        for language in nemotron.languages.iter() {
             assert!(
                 NEMOTRON_3_5_LOCALES
                     .iter()
@@ -1639,7 +1649,7 @@ mod tests {
             .is_err()
         );
         assert_eq!(apple_speech.download_bytes(), None);
-        assert!(model_path(apple_speech).is_err());
+        assert!(model_path(&apple_speech).is_err());
     }
 
     #[test]
@@ -1994,13 +2004,13 @@ mod tests {
         ));
         let canceled = AtomicBool::new(false);
         fs::write(&path, b"hello!").unwrap();
-        let error = verify_artifact(&path, artifact, "the fixture", &canceled).unwrap_err();
+        let error = verify_artifact(&path, &artifact, "the fixture", &canceled).unwrap_err();
         assert!(error.to_string().contains("for the fixture, expected 5"));
         fs::write(&path, b"world").unwrap();
-        let error = verify_artifact(&path, artifact, "the fixture", &canceled).unwrap_err();
+        let error = verify_artifact(&path, &artifact, "the fixture", &canceled).unwrap_err();
         assert_eq!(error.to_string(), "checksum mismatch for the fixture");
         fs::write(&path, b"hello").unwrap();
-        assert!(verify_artifact(&path, artifact, "the fixture", &canceled).is_ok());
+        assert!(verify_artifact(&path, &artifact, "the fixture", &canceled).is_ok());
         let _ = fs::remove_file(path);
     }
 
@@ -2039,9 +2049,11 @@ mod tests {
             &AtomicU64::new(0),
         );
         TEST_MODELS_DIR.with(|models| *models.borrow_mut() = None);
-        let detector_touched = directory.join(SPEECH_DETECTOR_ARTIFACT.filename).exists()
+        let detector_touched = directory
+            .join(SPEECH_DETECTOR_ARTIFACT.filename.as_ref())
+            .exists()
             || directory
-                .join(SPEECH_DETECTOR_ARTIFACT.filename)
+                .join(SPEECH_DETECTOR_ARTIFACT.filename.as_ref())
                 .with_extension("gguf.partial")
                 .exists();
         fs::remove_dir_all(&directory).unwrap();

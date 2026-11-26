@@ -246,7 +246,7 @@ impl Pump {
                     Err(error) => return Some(error.into()),
                 };
                 let definition = crate::transcription::models::definition(selection.model);
-                if !crate::transcription::models::is_installed(definition, &selection.language) {
+                if !crate::transcription::models::is_installed(&definition, &selection.language) {
                     return Some(ControlReply::error(
                         "not-installed",
                         format!(
@@ -267,7 +267,7 @@ impl Pump {
                     Err(error) => return Some(error.into()),
                 };
                 let definition = crate::transcription::models::definition(selection.model);
-                if crate::transcription::models::is_installed(definition, &selection.language) {
+                if crate::transcription::models::is_installed(&definition, &selection.language) {
                     return start_model_use(runtime, selection, reply);
                 }
                 Some(reply_with(
@@ -722,7 +722,8 @@ fn wait_for_model(
     runtime: &RuntimeHandle,
     selection: crate::transcription::models::TranscriptionSelection,
 ) -> Result<ControlReply, ControlError> {
-    let name = crate::transcription::models::definition(selection.model).name;
+    let definition = crate::transcription::models::definition(selection.model);
+    let name = definition.name.as_ref();
     let matches = |settings: &AppSettings| {
         super::same_model_and_language(&settings.transcription, &selection)
     };
@@ -865,9 +866,9 @@ fn status(
         meeting,
         model: ModelReport {
             id: selection.model.as_str().into(),
-            name: definition.name.into(),
+            name: definition.name.as_ref().to_owned(),
             language: selection.language.clone(),
-            installed: crate::transcription::models::is_installed(definition, &selection.language),
+            installed: crate::transcription::models::is_installed(&definition, &selection.language),
             preparing: published
                 .preparation
                 .model

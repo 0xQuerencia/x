@@ -118,7 +118,7 @@ impl Service {
                     queue_permission(node),
                     scope,
                 )?;
-                assignments.push(Assignment::from_planned_scope(
+                let assignment = Assignment::from_planned_scope(
                     node,
                     job.project.clone(),
                     run,
@@ -127,7 +127,12 @@ impl Service {
                     proof,
                     Arc::clone(&grants),
                     receipt,
-                )?);
+                )?;
+                assignments.push(if let Some(claim) = &workflow.retry {
+                    assignment.with_retry(claim)?
+                } else {
+                    assignment
+                });
             }
             let mut desktop = Vec::new();
             for prepared in &workflow.desktop {
@@ -153,6 +158,12 @@ impl Service {
                 Arc::clone(&workflow.manager),
                 Arc::clone(&workflow.journal),
             )?
+            .with_progress({
+                let service = self.clone();
+                Arc::new(move |node, progress| {
+                    service.record_graph_progress(task_id, run, node, progress)
+                })
+            })
             .with_activity(Arc::new(move |node, attempt, kind| {
                 service.emit(
                     "workflow_activity",

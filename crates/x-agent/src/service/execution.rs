@@ -32,6 +32,7 @@ impl Service {
             tests,
             integration,
             project_command,
+            artifact_review,
             stop,
             lease,
         ) = {
@@ -105,6 +106,7 @@ impl Service {
                 s.pending_tests.take(),
                 s.pending_integration.take(),
                 s.project_command.take(),
+                s.artifact_review.take(),
                 s.stop.clone(),
                 lease,
             )
@@ -141,7 +143,7 @@ impl Service {
                 Mode::Actions if is_edit => me.run_edit(&task),
                 Mode::Actions if is_workflow => me.run_workflow(),
                 Mode::Actions => me.run_actions(&actions, &stop),
-                Mode::Work => me.run_work(&task, &stop),
+                Mode::Work => me.run_work(&task, &stop, artifact_review),
             }
         })
     }

@@ -973,7 +973,7 @@ fn write_owner_only_marker(path: &Path, truncate: bool) -> color_eyre::Result<()
 
 pub fn status(selection: &TranscriptionSelection) -> SetupStatus {
     let transcription_model = crate::transcription::models::validate(selection)
-        .is_ok_and(|model| crate::transcription::models::is_installed(model, &selection.language));
+        .is_ok_and(|model| crate::transcription::models::is_installed(&model, &selection.language));
     status_with_transcription_model(transcription_model)
 }
 

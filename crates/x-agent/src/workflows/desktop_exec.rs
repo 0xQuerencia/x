@@ -412,6 +412,11 @@ impl DesktopExecutor {
             target.as_ref(),
             &mut |_| {},
         );
+        if !host.consumed.load(Ordering::SeqCst)
+            && matches!(result.status, StepStatus::Failed | StepStatus::Cancelled)
+        {
+            return Err(result.detail);
+        }
         host.consume_dispatch()?;
         let outcome = if stop.requested() {
             Outcome::Cancelled

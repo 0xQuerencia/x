@@ -15,6 +15,7 @@ use super::{Mode, PlanOptions, Service, State, Task, busy};
 pub enum Role {
     WorkspaceWrite,
     Analysis,
+    Review,
 }
 
 impl Role {
@@ -22,6 +23,7 @@ impl Role {
         match self {
             Self::WorkspaceWrite => "Workspace writer",
             Self::Analysis => "Tool-free analysis",
+            Self::Review => "Tool-free artifact review",
         }
     }
 
@@ -29,7 +31,7 @@ impl Role {
         provider.capabilities.contains(&Capability::OwnedRun)
             && match self {
                 Self::WorkspaceWrite => provider.supports_workspace_write(),
-                Self::Analysis => provider
+                Self::Analysis | Self::Review => provider
                     .capabilities
                     .contains(&Capability::ToolFreeAnalysis),
             }
@@ -136,6 +138,14 @@ impl Service {
     /// Save a validated two-task workflow and preview it, or preview ordinary
     /// single-task Work. Neither path launches providers, tests or worktrees.
     pub fn plan_work_composer(&self, request: &Request) -> Result<Task, String> {
+        if request.first.role == Role::Review
+            || request
+                .second
+                .as_ref()
+                .is_some_and(|draft| draft.role == Role::Review)
+        {
+            return Err("Choose an exact committed artifact for review".into());
+        }
         let session = match &request.session {
             SessionChoice::Fresh => None,
             SessionChoice::Selected(session) => Some(session.clone()),
@@ -199,6 +209,9 @@ impl Service {
                 work_access: match request.first.role {
                     Role::WorkspaceWrite => WorkAccess::Workspace,
                     Role::Analysis => WorkAccess::SelectionOnly,
+                    Role::Review => {
+                        return Err("Choose an exact committed artifact for review".into());
+                    }
                 },
                 composer_selection: Some(selection),
                 ..PlanOptions::default()

@@ -41,6 +41,7 @@ pub struct Assignment {
     receipt: Receipt,
     scope: Scope,
     fingerprint: String,
+    retry: Option<Claim>,
 }
 
 impl Assignment {
@@ -144,10 +145,29 @@ impl Assignment {
             receipt,
             scope,
             fingerprint,
+            retry: None,
         })
+    }
+    pub(crate) fn with_retry(mut self, claim: &Claim) -> Result<Self, String> {
+        claim.validate_undispatched_retry()?;
+        if claim.run_id != self.run
+            || claim.node_id != self.node.id
+            || claim.request_fingerprint != self.fingerprint
+        {
+            return Err("The saved coding request differs from the recorded retry".into());
+        }
+        self.retry = Some(claim.clone());
+        Ok(self)
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum CodingProgress {
+    CheckoutRecorded,
+    Dispatch,
+}
+
+type ProgressActivity = Arc<dyn Fn(&str, CodingProgress) + Send + Sync>;
 type JobActivity = Arc<dyn Fn(&str, u8, EventKind) + Send + Sync>;
 type FailureActivity = Arc<dyn Fn(test_runner::CorrectionDraft) + Send + Sync>;
 
@@ -163,6 +183,7 @@ pub struct ApprovedHarnessExecutor {
     worktrees: Arc<Manager>,
     journal: Arc<Journal>,
     activity: Option<JobActivity>,
+    progress: Option<ProgressActivity>,
     failure: Option<FailureActivity>,
     /// Only results produced by this live executor can release artifact inputs.
     /// Reopening a journal never restores authority or trusts supplied JSON.
@@ -218,11 +239,17 @@ impl ApprovedHarnessExecutor {
             worktrees,
             journal,
             activity: None,
+            progress: None,
             failure: None,
             outputs: Mutex::new(HashMap::new()),
             preparation: Mutex::new(()),
             reasons: Mutex::new(HashMap::new()),
         })
+    }
+
+    pub(crate) fn with_progress(mut self, progress: ProgressActivity) -> Self {
+        self.progress = Some(progress);
+        self
     }
 
     pub(crate) fn with_activity(mut self, activity: JobActivity) -> Self {
@@ -256,6 +283,43 @@ impl ApprovedHarnessExecutor {
                     .is_ok()
             }))
         .then_some(assignment)
+    }
+
+    fn begin_retry(
+        &self,
+        assignment: &Assignment,
+        previous: &Claim,
+        reservation: &Reservation,
+        stop: &Cancellation,
+    ) -> Result<Claim, String> {
+        let recorded = previous
+            .worktree
+            .as_ref()
+            .filter(|recorded| recorded.same_plan(reservation))
+            .ok_or("The approved project or starting commit changed")?;
+        let node = &assignment.node.id;
+        let inspection =
+            self.worktrees
+                .inspect_reserved(&assignment.project, self.run_id, node, recorded)?;
+        if let Some(tree) = self.worktrees.retry_checkout(
+            &assignment.project,
+            self.run_id,
+            node,
+            recorded,
+            inspection,
+        )? {
+            assignment
+                .worktree
+                .set(tree)
+                .map_err(|_| "The retry checkout changed")?;
+        }
+        stop.check()?;
+        assignment.grants.check(
+            &assignment.receipt,
+            Permission::QueueHarness,
+            &assignment.scope,
+        )?;
+        self.journal.begin_undispatched_retry(previous)
     }
 
     fn prepare(
@@ -351,6 +415,9 @@ impl ApprovedHarnessExecutor {
         if stop.requested() || self.journal.mark_dispatch(claim).is_err() {
             return self.finish_failed(claim, stop, Outcome::Unverified);
         }
+        if let Some(progress) = &self.progress {
+            progress(&assignment.node.id, CodingProgress::Dispatch);
+        }
         let result = test_runner::verify_approved_report(
             &self.worktrees,
             &assignment.project,
@@ -437,6 +504,67 @@ impl ApprovedHarnessExecutor {
         outcome
     }
 
+    fn execute_prepared(
+        &self,
+        assignment: &Assignment,
+        tree: &OwnedWorktree,
+        claim: &Claim,
+        stop: &Cancellation,
+    ) -> Outcome {
+        let (permission, scope) = match &assignment.node.job {
+            Job::Test { suite, .. } => (
+                Permission::RunTests,
+                test_runner::scope_for_suite(&assignment.project, tree, *suite),
+            ),
+            Job::Harness { .. } => {
+                match approval_scope(
+                    &assignment.node,
+                    assignment.project.id,
+                    tree,
+                    &assignment.proof,
+                ) {
+                    Ok(scope) => (Permission::StartHarness, scope),
+                    Err(_) => return self.finish_failed(claim, stop, Outcome::Unverified),
+                }
+            }
+            Job::Desktop { .. } => return self.finish_failed(claim, stop, Outcome::Failed),
+        };
+        let activation = if permission == Permission::StartHarness && scope == assignment.scope {
+            assignment
+                .grants
+                .activate_harness(&assignment.receipt, &scope)
+        } else {
+            assignment.grants.activate_job(
+                &assignment.receipt,
+                &assignment.scope,
+                &scope,
+                permission,
+            )
+        };
+        if let Err(reason) = activation {
+            self.note(
+                &assignment.node.id,
+                format!("{reason}. The prepared checkout was retained. Review a fresh plan before starting."),
+            );
+            return self.finish_failed(claim, stop, Outcome::Failed);
+        }
+        match assignment.node.job {
+            Job::Test { suite, .. } => self.run_test(assignment, tree, suite, claim, stop),
+            Job::Harness { .. } => {
+                if let Err(reason) =
+                    assignment
+                        .grants
+                        .consume(&assignment.receipt, Permission::StartHarness, &scope)
+                {
+                    self.note(&assignment.node.id, reason);
+                    return self.finish_failed(claim, stop, Outcome::Failed);
+                }
+                self.run_harness(assignment, tree, claim, stop)
+            }
+            Job::Desktop { .. } => Outcome::Failed,
+        }
+    }
+
     fn run_harness(
         &self,
         assignment: &Assignment,
@@ -493,6 +621,9 @@ impl ApprovedHarnessExecutor {
         };
         if stop.requested() || self.journal.mark_dispatch(claim).is_err() {
             return self.finish_failed(claim, stop, Outcome::Unverified);
+        }
+        if let Some(progress) = &self.progress {
+            progress(&assignment.node.id, CodingProgress::Dispatch);
         }
         let owned = match adapter.start(request, sink, stop) {
             Ok(owned) => owned,
@@ -610,14 +741,25 @@ impl Executor for ApprovedHarnessExecutor {
             Ok(reservation) => reservation,
             Err(_) => return Outcome::Unverified,
         };
-        let claim = match self.journal.begin_preparation(
-            self.run_id,
-            &node.id,
-            &assignment.fingerprint,
-            reservation,
-        ) {
-            Ok(Begin::Fresh(claim)) => claim,
-            _ => return Outcome::Unverified,
+        let claim = if let Some(previous) = &assignment.retry {
+            let result = self.begin_retry(assignment, previous, &reservation, &stop);
+            match result {
+                Ok(claim) => claim,
+                Err(reason) => {
+                    self.note(&node.id, reason);
+                    return Outcome::Unverified;
+                }
+            }
+        } else {
+            match self.journal.begin_preparation(
+                self.run_id,
+                &node.id,
+                &assignment.fingerprint,
+                reservation,
+            ) {
+                Ok(Begin::Fresh(claim)) => claim,
+                _ => return Outcome::Unverified,
+            }
         };
         let tree = match self.prepare(assignment, &stop) {
             Ok(tree) => tree,
@@ -634,51 +776,13 @@ impl Executor for ApprovedHarnessExecutor {
         {
             return self.finish_failed(&claim, &stop, Outcome::Unverified);
         }
+        if let Some(progress) = &self.progress {
+            progress(&node.id, CodingProgress::CheckoutRecorded);
+        }
         if stop.requested() {
             return self.finish_failed(&claim, &stop, Outcome::Cancelled);
         }
-        let (permission, scope) = match &node.job {
-            Job::Test { suite, .. } => (
-                Permission::RunTests,
-                test_runner::scope_for_suite(&assignment.project, &tree, *suite),
-            ),
-            Job::Harness { .. } => {
-                match approval_scope(&node, assignment.project.id, &tree, &assignment.proof) {
-                    Ok(scope) => (Permission::StartHarness, scope),
-                    Err(_) => return self.finish_failed(&claim, &stop, Outcome::Unverified),
-                }
-            }
-            Job::Desktop { .. } => return self.finish_failed(&claim, &stop, Outcome::Failed),
-        };
-        let activation = if permission == Permission::StartHarness && scope == assignment.scope {
-            assignment
-                .grants
-                .activate_harness(&assignment.receipt, &scope)
-        } else {
-            assignment.grants.activate_job(
-                &assignment.receipt,
-                &assignment.scope,
-                &scope,
-                permission,
-            )
-        };
-        if activation.is_err() {
-            return self.finish_failed(&claim, &stop, Outcome::Failed);
-        }
-        match node.job {
-            Job::Test { suite, .. } => self.run_test(assignment, &tree, suite, &claim, &stop),
-            Job::Harness { .. } => {
-                if assignment
-                    .grants
-                    .consume(&assignment.receipt, Permission::StartHarness, &scope)
-                    .is_err()
-                {
-                    return self.finish_failed(&claim, &stop, Outcome::Failed);
-                }
-                self.run_harness(assignment, &tree, &claim, &stop)
-            }
-            Job::Desktop { .. } => Outcome::Failed,
-        }
+        self.execute_prepared(assignment, &tree, &claim, &stop)
     }
 }
 
