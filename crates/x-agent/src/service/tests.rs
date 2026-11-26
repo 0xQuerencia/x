@@ -3116,6 +3116,124 @@ printf '{{"type":"step_start","sessionID":"%s","part":{{"type":"step-start"}}}}\
 }
 
 #[test]
+fn exact_delivery_reconciliation_reads_only_owned_session_and_preserves_claims() {
+    use crate::workflows::recovery::{Begin, Journal};
+    use crate::worktrees::{Manager, Reservation};
+
+    let (service, directory, _, mut graph) = graph_workflow_fixture();
+    let home = directory.path();
+    let support = home.join("state");
+    let registry = crate::projects::Registry::new(support.clone(), home.to_path_buf());
+    let project = registry
+        .resolve(graph.nodes[0].job.project_id().unwrap())
+        .unwrap();
+    let journal = Journal::new(support.join("workflow-journal"));
+    let manager = Manager::new(home.join("X Worktrees"), home.to_path_buf());
+    graph.nodes.truncate(1);
+    std::fs::write(
+        support.join("workflows/coding-graph.json"),
+        serde_json::to_vec(&graph).unwrap(),
+    )
+    .unwrap();
+    fake_opencode(
+        home,
+        r#"echo '{"type":"step_start","sessionID":"ses_exact_delivery","part":{"type":"step-start"}}'"#,
+    );
+    let task = service.plan_graph_workflow(&graph.id).unwrap();
+    service.approve(task.id).unwrap();
+    assert_eq!(
+        wait_for(&service, |s| !s.phase.is_busy()).phase,
+        Phase::Completed
+    );
+
+    let base = manager.starting_commit(&project).unwrap();
+    let reservation = Reservation::planned(&project, &base).unwrap();
+    let pending_run = uuid::Uuid::new_v4();
+    let fingerprint = "a".repeat(64);
+    let Begin::Fresh(pending) = journal
+        .begin_preparation(
+            pending_run,
+            "before-prepare",
+            &fingerprint,
+            reservation.clone(),
+        )
+        .unwrap()
+    else {
+        panic!("expected a new preparation claim");
+    };
+    fake_opencode(home, "exit 7");
+    let task = service.plan_graph_workflow(&graph.id).unwrap();
+    service.approve(task.id).unwrap();
+    assert_eq!(
+        wait_for(&service, |s| !s.phase.is_busy()).phase,
+        Phase::Failed
+    );
+
+    let before = journal.snapshot().unwrap();
+    let acknowledged = &before[0];
+    let unknown = &before[2];
+    assert!(
+        unknown
+            .worktree
+            .as_ref()
+            .unwrap()
+            .resolved_commit()
+            .is_some()
+    );
+    let workspace = home
+        .join("X Worktrees")
+        .join(project.id.to_string())
+        .join(format!("{}-{}", acknowledged.run_id, acknowledged.node_id))
+        .canonicalize()
+        .unwrap();
+    let ack = service
+        .reconcile_coding_delivery(
+            &acknowledged.run_id.to_string(),
+            &acknowledged.node_id,
+            |path, session| {
+                assert_eq!(path, workspace);
+                assert_eq!(session.as_str(), "ses_exact_delivery");
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert_eq!(ack["delivery"], "acknowledged");
+    assert_eq!(ack["provider_record"], "exact_session_observed");
+    assert_eq!(ack["retry_authorized"], false);
+    assert!(!ack.to_string().contains("ses_exact_delivery"));
+    let unavailable = service
+        .reconcile_coding_delivery(
+            &acknowledged.run_id.to_string(),
+            &acknowledged.node_id,
+            |_, _| Err("provider lookup failed".into()),
+        )
+        .unwrap();
+    assert_eq!(unavailable["provider_record"], "unavailable");
+    assert_eq!(unavailable["delivery"], "acknowledged");
+    let before_prepare = service
+        .reconcile_coding_delivery(&pending_run.to_string(), &pending.node_id, |_, _| {
+            panic!("must not look up a guessed session")
+        })
+        .unwrap();
+    assert_eq!(before_prepare["delivery"], "not_dispatched");
+    let after_prepare = service
+        .reconcile_coding_delivery(&unknown.run_id.to_string(), &unknown.node_id, |_, _| {
+            panic!("must not guess a session")
+        })
+        .unwrap();
+    assert_eq!(after_prepare["delivery"], "uncertain");
+    assert_eq!(after_prepare["retry_authorized"], false);
+    assert!(
+        service
+            .reconcile_coding_delivery(&unknown.run_id.to_string(), "wrong-node", |_, _| panic!(
+                "must not query another job"
+            ),)
+            .is_err()
+    );
+    assert_eq!(journal.snapshot().unwrap(), before);
+}
+
+#[test]
 fn interrupted_preparation_inventory_retains_exact_partial_allocations_without_replaying() {
     use crate::workflows::recovery::{Begin, Journal};
     use crate::worktrees::{Manager, Reservation};

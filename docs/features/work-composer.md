@@ -94,3 +94,17 @@ This is a finite local grammar, not arbitrary mixed-goal generation. It does not
 Run `hex agent workflow worktrees` to locate a recorded run UUID and node ID, then `hex agent workflow review-worktree <run-id> <node-id>` for the local JSON review. It verifies the registered project and checkout identity, shows the exact base and observed HEAD, a committed patch capped at 24,000 input bytes, and whether a recorded pass or failure matches the clean checkout. The response flags truncation, binary changes, tracked edits and untracked files separately. A dirty checkout marks test evidence stale. The patch contains only committed changes. Review requires a recorded preparation and refuses an active project lease or an uncertain claim.
 
 This explicit local command returns repository text to the operator, not to the Decider or a coding provider; patch contents remain untrusted. It does not authorize tests, correction, integration or cleanup. Native result-review controls and permission renewal remain separate work. The Git fixture checks actual commit content and stale-test handling; installed-operator acceptance is still required.
+
+## Check delivery for a recorded job (A02/A09/B11)
+
+Run `hex agent workflow reconcile-coding <run-id> <node-id>` with an exact
+identity from **workflow claims**. For an acknowledged OpenCode claim, X
+revalidates the registered project and owned checkout, then asks the registered
+loopback OpenCode service for the exact recorded session. The response reports
+the recorded outcome, acknowledgement, and whether the service returned that
+session in that checkout. The command reads session metadata only.
+
+For an interrupted first attempt before durable checkout preparation, X can
+report that dispatch was never reached. After preparation a missing session
+remains uncertain. Claude Code lookup is unsupported. Every result leaves the
+original claim intact and keeps retry authority disabled.

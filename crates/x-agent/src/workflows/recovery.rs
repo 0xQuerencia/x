@@ -394,6 +394,14 @@ impl Journal {
         Ok(self.read()?.entries)
     }
 
+    /// Read one durable identity without exposing other claims to the caller.
+    pub(crate) fn exact_claim(&self, run: Uuid, node: &str) -> Result<Claim, String> {
+        self.snapshot()?
+            .into_iter()
+            .find(|claim| claim.run_id == run && claim.node_id == node)
+            .ok_or_else(|| "No claim matches that exact run and node".into())
+    }
+
     /// After a restart, in-flight claims are *unknown*, never silently
     /// replayed or marked successful.
     pub fn uncertain(&self) -> Result<Vec<Claim>, String> {
