@@ -853,14 +853,14 @@ report labels key file permissions as unchecked. The older `supported` list
 continues to describe the backend's advertised operations.
 
 - **Supported** means a read-only window list probe succeeded. Hyprland and
-  Windows provide this probe.
+  Windows and opt-in KDE Plasma 6 provide this probe.
 - **Partial** means the selected backend advertises the operation and the
   diagnostic could not verify it. This includes mutations such as focus, move
   and close, and listing when the backend has no bounded probe or its read failed.
 - **Unsupported** means no backend is available in this session or the selected
   backend does not advertise the operation.
 - **Needs permission** means KDE Plasma 6's experimental backend has its helper
-  and session bus but still needs the explicit `X_ENABLE_EXPERIMENTAL_KDE=1`
+  and session bus, `KDE_SESSION_VERSION=6`, and needs the explicit `X_ENABLE_EXPERIMENTAL_KDE=1`
   opt-in.
 
 The probe performs no window changes and returns no window names or IDs.
