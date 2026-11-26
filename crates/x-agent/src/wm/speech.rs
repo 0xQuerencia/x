@@ -32,13 +32,14 @@ const NUMBERS: [(&str, &str); 10] = [
 ];
 
 /// Words a recognizer writes for a number when it sits where a number must be.
-const SOUNDS_LIKE: [(&str, &str); 6] = [
+const SOUNDS_LIKE: [(&str, &str); 7] = [
     ("to", "2"),
     ("too", "2"),
     ("for", "4"),
     ("won", "1"),
     ("ate", "8"),
     ("tree", "3"),
+    ("free", "3"),
 ];
 
 /// Command words that a one-letter slip should still reach.
@@ -218,6 +219,8 @@ mod tests {
         );
         assert_eq!(fix("focus browser three"), "focus browser 3");
         assert_eq!(fix("go to workspace for"), "go to workspace 4");
+        assert_eq!(fix("Go to workspace free."), "go to workspace 3");
+        assert_eq!(fix("find a free workspace"), "find a free workspace");
         // Ordinary words stay words.
         assert_eq!(
             fix("send this to the terminal"),

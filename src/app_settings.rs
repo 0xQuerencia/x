@@ -414,6 +414,8 @@ pub struct LabsSettings {
     pub movable_meeting_capsules: bool,
     /// X: voice Actions and OpenCode Work with approvals (off by default).
     pub x_agent: bool,
+    /// Experimental, separately consented Gemini Live talkback.
+    pub gemini_talkback: bool,
 }
 
 /// The idle times Labs › Unload model when idle offers, in minutes.
@@ -457,6 +459,7 @@ impl Default for LabsSettings {
             hide_menu_bar_icon: false,
             movable_meeting_capsules: false,
             x_agent: false,
+            gemini_talkback: false,
         }
     }
 }

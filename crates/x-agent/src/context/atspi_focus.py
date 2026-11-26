@@ -14,10 +14,12 @@ bounded in nodes, depth and time so a huge page cannot stall it.
 import json
 import sys
 import time
+import unicodedata
 
 MAX_TEXT = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
 OP = sys.argv[3] if len(sys.argv) > 3 else "selection"
-PARAMS = json.loads(sys.argv[4]) if len(sys.argv) > 4 else {}
+PARAMS = (json.loads(sys.argv[4]) if len(sys.argv) > 4 else
+          json.loads(sys.stdin.read(4096)) if OP == "insert_checked" else {})
 MAX_NODES = 6000
 MAX_DEPTH = 40
 BUDGET = 2.0
@@ -39,6 +41,13 @@ except Exception as e:  # missing python-gobject or at-spi2-core typelib
 
 pid = int(sys.argv[1])
 if pid == 0:
+    if OP == "editor_probe":
+        try:
+            desktop = Atspi.get_desktop(0)
+            if desktop is None or desktop.get_child_count() < 0:
+                out(error="the accessibility registry did not answer")
+        except Exception:
+            out(error="the accessibility registry did not answer")
     out(probe=True)
 deadline = time.monotonic() + BUDGET
 
@@ -101,6 +110,8 @@ while stack and len(nodes) < MAX_NODES and time.monotonic() < deadline:
     idx = len(nodes)
     nodes.append((node, parent, depth))
     if states.contains(FOCUSED) and depth > 0:
+        if OP == "insert_checked" and focused >= 0 and parent != focused:
+            out(error="the editor did not report one focused field")
         focused = idx  # the last (deepest) focused node wins
     if depth >= MAX_DEPTH:
         continue
@@ -275,6 +286,35 @@ def insert_op():
     return dict(base, done=True)
 
 
+def insert_checked_op():
+    # Restrict this operation to a local text control in the unique active frame.
+    secret_words = ("password", "passcode", "passphrase", "token", "secret",
+                    "api key", "verification code", "credit card")
+    if any(word in name.casefold() for word in secret_words):
+        out(error="the focused field is protected")
+    if node.get_role() not in (Atspi.Role.TEXT, Atspi.Role.ENTRY, Atspi.Role.PARAGRAPH):
+        out(error="the editor does not expose a plain text field")
+    count = need_text_field()
+    iface = editable_iface()
+    at = Atspi.Text.get_caret_offset(node)
+    text = PARAMS["text"]
+    if not (0 <= at <= count and 1 <= len(text) <= 300 and not any(unicodedata.category(ch) == "Cc" for ch in text)):
+        out(error="the insertion is outside the supported bounds")
+    if not (node.get_state_set().contains(FOCUSED) and
+            roots[0].get_state_set().contains(Atspi.StateType.ACTIVE)):
+        out(error="the original editor field lost focus")
+    if not Atspi.EditableText.insert_text(iface, at, text, len(text.encode("utf-8"))):
+        out(error="the editor refused the insertion")
+    try:
+        verified = (Atspi.Text.get_character_count(node) == count + len(text) and
+                    Atspi.Text.get_text(node, at, at + len(text)) == text)
+    except Exception:
+        verified = False
+    if not verified:
+        out(error="the editor did not confirm the inserted text", partial=True)
+    return dict(done=True)
+
+
 def select_op():
     need_text_field()
     start, end = int(PARAMS["start"]), int(PARAMS["end"])
@@ -289,7 +329,7 @@ def select_op():
 
 
 OPS = dict(selection=selection_op, field=field_op, replace=replace_op,
-           insert=insert_op, select=select_op)
+           insert=insert_op, insert_checked=insert_checked_op, select=select_op)
 if OP not in OPS:
     out(error="unknown operation")
 try:

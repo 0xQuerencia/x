@@ -26,7 +26,16 @@ pub(crate) fn capture_scoped(
     limit: Duration,
     stop: Option<&Cancellation>,
 ) -> Result<(bool, Vec<u8>), String> {
-    match read_output(cmd, limit, stop, OUTPUT_CAP)? {
+    capture_with_stdin(cmd, limit, stop, Stdio::null())
+}
+
+pub(crate) fn capture_with_stdin(
+    cmd: &mut Command,
+    limit: Duration,
+    stop: Option<&Cancellation>,
+    stdin: Stdio,
+) -> Result<(bool, Vec<u8>), String> {
+    match read_output(cmd, limit, stop, OUTPUT_CAP, stdin)? {
         Output::Complete(success, bytes) => Ok((success, bytes)),
         Output::Truncated(_) => Err("Helper output exceeded the capture limit".into()),
     }
@@ -37,7 +46,7 @@ pub(crate) fn capture_prefix(
     limit: Duration,
     cap: usize,
 ) -> Result<(Vec<u8>, bool), String> {
-    match read_output(cmd, limit, None, cap)? {
+    match read_output(cmd, limit, None, cap, Stdio::null())? {
         Output::Complete(true, bytes) => Ok((bytes, false)),
         Output::Truncated(bytes) => Ok((bytes, true)),
         Output::Complete(false, _) => Err("The local command failed".into()),
@@ -54,11 +63,12 @@ fn read_output(
     limit: Duration,
     stop: Option<&Cancellation>,
     cap: usize,
+    stdin: Stdio,
 ) -> Result<Output, String> {
     if let Some(stop) = stop {
         stop.check()?;
     }
-    cmd.stdin(Stdio::null())
+    cmd.stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = crate::retry_busy(|| cmd.spawn())

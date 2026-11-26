@@ -15,6 +15,12 @@ pub enum AgentKeyCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum AgentCommand {
+    /// Experimental Gemini Live push-to-talk in this terminal.
+    Talkback {
+        /// Override the Gemini Live model ID for this invocation.
+        #[arg(long, default_value = "gemini-3.8-live")]
+        model: String,
+    },
     /// Inspect local structured Markdown or prepare up to three reviewed changes.
     Roadmap {
         #[command(subcommand)]
@@ -370,7 +376,20 @@ pub enum AgentCommand {
     },
 }
 
+#[cfg(target_os = "linux")]
+mod talkback;
+
 pub(super) fn run(command: AgentCommand) -> u8 {
+    if let AgentCommand::Talkback { model } = &command {
+        #[cfg(target_os = "linux")]
+        return talkback::run(model);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = model;
+            eprintln!("Gemini Live talkback is unsupported on this platform");
+            return super::EXIT_REFUSED;
+        }
+    }
     if let AgentCommand::Heard { command, index } = &command {
         return match crate::agent_host::heard::command(command, *index) {
             Ok(message) => {
@@ -586,6 +605,7 @@ pub(super) fn run(command: AgentCommand) -> u8 {
         AgentCommand::Desktop { output } => (AgentAction::Desktop, output),
         AgentCommand::Doctor { .. } => unreachable!("doctor handled locally"),
         AgentCommand::Heard { .. } => unreachable!("heard handled locally"),
+        AgentCommand::Talkback { .. } => unreachable!("talkback handled locally"),
         AgentCommand::Key { .. } => unreachable!("key handled locally"),
         AgentCommand::Context { output } => (AgentAction::Context, output),
         AgentCommand::IntegrateFastForward {

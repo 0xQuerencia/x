@@ -55,6 +55,50 @@ pub struct CapabilityReport {
     pub evidence: ProbeEvidence,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorTyping {
+    Unsupported,
+    AccessibilityUnavailable,
+    VerifyTargetOnUse,
+}
+
+impl EditorTyping {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn ready(self) -> Result<(), String> {
+        match self {
+            Self::VerifyTargetOnUse => Ok(()),
+            Self::AccessibilityUnavailable => {
+                Err("The desktop accessibility registry is unavailable".into())
+            }
+            Self::Unsupported => {
+                Err("Verified editor typing is unsupported on this desktop".into())
+            }
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Unsupported => "unsupported",
+            Self::AccessibilityUnavailable => "accessibility unavailable",
+            Self::VerifyTargetOnUse => "accessibility answered, editor checked at execution",
+        }
+    }
+}
+
+pub(crate) fn editor_typing_for(backend: Option<&str>) -> EditorTyping {
+    #[cfg(target_os = "linux")]
+    if backend == Some("Hyprland") {
+        return if crate::context::a11y::Atspi.editor_ready().is_ok() {
+            EditorTyping::VerifyTargetOnUse
+        } else {
+            EditorTyping::AccessibilityUnavailable
+        };
+    }
+    let _ = backend;
+    EditorTyping::Unsupported
+}
+
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub desktop: String,
@@ -63,6 +107,7 @@ pub struct Report {
     /// Legacy field containing the selected backend's advertised operations.
     pub supported: Vec<Cap>,
     pub capabilities: Vec<CapabilityReport>,
+    pub editor_typing: EditorTyping,
     pub note: String,
 }
 
@@ -113,6 +158,7 @@ fn select() -> Result<Box<dyn Backend>, SelectionFailure> {
         && env("XDG_CURRENT_DESKTOP")
             .to_ascii_lowercase()
             .contains("kde")
+        && env("KDE_SESSION_VERSION") == "6"
         && has("kdotool")
         && !env("DBUS_SESSION_BUS_ADDRESS").is_empty()
     {
@@ -146,7 +192,7 @@ fn unsupported_note() -> String {
     let why = if env("XDG_SESSION_TYPE").eq_ignore_ascii_case("x11") {
         "X11 window control requires an active DISPLAY and the wmctrl and xprop helpers"
     } else if desktop.contains("kde") {
-        "KDE Plasma 6 Wayland control is experimental and disabled by default; install kdotool, ensure session D-Bus is active, then explicitly set X_ENABLE_EXPERIMENTAL_KDE=1 to test"
+        "KDE Plasma 6 Wayland control is experimental and disabled by default; use a Plasma 6 session with kdotool and session D-Bus, then explicitly set X_ENABLE_EXPERIMENTAL_KDE=1 to test"
     } else if desktop.contains("gnome") {
         "GNOME Wayland exposes no window control to other apps; X has no extension backend yet"
     } else {
@@ -223,6 +269,7 @@ pub(super) fn report_for(backend: Result<&dyn Backend, &SelectionFailure>) -> Re
         } else {
             env("XDG_SESSION_TYPE")
         },
+        editor_typing: editor_typing_for(name.as_deref()),
         backend: name,
         supported,
         capabilities,
@@ -452,6 +499,10 @@ impl Doctor {
             };
             lines.push(format!("{name}: {state} ({detail})"));
         }
+        lines.push(format!(
+            "Verified editor typing: {}",
+            self.desktop.editor_typing.label()
+        ));
         if !self.desktop.note.is_empty() {
             lines.push(self.desktop.note.clone());
         }
@@ -503,6 +554,18 @@ mod doctor_tests {
     use super::*;
 
     #[test]
+    fn unverified_platforms_do_not_advertise_editor_typing() {
+        for backend in [
+            None,
+            Some("KDE Plasma 6"),
+            Some("Windows 11 (Win32)"),
+            Some("macOS Accessibility"),
+        ] {
+            assert_eq!(editor_typing_for(backend), EditorTyping::Unsupported);
+        }
+    }
+
+    #[test]
     fn missing_dependency_is_named_and_fails_readiness() {
         let checks = probe_with("Hyprland", |bin| bin != "wtype");
         assert!(
@@ -548,6 +611,7 @@ mod doctor_tests {
     fn advertised_window_listing_is_not_ready_without_readback() {
         let checks = probe_with("Hyprland", |_| true);
         let mut desktop = Report {
+            editor_typing: EditorTyping::Unsupported,
             desktop: "Hyprland".into(),
             session: "wayland".into(),
             backend: Some("Hyprland".into()),

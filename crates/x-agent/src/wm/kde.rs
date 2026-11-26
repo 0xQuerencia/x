@@ -188,6 +188,10 @@ impl Backend for Kde {
         ]
     }
 
+    fn probe_window_list(&self) -> Option<Result<(), WmError>> {
+        Some(self.windows().map(drop))
+    }
+
     fn windows(&self) -> Result<Vec<WinInfo>, WmError> {
         let reply = script(READ)?;
         Ok(reply

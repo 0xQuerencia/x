@@ -239,6 +239,7 @@ pub(crate) fn prepare(
                 actions
             }
             StepAction::OpencodeTask { .. } => return Err("Use a typed harness node for coding work in a graph".into()),
+            StepAction::TypeText { .. } => return Err("Use a sequential workflow for verified editor typing".into()),
             _ => vec![],
         };
         let target = match action {

@@ -23,7 +23,7 @@ X's *execution policy* is separate from the dictation shortcut's voice modes
 | Execution mode | Behavior |
 | --- | --- |
 | **Default** | Every new desktop task pauses for approval before execution. |
-| **Autonomous** | Low-risk desktop actions start automatically. Typing, closing a window, operating an app, sending selected text to a website, and Work each require approval. |
+| **Autonomous** | Low-risk desktop actions start automatically. Typing, closing a window, operating an app, opening a website, sending a search to a website, and Work each require approval. |
 
 Choose in the **Agent pane → Execution** controls or by CLI:
 
@@ -57,6 +57,30 @@ A task runs through the same phases, but Autonomous may skip
 idle → listening → transcribing → planning → [approval if required] → running
      → completed | failed | cancelled
 ```
+
+## Experimental Gemini Live talkback
+
+On Linux, enable **Gemini talkback** in Labs and run `hex agent talkback`
+from a visible terminal that reports key press and release. Supply your
+project's key via `X_GEMINI_LIVE_API_KEY`. Talkback asks for consent for each
+terminal session. Hold Space to record locally and release to send only that
+clip to Google. Space interrupts the current reply. Escape or leaving the
+terminal cancels local recording and playback. Q exits.
+
+Google may use unpaid inputs and responses to improve its products, and
+human reviewers may process them. Keep talkback free of sensitive,
+confidential, or personal information. Project quotas apply to unpaid usage.
+[Gemini terms](https://aistudio.google.com/docs/terms#unpaid-services) ·
+[Gemini rate limits](https://aistudio.google.com/docs/rate-limits)
+
+The default model is `gemini-3.8-live`. `--model` selects another Gemini Live
+model. A recording is capped at ten seconds and opens one short connection
+on release. Connection expiry, GoAway, quota and network errors return to
+quiet mode. A later key press can start a new turn. The command handles
+microphone audio and spoken responses only. Dictation and desktop actions
+use their existing paths when talkback is off or unavailable.
+[Gemini Live model](https://aistudio.google.com/docs/models/gemini-3.8-live) ·
+[Live session limits](https://aistudio.google.com/docs/live-api/session-management)
 
 ## Using it
 
@@ -134,7 +158,18 @@ ordinary dictation. Smart only runs after you use the shortcut.
 
 **The Agent shortcut.** Bind `hex agent toggle` (and `hex agent stop`) to a key in your
 desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
-once: X refuses to start while any task or recording of its own is in flight.
+once: X refuses to start while any task or recording of its own is in flight. After
+Stop, an outstanding transcription request must return before another Agent
+recording starts. Its late transcript is discarded. Stop also blocks a
+finished transcript from creating a new typed desktop plan while it is being
+prepared. Transcription activity
+reports status without adding the utterance to the event stream. The exact
+submitted command is still visible in the task preview.
+
+The [isolated Hyprland voice test](../../scripts/smoke-x/hyprland-voice.sh)
+supplies a finished transcript at the speech-to-text boundary. It exercises
+the Agent voice service and real compositor readback, including approval and
+Stop. This check begins after speech recognition and does not use a microphone.
 
 ### Register a project
 
@@ -358,6 +393,29 @@ response explicitly says `executed: false` and `authorization:
 not_requested`; no desktop action, coding harness, approval or merge is
 triggered by this command. `workflow run` reviews a legacy sequential workflow;
 `workflow run-graph` reviews a supported typed graph before execution.
+Saved runs that open a website, use a spoken action step, close a window, or
+run OpenCode require approval in Autonomous mode too. Hands-free speech can
+prepare a saved run for approval. A sequential step with `requires` waits
+for a verified predecessor. An unverified launch skips dependent steps.
+Sequential runs allow at most 20 steps and stop when they reach three minutes.
+
+### Verified literal text in a sequential workflow
+
+In **Agent → Workflows**, add an **Open app** step set to `text-editor`, then
+add **Insert text into new editor** and enter that step's ID and the literal
+line. The saved JSON uses `{"action":"type_text","opened_by":"step-1","text":"A local note"}`.
+Use the workflow preview to review the saved steps, then start the run and
+approve the exact text. A line can contain up to 300 characters.
+
+The Hyprland adapter uses AT-SPI to insert and read back the line in the
+focused editor window opened by this run. Reused windows, ambiguous focus,
+protected fields and failed readback stop the typing step. The result includes
+verification status. The local workflow file and approval preview show the
+literal text. Run summaries and activity omit it.
+
+The disposable Hyprland test uses a GTK editor fixture. Other desktop
+backends return unsupported for this operation. Graph runs continue to
+refuse this sequential step.
 
 ### Workflow DAG schema (development)
 
@@ -819,17 +877,22 @@ report labels key file permissions as unchecked. The older `supported` list
 continues to describe the backend's advertised operations.
 
 - **Supported** means a read-only window list probe succeeded. Hyprland and
-  Windows provide this probe.
+  Windows and opt-in KDE Plasma 6 provide this probe.
 - **Partial** means the selected backend advertises the operation and the
   diagnostic could not verify it. This includes mutations such as focus, move
   and close, and listing when the backend has no bounded probe or its read failed.
 - **Unsupported** means no backend is available in this session or the selected
   backend does not advertise the operation.
 - **Needs permission** means KDE Plasma 6's experimental backend has its helper
-  and session bus but still needs the explicit `X_ENABLE_EXPERIMENTAL_KDE=1`
+  and session bus, `KDE_SESSION_VERSION=6`, and needs the explicit `X_ENABLE_EXPERIMENTAL_KDE=1`
   opt-in.
 
 The probe performs no window changes and returns no window names or IDs.
+The separate `desktop.editor_typing` field describes literal workflow text.
+Hyprland reports `verify_target_on_use` when its AT-SPI registry answers, or
+`accessibility_unavailable` otherwise. KDE Wayland, Windows and macOS report
+`unsupported` for this operation. An answering registry alone cannot prove a
+specific editor or field is writable.
 
 The [desktop contract tests](../../crates/x-agent/src/wm/tests/contract.rs)
 exercise the controller with each adapter's advertised operations and check

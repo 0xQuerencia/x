@@ -356,6 +356,22 @@ fn run_action(
                 _ => StepResult::failed("The previously opened window is still present"),
             }
         }
+        StepAction::TypeText { opened_by, text } => {
+            let Some(window) = opened.get(opened_by) else {
+                return StepResult::failed("The workflow did not open a new editor window");
+            };
+            match host
+                .type_text(window, text)
+                .map(tools::ExecutionOutcome::checked)
+            {
+                Ok(outcome) if outcome.state == tools::EffectState::Confirmed => {
+                    StepResult::done(&outcome.message, vec![]).with_execution(outcome)
+                }
+                Ok(outcome) => StepResult::failed(&outcome.message).with_execution(outcome),
+                Err(_) if host.cancelled() => StepResult::cancelled(),
+                Err(error) => StepResult::failed(error),
+            }
+        }
         StepAction::RunAction { phrase } => run_phrase(phrase, host),
         StepAction::OpencodeTask { goal, directory } => {
             let dir = match paths::existing(directory, &cfg.home) {
@@ -516,6 +532,7 @@ pub fn preflight(wf: &Workflow, host: &dyn Host, cfg: &Config) -> Vec<String> {
             StepAction::CloseOpenedWindow { .. } => {
                 need(cap(Cap::Close, "close windows"));
             }
+            StepAction::TypeText { .. } => need(host.text_editor_ready()),
             StepAction::RunAction { phrase } => match tools::plan_rules(phrase) {
                 None => need(Err("X does not understand that phrase".into())),
                 Some(actions) => {
