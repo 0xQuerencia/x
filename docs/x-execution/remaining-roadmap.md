@@ -28,15 +28,15 @@ establish current native, installed-provider or physical acceptance.
 | P01 | Reconcile current source and roadmap (A01, A11, H07) | DONE / MERGED | [#230](https://github.com/0xQuerencia/x/pull/230), merge `e4dc5a7dbeed2bd107b3ca17a8032a9a003b83b9`. Original criteria remain provisional until the source plan is supplied. |
 | P02 | Finish existing #226: exact diff/test review (B03, B11) | DONE / MERGED | [#226](https://github.com/0xQuerencia/x/pull/226), head `e155d2129ca25bc949989aec8d81d58587e01c72`, merge `45b9a7ee9ff5099fa461fc8c4133ede21ae1cef1`. |
 | P03 | Finish existing #227: correction loop (B14, A08, B04) | DONE / MERGED | [#227](https://github.com/0xQuerencia/x/pull/227), head `fc447845bd1c2e4a8d0b5d82732412ac755ce4b0`, merge `84a7a259f33abd21240cccde1419cf87578462a7`. Compile, all previews and Linux sanitizer passed. |
-| P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | READY FOR CI | [#228](https://github.com/0xQuerencia/x/pull/228), head `053117aa86f675ce8690fb1c0f5c82663bf74f92`. Merged #227 is in its base. Mac preview on the previous head timed out in the real graph fixture. Reacquisition now revalidates only released leases. |
-| P05 | Independent provider reconciliation (A02, A09, B11) | IN PROGRESS | [#231](https://github.com/0xQuerencia/x/pull/231), head `12ad692d8f44d6d172eec5042bed8536106a6d6c`. Local exact OpenCode readback passes. Independent terminal-turn correlation without a durable acknowledgement remains open. |
-| P06 | Reviewed retry/resume and recovery inventory (A09, A10, B11) | NOT STARTED | See the original-ID evidence below. |
+| P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | DONE / MERGED | [#228](https://github.com/0xQuerencia/x/pull/228), head `053117aa86f675ce8690fb1c0f5c82663bf74f92`, merge `bd6a58461371999be8c99d179bc9e5802f0c0db1`. Preparation and desktop expiry follow-up remains in P09. |
+| P05 | Independent provider reconciliation (A02, A09, B11) | IN PROGRESS | [#231](https://github.com/0xQuerencia/x/pull/231), Local exact OpenCode readback and durable pre-dispatch checkpoint pass. A macOS real-graph fixture timed out. The revised fixture uses the real suite budget. Independent provider turn correlation beyond acknowledged sessions remains open. |
+| P06 | Reviewed retry/resume and recovery inventory (A09, A10, B11) | IN PROGRESS | Local branch `codex/x-p06-owned-recovery` stages exact checkout open and explicit clean checkout removal, gated by durable proof of no dispatch. Fresh bounded retry is still pending. |
 | P07 | Native Work result review (B03, B10, B11) | NOT STARTED | See the original-ID evidence below. |
 | P08 | Native correction review (B14, B10, B11) | NOT STARTED | See the original-ID evidence below. |
-| P09 | Native queued wait, Stop and renew (A05, C02, C03, C04) | IN PROGRESS | Local branch `codex/x-p09-native-queued-renewal` reuses exact #228 tokens for foreground and background controls. Native visual and stale-state checks pending. |
+| P09 | Native queued wait, Stop and renew (A05, C02, C03, C04) | IN PROGRESS | [#235](https://github.com/0xQuerencia/x/pull/235), head `cf91b7156b9f4721d5c7092946e57e0cefe4a4cb`. Exact platform CI, native keyboard, stale-state and both goldens passed. Preparation and desktop expiry still require separate proof. |
 | P10 | Independent reviewer role and evidence (B05, B01, B04) | NOT STARTED | See the original-ID evidence below. |
 | P11 | Rich run/activity inspector (A06, B10, E10) | NOT STARTED | See the original-ID evidence below. |
-| P12 | Roadmap-to-code/PR evidence matching (B13, A11) | READY FOR CI | [#232](https://github.com/0xQuerencia/x/pull/232), head `339a7b8aa57817d203d5efdd4459fe0cc5cb69dc`. Disposable Git and scoped PR fixtures passed. |
+| P12 | Roadmap-to-code/PR evidence matching (B13, A11) | READY FOR CI | [#232](https://github.com/0xQuerencia/x/pull/232), head `832c359cb8dbec5944df4dcf64347a16444e74a7`. Disposable Git and scoped PR fixtures, Compile and three unsigned previews passed. Integration candidate verification is pending. |
 | P13 | Orchestrator reliability acceptance and role expansion decision (A01–A12, B01–B14, C01–C04) | NOT STARTED | See the original-ID evidence below. |
 | P14 | Shared execution and evidence contract (A12, C02, C05, C06, H02) | NOT STARTED | See the original-ID evidence below. |
 | P15 | Mixed task authoring beyond the finite parser (C07, C09) | NOT STARTED | See the original-ID evidence below. |
@@ -69,8 +69,8 @@ establish current native, installed-provider or physical acceptance.
 | P42 | Windows 11 capability gaps (G05, G06, A08, D10, E10) | NOT STARTED | See the original-ID evidence below. |
 | P43 | Linux desktop parity (G02, G03, G04, A08) | NOT STARTED | See the original-ID evidence below. |
 | P44 | macOS Apple Silicon parity (G07, G08, D10, E10) | NOT STARTED | See the original-ID evidence below. |
-| P45 | Packaging, install, upgrades, rollback and uninstall (A01, G01, G07, G09, G10) | NOT STARTED | See the original-ID evidence below. |
-| P46 | Artifact provenance, signing preparation and performance/privacy baseline (G10, G12, H03) | NOT STARTED | See the original-ID evidence below. |
+| P45 | Packaging, install, upgrades, rollback and uninstall (A01, G01, G07, G09, G10) | IN PROGRESS | Exact #228 Linux preview ran on an AVX2-only host. Existing Hex release installer and X Arch activation, rollback and helper-ownership fixtures passed. Actual platform installs remain pending. |
+| P46 | Artifact provenance, signing preparation and performance/privacy baseline (G10, G12, H03) | IN PROGRESS | `codex/x-p46-linux-baseline` measured headless startup, status, local preview, idle CPU/RSS and socket activity using a hash- and manifest-verified Linux preview. Desktop/voice and signing acceptance remain pending. |
 | P47 | One-candidate real platform and journey QA (G02–G05, G08, G11, G12, G13; J01–J24) | NOT STARTED | See the original-ID evidence below. |
 | P48 | Distribution decision and release candidate handoff (G13, G14) | NOT STARTED | Publication requires the exact-candidate quality gate and explicit owner authorization. |
 | P49 | Additional writer and inherited knowledge capture (B12, H04) | CONDITIONAL / NOT SELECTED | Requires a supported additional writer or an explicitly selected recording/knowledge workflow. |
@@ -111,7 +111,7 @@ establish current native, installed-provider or physical acceptance.
   its scoped Stop. The unchanged integration fixture subsequently passed
   locally. An explicit 61-second subprocess fixture crossed its configured
   60-second queue deadline and verified single-use renewal without replay.
-  Combined exact-candidate CI remains.
+  The previous candidate and the final passing candidate are recorded separately below.
   See the [Linux failure](https://github.com/0xQuerencia/x/actions/runs/45713786937/job/139555187934)
   and [macOS failure](https://github.com/0xQuerencia/x/actions/runs/45713787052/job/139554603050).
 
@@ -133,8 +133,13 @@ establish current native, installed-provider or physical acceptance.
   exercised releasing an idle project without releasing a live project's
   lease, then reacquiring after competing work released it. Native checks
   passed 15 CLI tests, 21 host tests and 418 Rune tests with six Rune tests
-  ignored on the tree before the test-only leak fix. Exact platform CI is
-  in progress.
+  ignored on the tree before the test-only leak fix. Exact [Compile](https://github.com/0xQuerencia/x/actions/runs/45732867220),
+  [macOS](https://github.com/0xQuerencia/x/actions/runs/45732867276),
+  [Linux](https://github.com/0xQuerencia/x/actions/runs/45732994508) and
+  [Windows](https://github.com/0xQuerencia/x/actions/runs/45732998801)
+  passed. GitHub candidate and merged main match the tested tree
+  `0ae4f75d3ff214b60a87e210e5b77967452ab22b`. No public preview was
+  published from the merge.
 - P05 installed OpenCode 2.2.7 served exact session/checkout metadata in a
   disposable loopback instance and refused a missing session. No prompt was
   sent. A Rust fixture also checked stale and mismatched identity, prior
@@ -144,12 +149,11 @@ establish current native, installed-provider or physical acceptance.
   evidence, duplicate mapping collapse and verified commit ancestry in a
   disposable checkout. Physical and full J01–J24 acceptance remain pending.
 - Additional memory ownership work is in progress in
-  [#233](https://github.com/0xQuerencia/x/pull/233) and `codex/x-rune-allocation-lifetime`.
+  [#233](https://github.com/0xQuerencia/x/pull/233) and [#234](https://github.com/0xQuerencia/x/pull/234).
   The provider patch removes reader threads that could outlive a run with
   an inherited pipe. The Rune patch bounds scene label storage, drops stale
   onboarding editor allocations and keeps dynamic status strings out of the
-  process-lifetime translation cache. Imported speech-model definitions still
-  retain historical names and descriptors in a process-lifetime registry.
+  process-lifetime translation cache. The local `codex/x-owned-custom-models` change makes imported descriptors owned and proves old definitions drop after rename and removal. The 127 transcription tests and native strict Clippy passed on Linux. Cross-platform checks are pending.
 
 ## Original package traceability
 
