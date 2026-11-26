@@ -31,51 +31,66 @@ fn graph() -> Graph {
 }
 
 #[test]
-fn revoking_a_desktop_grant_while_acquiring_input_prevents_the_mutation() {
-    let directory = tempfile::tempdir().unwrap();
-    let graph = graph();
-    let host = Arc::new(Fake::new());
-    let cfg = Config {
-        home: directory.path().into(),
-        poll: Duration::from_millis(1),
-    };
-    let mut plans = prepare(&graph, host.as_ref(), &cfg).unwrap();
-    let run = Uuid::new_v4();
-    let grants = Arc::new(Grants::default());
-    let plan = plans.pop().unwrap();
-    let receipt = grants
-        .issue(
-            Permission::QueueDesktop,
-            plan.scope(run, None).unwrap(),
-            Duration::from_secs(120),
-            1,
-            true,
+fn revoking_or_expiring_a_desktop_grant_while_acquiring_input_prevents_mutation() {
+    for expire in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let graph = graph();
+        let host = Arc::new(Fake::new());
+        let cfg = Config {
+            home: directory.path().into(),
+            poll: Duration::from_millis(1),
+        };
+        let mut plans = prepare(&graph, host.as_ref(), &cfg).unwrap();
+        let run = Uuid::new_v4();
+        let grants = Arc::new(Grants::default());
+        let plan = plans.pop().unwrap();
+        let receipt = grants
+            .issue(
+                Permission::QueueDesktop,
+                plan.scope(run, None).unwrap(),
+                Duration::from_secs(120),
+                1,
+                true,
+            )
+            .unwrap();
+        let revoke = grants.clone();
+        let queued = receipt.clone();
+        let acquisitions = Arc::new(AtomicUsize::new(0));
+        let observed = acquisitions.clone();
+        let acquire: AcquireInput = Arc::new(move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            if expire {
+                revoke.expire_for_test(&queued);
+            } else {
+                revoke.revoke_all()?;
+            }
+            Ok(Box::new(()))
+        });
+        let executor = DesktopExecutor::new(
+            run,
+            vec![(plan, receipt)],
+            host.clone(),
+            cfg,
+            acquire,
+            grants,
+            Arc::new(Journal::new(directory.path().join("journal"))),
         )
         .unwrap();
-    let revoke = grants.clone();
-    let acquisitions = Arc::new(AtomicUsize::new(0));
-    let observed = acquisitions.clone();
-    let acquire: AcquireInput = Arc::new(move |_| {
-        observed.fetch_add(1, Ordering::SeqCst);
-        revoke.revoke_all()?;
-        Ok(Box::new(()))
-    });
-    let executor = DesktopExecutor::new(
-        run,
-        vec![(plan, receipt)],
-        host.clone(),
-        cfg,
-        acquire,
-        grants,
-        Arc::new(Journal::new(directory.path().join("journal"))),
-    )
-    .unwrap();
-    assert_eq!(
-        executor.execute(graph.nodes[0].clone(), Cancellation::default()),
-        Outcome::Failed
-    );
-    assert_eq!(acquisitions.load(Ordering::SeqCst), 1);
-    assert_eq!(host.launches.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            executor.execute(graph.nodes[0].clone(), Cancellation::default()),
+            Outcome::Failed
+        );
+        assert_eq!(acquisitions.load(Ordering::SeqCst), 1);
+        assert_eq!(host.launches.load(Ordering::SeqCst), 0);
+        if expire {
+            assert!(
+                executor
+                    .outcome_reason(&graph.nodes[0])
+                    .unwrap()
+                    .contains("Approval has expired")
+            );
+        }
+    }
 }
 
 #[test]

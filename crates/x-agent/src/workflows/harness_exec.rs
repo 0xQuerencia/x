@@ -437,6 +437,67 @@ impl ApprovedHarnessExecutor {
         outcome
     }
 
+    fn execute_prepared(
+        &self,
+        assignment: &Assignment,
+        tree: &OwnedWorktree,
+        claim: &Claim,
+        stop: &Cancellation,
+    ) -> Outcome {
+        let (permission, scope) = match &assignment.node.job {
+            Job::Test { suite, .. } => (
+                Permission::RunTests,
+                test_runner::scope_for_suite(&assignment.project, tree, *suite),
+            ),
+            Job::Harness { .. } => {
+                match approval_scope(
+                    &assignment.node,
+                    assignment.project.id,
+                    tree,
+                    &assignment.proof,
+                ) {
+                    Ok(scope) => (Permission::StartHarness, scope),
+                    Err(_) => return self.finish_failed(claim, stop, Outcome::Unverified),
+                }
+            }
+            Job::Desktop { .. } => return self.finish_failed(claim, stop, Outcome::Failed),
+        };
+        let activation = if permission == Permission::StartHarness && scope == assignment.scope {
+            assignment
+                .grants
+                .activate_harness(&assignment.receipt, &scope)
+        } else {
+            assignment.grants.activate_job(
+                &assignment.receipt,
+                &assignment.scope,
+                &scope,
+                permission,
+            )
+        };
+        if let Err(reason) = activation {
+            self.note(
+                &assignment.node.id,
+                format!("{reason}. The prepared checkout was retained. Review a fresh plan before starting."),
+            );
+            return self.finish_failed(claim, stop, Outcome::Failed);
+        }
+        match assignment.node.job {
+            Job::Test { suite, .. } => self.run_test(assignment, tree, suite, claim, stop),
+            Job::Harness { .. } => {
+                if let Err(reason) =
+                    assignment
+                        .grants
+                        .consume(&assignment.receipt, Permission::StartHarness, &scope)
+                {
+                    self.note(&assignment.node.id, reason);
+                    return self.finish_failed(claim, stop, Outcome::Failed);
+                }
+                self.run_harness(assignment, tree, claim, stop)
+            }
+            Job::Desktop { .. } => Outcome::Failed,
+        }
+    }
+
     fn run_harness(
         &self,
         assignment: &Assignment,
@@ -637,48 +698,7 @@ impl Executor for ApprovedHarnessExecutor {
         if stop.requested() {
             return self.finish_failed(&claim, &stop, Outcome::Cancelled);
         }
-        let (permission, scope) = match &node.job {
-            Job::Test { suite, .. } => (
-                Permission::RunTests,
-                test_runner::scope_for_suite(&assignment.project, &tree, *suite),
-            ),
-            Job::Harness { .. } => {
-                match approval_scope(&node, assignment.project.id, &tree, &assignment.proof) {
-                    Ok(scope) => (Permission::StartHarness, scope),
-                    Err(_) => return self.finish_failed(&claim, &stop, Outcome::Unverified),
-                }
-            }
-            Job::Desktop { .. } => return self.finish_failed(&claim, &stop, Outcome::Failed),
-        };
-        let activation = if permission == Permission::StartHarness && scope == assignment.scope {
-            assignment
-                .grants
-                .activate_harness(&assignment.receipt, &scope)
-        } else {
-            assignment.grants.activate_job(
-                &assignment.receipt,
-                &assignment.scope,
-                &scope,
-                permission,
-            )
-        };
-        if activation.is_err() {
-            return self.finish_failed(&claim, &stop, Outcome::Failed);
-        }
-        match node.job {
-            Job::Test { suite, .. } => self.run_test(assignment, &tree, suite, &claim, &stop),
-            Job::Harness { .. } => {
-                if assignment
-                    .grants
-                    .consume(&assignment.receipt, Permission::StartHarness, &scope)
-                    .is_err()
-                {
-                    return self.finish_failed(&claim, &stop, Outcome::Failed);
-                }
-                self.run_harness(assignment, &tree, &claim, &stop)
-            }
-            Job::Desktop { .. } => Outcome::Failed,
-        }
+        self.execute_prepared(assignment, &tree, &claim, &stop)
     }
 }
 
