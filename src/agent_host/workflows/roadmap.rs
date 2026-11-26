@@ -1,5 +1,5 @@
 use super::*;
-use x_agent::service::roadmap::{CommandRequest, Selection};
+use x_agent::service::roadmap::{CommandRequest, EvidenceRequest, Selection};
 
 fn request(value: &str) -> Result<CommandRequest, String> {
     if value.len() > 4096 {
@@ -10,6 +10,16 @@ fn request(value: &str) -> Result<CommandRequest, String> {
 
 pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply {
     let result: Result<String, String> = (|| {
+        if command == "roadmap-evidence" {
+            if value.len() > 4096 {
+                return Err("Roadmap evidence request exceeds 4 KiB".into());
+            }
+            let evidence: EvidenceRequest = serde_json::from_str(value)
+                .map_err(|_| "Roadmap evidence request has invalid fields")?;
+            return svc
+                .inspect_roadmap_evidence(&evidence)
+                .map(|report| report.to_string());
+        }
         let request = request(value)?;
         let proposal = svc.inspect_roadmap(&request.project, &request.path)?;
         if command == "roadmap-inspect" {

@@ -10,7 +10,7 @@ use serde_json::Value;
 const LIMIT: Duration = Duration::from_secs(5);
 const MAX_CHECKS: usize = 100;
 const MAX_FILES: usize = 50;
-const FIELDS: &str = "number,url,title,state,isDraft,headRefOid,baseRefName,mergeable,reviewDecision,statusCheckRollup,changedFiles,files,additions,deletions";
+const FIELDS: &str = "number,url,title,state,isDraft,headRefOid,baseRefName,mergeCommit,mergeable,reviewDecision,statusCheckRollup,changedFiles,files,additions,deletions";
 
 #[derive(Serialize)]
 pub struct Report {
@@ -23,6 +23,7 @@ pub struct Report {
     pub draft: bool,
     pub head_commit: String,
     pub base: String,
+    pub merge_commit: Option<String>,
     pub mergeability: String,
     pub review_decision: String,
     pub checks: Vec<Check>,
@@ -68,6 +69,7 @@ struct Pull {
     is_draft: bool,
     head_ref_oid: String,
     base_ref_name: String,
+    merge_commit: Option<MergeCommit>,
     mergeable: String,
     review_decision: String,
     status_check_rollup: Vec<Value>,
@@ -75,6 +77,11 @@ struct Pull {
     files: Vec<FileChange>,
     additions: u64,
     deletions: u64,
+}
+
+#[derive(Deserialize)]
+struct MergeCommit {
+    oid: String,
 }
 
 fn login_ok(login: &str) -> bool {
@@ -86,7 +93,7 @@ fn login_ok(login: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
-fn repository_ok(repo: &str) -> bool {
+pub(crate) fn repository_ok(repo: &str) -> bool {
     let Some((owner, name)) = repo.split_once('/') else {
         return false;
     };
@@ -239,6 +246,10 @@ fn inspect_with(
         draft: pr.is_draft,
         head_commit: pr.head_ref_oid,
         base: display(&pr.base_ref_name, 200),
+        merge_commit: pr
+            .merge_commit
+            .map(|commit| commit.oid)
+            .filter(|oid| oid.len() == 40 && crate::worktrees::valid_commit(oid)),
         mergeability: pr.mergeable,
         review_decision: display(&pr.review_decision, 80),
         checks: pr
