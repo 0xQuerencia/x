@@ -145,8 +145,8 @@ mod tests {
 
     #[test]
     fn delivery_readback_refuses_wrong_session_and_worktree() {
-        let directory = tempfile::tempdir().unwrap();
-        let workspace = directory.path().canonicalize().unwrap();
+        let directory = state_root("delivery-readback");
+        let workspace = directory.canonicalize().unwrap();
         let id = SessionId::try_from("ses_reviewed".to_owned()).unwrap();
         let lookup = |response: serde_json::Value| {
             let mut get = |path: &str| {
@@ -166,6 +166,7 @@ mod tests {
             )
             .is_err()
         );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
