@@ -140,6 +140,19 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
                 _ => need("exactly a recorded run UUID and node id"),
             }
         }
+        "reconcile-coding" => {
+            let mut args = value.split_whitespace();
+            match (args.next(), args.next(), args.next()) {
+                (Some(run), Some(node), None) => {
+                    match svc.reconcile_coding_delivery(run, node, super::sessions::reconcile_exact)
+                    {
+                        Ok(report) => ControlReply::done(report.to_string()),
+                        Err(error) => refuse(error),
+                    }
+                }
+                _ => need("exactly a recorded run UUID and node ID"),
+            }
+        }
         "permission-waits" => match value.parse::<u64>() {
             Ok(task_id) => match svc.coding_permission_reviews(task_id) {
                 Ok(report) => ControlReply::done(report.to_string()),
@@ -249,7 +262,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, correction-preview, plan-correction, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, reconcile-coding, correction-preview, plan-correction, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }
