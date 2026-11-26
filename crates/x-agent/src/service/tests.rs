@@ -63,7 +63,11 @@ fn rig() -> (Service, Arc<FakeStt>, Arc<FakeLauncher>) {
 }
 
 fn wait_for(s: &Service, f: impl Fn(&Snapshot) -> bool) -> Snapshot {
-    let end = Instant::now() + Duration::from_secs(20);
+    wait_for_within(s, Duration::from_secs(20), f)
+}
+
+fn wait_for_within(s: &Service, timeout: Duration, f: impl Fn(&Snapshot) -> bool) -> Snapshot {
+    let end = Instant::now() + timeout;
     loop {
         let snap = s.snapshot(0);
         if f(&snap) {
@@ -3022,7 +3026,9 @@ printf '{{"type":"step_start","sessionID":"%s","part":{{"type":"step-start"}}}}\
         if cancel_test {
             service.cancel_coding_job(task.id, 2).unwrap();
         }
-        let finished = wait_for(&service, |snapshot| !snapshot.phase.is_busy());
+        // Let the real compiler suite reach its own deadline on a loaded runner.
+        let deadline = crate::verification::test_runner::MAX_TEST_TIME + Duration::from_secs(20);
+        let finished = wait_for_within(&service, deadline, |snapshot| !snapshot.phase.is_busy());
         let steps = finished.task.unwrap().steps;
         assert_eq!(steps[0].status, "done");
         assert_eq!(steps[1].status, "done");
