@@ -3382,6 +3382,81 @@ fn exact_delivery_reconciliation_reads_only_owned_session_and_preserves_claims()
 }
 
 #[test]
+fn recovery_checkout_requires_exact_ownership_and_a_current_clean_review() {
+    use crate::workflows::recovery::{Begin, Journal};
+    use crate::worktrees::{Manager, Reservation};
+
+    let (_original, directory, repo, graph) = graph_workflow_fixture();
+    let home = directory.path().to_path_buf();
+    let support = home.join("state");
+    let base = home.join("X Worktrees");
+    std::fs::create_dir(&base).unwrap();
+    let registry = crate::projects::Registry::new(support.clone(), home.clone());
+    let project = registry
+        .validated_resolve(graph.nodes[0].job.project_id().unwrap())
+        .unwrap();
+    let manager = Manager::new(base, home.clone());
+    let sha = manager.starting_commit(&project).unwrap();
+    let run = uuid::Uuid::new_v4();
+    let id = run.to_string();
+    let node = "paused-preparation";
+    let mut reservation = Reservation::planned(&project, &sha).unwrap();
+    let journal_path = support.join("workflow-journal");
+    let journal = Journal::new(journal_path.clone());
+    let Begin::Fresh(_) = journal
+        .begin_preparation(run, node, &"a".repeat(64), reservation.clone())
+        .unwrap()
+    else {
+        panic!("expected a new preparation");
+    };
+    let tree = manager.allocate(&project, run, node, &sha, true).unwrap();
+    reservation.record_checkout(&tree).unwrap();
+
+    let (service, _, launcher) = rig();
+    service.set_workflow_dirs(support.join("workflows"), home);
+    assert!(service.open_coding_worktree(&id, "another-node").is_err());
+    service.open_coding_worktree(&id, node).unwrap();
+    assert_eq!(
+        *launcher.launched.lock().unwrap(),
+        [tree.path().display().to_string()]
+    );
+    assert!(service.preview_coding_worktree_cleanup(&id, node).is_err());
+
+    // Model a stopped prepared claim on disk, then reconstruct it as a new X service would.
+    let claims_file = journal_path.join("x-job-claims.json");
+    let mut state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&claims_file).unwrap()).unwrap();
+    state["entries"][0]["state"] = "cancelled".into();
+    state["entries"][0]["worktree"] = serde_json::to_value(reservation).unwrap();
+    state["entries"][0]["dispatch"] = "may_have_started".into();
+    std::fs::write(&claims_file, serde_json::to_vec(&state).unwrap()).unwrap();
+    assert!(service.preview_coding_worktree_cleanup(&id, node).is_err());
+    state["entries"][0]["dispatch"] = "pending".into();
+    let durable = serde_json::to_vec(&state).unwrap();
+    std::fs::write(&claims_file, &durable).unwrap();
+
+    let review = service.preview_coding_worktree_cleanup(&id, node).unwrap();
+    assert_eq!(review["commit"], sha);
+    assert_eq!(review["removed"], false);
+    let token = review["review_token"].as_str().unwrap();
+    assert!(
+        service
+            .cleanup_coding_worktree(&id, node, "wrong-token")
+            .is_err()
+    );
+    let unfinished = tree.path().join("unfinished.txt");
+    std::fs::write(&unfinished, "retain this").unwrap();
+    assert!(service.cleanup_coding_worktree(&id, node, token).is_err());
+    assert!(unfinished.is_file());
+    std::fs::remove_file(unfinished).unwrap();
+    service.cleanup_coding_worktree(&id, node, token).unwrap();
+    assert!(service.cleanup_coding_worktree(&id, node, token).is_err());
+    assert!(!tree.path().exists());
+    assert!(repo.is_dir());
+    assert_eq!(std::fs::read(claims_file).unwrap(), durable);
+}
+
+#[test]
 fn interrupted_preparation_inventory_retains_exact_partial_allocations_without_replaying() {
     use crate::workflows::recovery::{Begin, Journal};
     use crate::worktrees::{Manager, Reservation};

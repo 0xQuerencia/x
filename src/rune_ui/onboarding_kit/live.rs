@@ -185,7 +185,7 @@ fn other_selection(current: &TranscriptionSelection) -> TranscriptionSelection {
 
 fn installed(ui: &Ui, selection: &TranscriptionSelection) -> bool {
     transcription_models::validate(selection)
-        .is_ok_and(|model| ui.picker.installed(model, &selection.language))
+        .is_ok_and(|model| ui.picker.installed(&model, &selection.language))
 }
 
 /// Opens the first run over the tour, at the tour's step: at launch when
@@ -398,7 +398,7 @@ pub(in crate::rune_ui) fn poll(ui: &mut Ui, tx: &mut Tx) -> bool {
         ui.view.as_ref().map_or((false, 0, false), |view| {
             let t = &view.transcription;
             (
-                model.is_some_and(|m| t.preparing == Some(m.id)),
+                model.clone().is_some_and(|m| t.preparing == Some(m.id)),
                 t.downloaded_bytes,
                 t.error.is_some(),
             )
@@ -716,14 +716,18 @@ pub(super) fn restart_hex(ui: &mut Ui) {
 pub(super) fn practice(ui: &mut Ui) -> &mut TextEdit {
     match ui.first_run.as_mut() {
         Some(s) => &mut s.practice,
-        // The field shows only with the first run.
-        None => Box::leak(Box::default()),
+        None => {
+            ui.closed_practice_edit = TextEdit::default();
+            &mut ui.closed_practice_edit
+        }
     }
 }
 
 pub(super) fn practice_changed(ui: &mut Ui, tx: &mut Tx) {
     if let Some(s) = ui.first_run.as_mut() {
         s.on_practice_change(tx);
+    } else {
+        ui.closed_practice_edit = TextEdit::default();
     }
 }
 

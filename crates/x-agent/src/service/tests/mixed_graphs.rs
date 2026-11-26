@@ -153,7 +153,14 @@ esac
     let task = service.plan_graph_workflow(&graph.id).unwrap();
     let held = service.try_desktop_control().unwrap();
     service.approve(task.id).unwrap();
-    wait_for(&service, |_| marker.is_file());
+    wait_for(&service, |_| {
+        marker.is_file()
+            && service.coding_claims_summary().unwrap()["jobs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|job| job["node_id"] == "independent" && job["evidence_recorded"] == true)
+    });
     assert_eq!(
         host.launches.load(Ordering::SeqCst),
         0,

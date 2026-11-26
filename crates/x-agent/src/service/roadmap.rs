@@ -21,7 +21,7 @@ use super::{Service, Task, busy};
 #[cfg(all(test, unix))]
 mod tests;
 
-const LIMITS: &str = "Completion markers are the roadmap author's inventory, not verified implementation. Stored proposals and exact task/goal identities prevent repeats. Semantic matching against repository features or pull requests is unsupported; review the code, PR inventory, acceptance criteria and declared independence before approving.";
+const LIMITS: &str = "Completion markers are the roadmap author's inventory, not verified implementation. Stored proposals and exact task/goal identities prevent repeats. A source evidence link is an unreviewed mapping. Review exact revisions, acceptance criteria and declared independence before approving.";
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -42,6 +42,7 @@ pub enum Disposition {
 pub struct Entry {
     pub task: roadmap::Task,
     pub disposition: Disposition,
+    pub evidence_mapping: &'static str,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -83,6 +84,20 @@ pub struct CommandRequest {
     pub test_suite: Option<Suite>,
 }
 
+/// One explicitly selected GitHub mapping and its expected immutable merge.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceRequest {
+    pub project: String,
+    pub path: PathBuf,
+    pub inspection: String,
+    pub task: String,
+    pub repository: String,
+    pub account: String,
+    pub pull_request: u32,
+    pub merge_commit: String,
+}
+
 fn entries(document: &Document, project: &Project, inventory: &[InventoryTask]) -> Vec<Entry> {
     let completed = document
         .tasks
@@ -120,6 +135,11 @@ fn entries(document: &Document, project: &Project, inventory: &[InventoryTask]) 
             Entry {
                 task: task.clone(),
                 disposition,
+                evidence_mapping: match task.evidence.len() {
+                    0 => "unmapped",
+                    1 => "needs_review",
+                    _ => "ambiguous",
+                },
             }
         })
         .collect()
@@ -144,6 +164,91 @@ fn inspection(
 }
 
 impl Service {
+    /// Check a reviewed mapping through the installed GitHub reader.
+    /// The observed artifact never changes source completion or graph authority.
+    pub fn inspect_roadmap_evidence(
+        &self,
+        request: &EvidenceRequest,
+    ) -> Result<serde_json::Value, String> {
+        self.inspect_roadmap_evidence_with(request, |link, account| {
+            let report = crate::github_read::inspect(&link.repository, link.pull_request, account)?;
+            Ok((report.state, report.merge_commit))
+        })
+    }
+
+    fn inspect_roadmap_evidence_with(
+        &self,
+        request: &EvidenceRequest,
+        observe_pull: impl FnOnce(&roadmap::Evidence, &str) -> Result<(String, Option<String>), String>,
+    ) -> Result<serde_json::Value, String> {
+        let observe_source = || self.inspect_roadmap(&request.project, &request.path);
+        let before = observe_source()?;
+        if request.inspection != before.inspection_id {
+            return Err(
+                "The roadmap inspection is stale; inspect the selected source again".into(),
+            );
+        }
+        let entry = before
+            .entries
+            .iter()
+            .find(|entry| entry.task.id == request.task)
+            .ok_or("No task matches the exact source ID")?;
+        let link = entry
+            .task
+            .evidence
+            .iter()
+            .find(|link| {
+                link.repository.eq_ignore_ascii_case(&request.repository)
+                    && link.pull_request == request.pull_request
+                    && link
+                        .merge_commit
+                        .eq_ignore_ascii_case(&request.merge_commit)
+            })
+            .ok_or("The reviewed repository, PR and merge commit do not match a source link")?;
+        let home = self.roadmap_home()?;
+        let manager = Manager::new(home.join("X Worktrees"), home.clone());
+        if !manager.has_github_remote(&before.project, &link.repository)? {
+            return Err("The selected project has no matching GitHub repository URL".into());
+        }
+        let (pull_state, observed_merge) = observe_pull(link, &request.account)?;
+        let after = observe_source()?;
+        if before.inspection_id != after.inspection_id
+            || !manager.has_github_remote(&after.project, &link.repository)?
+        {
+            return Err("The project or roadmap changed during evidence inspection".into());
+        }
+        let state = match pull_state.as_str() {
+            "CLOSED" => "closed_without_recorded_merge",
+            "OPEN" => "open",
+            "MERGED" if observed_merge.as_deref() != Some(link.merge_commit.as_str()) => {
+                "merge_commit_changed"
+            }
+            "MERGED"
+                if !manager.has_ancestor(
+                    &after.project,
+                    &after.base_commit,
+                    &link.merge_commit,
+                )? =>
+            {
+                "merge_not_in_selected_checkout"
+            }
+            "MERGED" => "merged_artifact_observed",
+            _ => return Err("GitHub returned an unsupported pull request state".into()),
+        };
+        Ok(serde_json::json!({
+            "roadmap_id": before.roadmap_id,
+            "task": entry.task.id,
+            "source_sha256": before.source_sha256,
+            "selected_commit": before.base_commit,
+            "evidence": link,
+            "pull_request_url": format!("https://github.com/{}/pull/{}", link.repository, link.pull_request),
+            "observed_merge_commit": observed_merge,
+            "state": state,
+            "changed_completion": false,
+            "executed": false,
+        }))
+    }
+
     fn roadmap_home(&self) -> Result<PathBuf, String> {
         self.workflow_dirs
             .lock()

@@ -591,7 +591,7 @@ pub(super) fn error_notes(p: Paint, error: &str) -> [El; 2] {
 pub(super) fn listener_card(ui: &Ui, p: Paint) -> El {
     let running = ui.running();
     let status = match &ui.view {
-        Some(view) => tr(&view.listener.status).to_string(),
+        Some(view) => crate::desktop::i18n::tr_owned(&view.listener.status),
         None if matches!(ui.service, Service::Fixture(_)) || ui.connection_error.is_some() => {
             tr("Service disconnected").to_string()
         }
@@ -1002,7 +1002,7 @@ pub(super) fn input_source_rows(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Vec<E
                         let fallback = ui.settings.transcription_for_model(model.id).language;
                         if !model.available()
                             || !matches!(model.runtime, transcription_models::ModelRuntime::Gguf(_))
-                            || !ui.picker.installed(model, &fallback)
+                            || !ui.picker.installed(&model, &fallback)
                         {
                             return None;
                         }
@@ -1010,12 +1010,12 @@ pub(super) fn input_source_rows(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Vec<E
                             Some(choice) if model.supports_language(&choice.language) => {
                                 choice.language.clone()
                             }
-                            _ => source.language_for(model, &fallback),
+                            _ => source.language_for(&model, &fallback),
                         };
                         let source_id = source.id.clone();
                         let id = model.id;
                         Some(Choice {
-                            label: model.name.into(),
+                            label: model.name.to_string(),
                             detail: None,
                             selected: mapped.as_ref().is_some_and(|choice| choice.model == id),
                             choose: Box::new(move |ui| {
@@ -1037,8 +1037,8 @@ pub(super) fn input_source_rows(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> Vec<E
                 || tr("Don't switch").to_string(),
                 |choice| {
                     let model = transcription_models::definition(choice.model);
-                    if ui.picker.installed(model, &choice.language) {
-                        model.name.into()
+                    if ui.picker.installed(&model, &choice.language) {
+                        model.name.to_string()
                     } else {
                         format!("{} · {}", model.name, tr("Not installed"))
                     }
@@ -1127,7 +1127,7 @@ pub(super) fn transcription_status(ui: &Ui, p: Paint) -> Option<(String, rune::C
     let Some(model) = transcription.preparing else {
         return super::model_import::selection_notice(ui).map(|notice| (notice, p.warning()));
     };
-    let name = transcription_models::definition(model).name;
+    let name = transcription_models::definition(model).name.clone();
     let stage = match transcription.preparation_stage {
         Some(ModelPreparationStage::Verifying) => tr("Verifying model").to_string(),
         Some(ModelPreparationStage::Loading) => tr("Loading model").to_string(),
