@@ -1,5 +1,8 @@
 # Roadmap
 
+See the [remaining X roadmap ledger](docs/x-execution/remaining-roadmap.md)
+for X development and acceptance.
+
 Hex ships the macOS product loop: configurable hold-to-talk local dictation,
 optional context-aware OpenCode post-processing, a Metal HUD, bounded paste
 workers, settings, and a signed app bundle. Meetings (beta) is a
