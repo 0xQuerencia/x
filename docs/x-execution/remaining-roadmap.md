@@ -10,7 +10,7 @@ main (`fa63827f` and `b17f1b7b`). The older composition and continuation
 commits are main ancestors. No saved worktree was adopted for #226–#228.
 
 [The original audit](master-plan-status.md) describes the #220 snapshot. Its
-test outcomes remain attached to that tree. Current main contains #219–#225
+test outcomes remain attached to that tree. The opening main contained #219–#225
 and #229. Opening GitHub inspection returned only #226–#228 as open. The
 original `X_FINAL_MASTER_PLAN.md` was unavailable in the local files and Git
 history searched. The audit and supplied completion handoff are provisional
@@ -25,11 +25,11 @@ establish current native, installed-provider or physical acceptance.
 
 | Package | Work | State | Current evidence or prerequisite |
 |---|---|---|---|
-| P01 | Reconcile current source and roadmap (A01, A11, H07; all IDs) | IN PROGRESS | Opening source and PR reconciliation recorded below. The full original plan is unavailable locally. |
-| P02 | Finish existing #226: exact diff/test review (B03, B11) | READY FOR CI | [#226](https://github.com/0xQuerencia/x/pull/226), head `e155d2129ca25bc949989aec8d81d58587e01c72`. See checkpoint below. |
-| P03 | Finish existing #227: correction loop (B14, A08, B04) | IN PROGRESS | [#227](https://github.com/0xQuerencia/x/pull/227), remote head `3ce5c9e1e0d11c1d8109d24ff11fa6e77abea52d`. Separate local integration worktree. Reuse the owned supervisor for fixed suites and verify the end-to-end correction chain. |
-| P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | IN PROGRESS | [#228](https://github.com/0xQuerencia/x/pull/228), remote head `c9db3353c3eb4710b52f9c5dfee1d44c2c0f8f49`. Exact integration fixture reproduced locally and passes with the local registration fix. Combined head and real delay proof pending. |
-| P05 | Independent provider reconciliation (A02, A09, B11) | NOT STARTED | See the original-ID evidence below. |
+| P01 | Reconcile current source and roadmap (A01, A11, H07) | READY FOR CI | Opening source and PR reconciliation recorded in [#230](https://github.com/0xQuerencia/x/pull/230). The full original plan is unavailable locally. |
+| P02 | Finish existing #226: exact diff/test review (B03, B11) | DONE / MERGED | [#226](https://github.com/0xQuerencia/x/pull/226), head `e155d2129ca25bc949989aec8d81d58587e01c72`, merge `45b9a7ee9ff5099fa461fc8c4133ede21ae1cef1`. |
+| P03 | Finish existing #227: correction loop (B14, A08, B04) | IN PROGRESS | [#227](https://github.com/0xQuerencia/x/pull/227), remote head `3ce5c9e1e0d11c1d8109d24ff11fa6e77abea52d`. Separate local integration worktree. Owned fixed-suite capture and the end-to-end correction chain pass locally. Latest-main integration and platform CI are pending. |
+| P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | IN PROGRESS | [#228](https://github.com/0xQuerencia/x/pull/228), remote head `c9db3353c3eb4710b52f9c5dfee1d44c2c0f8f49`. Exact integration fixture reproduced locally and passes with the local registration fix. The real 61-second predecessor fixture passed. Combined head, cross-platform CI and native review remain. |
+| P05 | Independent provider reconciliation (A02, A09, B11) | IN PROGRESS | Local exact-session lookup reuses the registered OpenCode service. Fixture verification and remaining delivery proof are pending. |
 | P06 | Reviewed retry/resume and recovery inventory (A09, A10, B11) | NOT STARTED | See the original-ID evidence below. |
 | P07 | Native Work result review (B03, B10, B11) | NOT STARTED | See the original-ID evidence below. |
 | P08 | Native correction review (B14, B10, B11) | NOT STARTED | See the original-ID evidence below. |
@@ -85,24 +85,33 @@ establish current native, installed-provider or physical acceptance.
   and x-agent all-target tests passed on Linux. The core run passed 716
   library tests and one corpus test with nine ignored across targets.
   Git fixtures exercised clean, dirty, untracked, wrong identity, binary,
-  stale pass/failure and oversized patch handling. Native Rune, CLI smoke
-  and merge-candidate gates are tracked independently. The fresh
+  stale pass/failure and oversized patch handling. The native Rune suite
+  passed 418 tests with six ignored. The checksum- and manifest-verified Linux
+  preview exposed both CLI commands in its help. The fresh
   [Compile](https://github.com/0xQuerencia/x/actions/runs/45728391558),
   [macOS preview](https://github.com/0xQuerencia/x/actions/runs/45728391549),
   [Linux preview](https://github.com/0xQuerencia/x/actions/runs/45728460651)
   and [Windows preview](https://github.com/0xQuerencia/x/actions/runs/45728464559)
-  checks were running when this checkpoint was recorded.
+  checks passed. GitHub candidate `19db84968baa5a1aafff4f9cd438c0be93578052`
+  and merged main `45b9a7ee9ff5099fa461fc8c4133ede21ae1cef1` have the
+  same tree as the tested head. The merge commit suppressed main push-triggered
+  unsigned publication after equivalent branch preview builds passed.
 - **P03** had a source conflict on the host/CLI and documentation. The local
   resolution retains worktree review, GitHub inspection and correction routes.
   The branch's original fixed-suite output capture could leave a detached
-  reader and kill only the direct child. The ownership fix and real
-  correction proof are pending.
+  reader and kill only the direct child. The local fix uses bounded in-thread
+  reads and the existing native ownership guard. A real fixture proved a
+  passing correction, two failing correction attempts and terminal refusal,
+  exact matched retest commits and local-only failure output. Cross-platform
+  CI on the eventual PR head is still required.
 - **P04** failed on Linux and macOS at the assertion that the first coding
   node should complete when a later test node is cancelled. The old head
   reproduces the exact assertion locally. A local fix leaves an already
   cancelled node out of renewal registration and lets the scheduler handle
   its scoped Stop. The unchanged integration fixture subsequently passed
-  locally. Combined candidate CI and the real delayed-provider case remain.
+  locally. An explicit 61-second subprocess fixture crossed its configured
+  60-second queue deadline and verified single-use renewal without replay.
+  Combined exact-candidate CI remains.
   See the [Linux failure](https://github.com/0xQuerencia/x/actions/runs/45713786937/job/139555187934)
   and [macOS failure](https://github.com/0xQuerencia/x/actions/runs/45713787052/job/139554603050).
 
@@ -124,7 +133,7 @@ establish current native, installed-provider or physical acceptance.
 | A12 — Typed action/evidence projection | Implemented | [ExecutionOutcome](../../crates/x-agent/src/tools/outcome.rs), [Launcher](../../crates/x-agent/src/service/launch.rs), [execution](../../crates/x-agent/src/service/execution.rs), [task projection](../../crates/x-agent/src/service/effects.rs), CLI and Rune retain Launched/Observed/Confirmed/Unverified/Failed plus aggregate Partial. Legacy fields remain. | Broader native postconditions remain D02/D05/D08/D09. A legacy string adapter conservatively supplies launch evidence only; an ended task is not automatically a verified goal. | P14, P18 |
 | B01 — Delivery versus implementation proof | Implemented | [Verification](../../crates/x-agent/src/verification.rs), [scheduler outcomes](../../crates/x-agent/src/workflows/scheduler.rs), [harness proof](../../crates/x-agent/src/workflows/harness_exec.rs), saved graph results and Rune labels. Native Git/test evidence is separate from provider text. | Complete current installed-provider/UI acceptance. Verified artifact means the recorded proof profile, not general code correctness or automatic integration. | P10, P13, P14 |
 | B02 — Typed predecessor artifacts and migration | Implemented | [DAG schema](../../crates/x-agent/src/workflows/dag.rs) versions 2/3/4, committed/tested inputs, explicit proof edges and [Store](../../crates/x-agent/src/workflows/store.rs). Input producers are graph node identities, not arbitrary user-supplied SHAs/paths. | Keep migration coverage when adding further node kinds. No missing physical gate is hidden by schema validation. | P10, P13, P14 |
-| B03 — Actual immutable Git artifact and review | Open implementation | [#226](https://github.com/0xQuerencia/x/pull/226) contains the local CLI patch and test review. Existing artifact proof and reviewed integration are on main. | Complete exact-head CI and the P07 native inspector. | P02, P07 |
+| B03 — Actual immutable Git artifact and review | Open implementation | [#226](https://github.com/0xQuerencia/x/pull/226) merged the local CLI patch and test review. Existing artifact proof and reviewed integration are on main. | Complete the P07 native inspector. | P02, P07 |
 | B04 — Tests at exact graph input commit | Implemented | Typed Test nodes in [DAG](../../crates/x-agent/src/workflows/dag.rs) reuse [approved test runner](../../crates/x-agent/src/verification/test_runner.rs). Approval binds project, input commit, owned checkout and fixed suite; scripts retain normal user OS privileges. | Run appropriate installed Cargo/npm/pytest/other supported presets on representative real projects. A suite's exit/evidence verifies that suite at that commit, not an unrestricted “tests all passed” claim. | P03, P10, P13 |
 | B05 — Capability-aware roles | Partial | [Harness descriptors](../../crates/x-agent/src/harness.rs), [Claude adapter](../../crates/x-agent/src/harness/claude.rs), [composer Role](../../crates/x-agent/src/service/composer.rs) and native provider choices. Writer and tool-free Analysis are explicit; tests use their own typed node. | The public role model currently has WorkspaceWrite and Analysis, not separate Review and Test adapter roles. Add only concrete supported review/test contracts; do not promote the restricted Claude adapter to writer. | P10 |
 | B06 — Ready-time pinned worktrees | Implemented | [Harness executor preparation](../../crates/x-agent/src/workflows/harness_exec.rs), [Manager](../../crates/x-agent/src/worktrees.rs) and exact queued scopes allocate when dependencies are ready, from approved base and native predecessor artifacts. | Current installed-harness multi-worker acceptance remains. Recovery inventory does not itself authorize reusing or deleting a checkout. | P06, P07, P13 |
@@ -132,7 +141,7 @@ establish current native, installed-provider or physical acceptance.
 | B08 — Native Work composer | Implemented | Agent → Work → Compose tasks, [Rune form](../../src/rune_ui/agent/composer.rs) and [service compiler](../../crates/x-agent/src/service/composer.rs), reusing registered project/session pickers and standard review. Preview issues no grant or process. | Observe a new user completing the full installed-provider journey without CLI documentation. Component interaction/render proof does not establish physical focus, microphone or whole-pane usability. | P13, P27 |
 | B09 — Two-worker plan template | Implemented | The same [composer](../../crates/x-agent/src/service/composer.rs) creates independent or predecessor-artifact tasks, one/two worker limits and optional fixed-suite test nodes through existing v4 graph validation and storage. | The form is a bounded two-task template, not an arbitrary DAG editor or mixed desktop composer. Complete J08/J09/J19 with installed writers and actual user-created changes. | P13, P27 |
 | B10 — Live run inspector | Partial | [Foreground card](../../src/rune_ui/agent.rs), [background cards](../../src/rune_ui/agent/runs.rs), [workflow history](../../src/rune_ui/agent/workflows.rs), scoped events and saved graph results. No invented percentage is rendered. | Add elapsed-time display, selected artifact/diff/test inspection and consistently explicit Tested/Verified coding detail. Foreground coding detail is currently omitted for some successful states. Polling serializes snapshots without a measured budget; real two-provider UI acceptance remains. | P02, P05, P11 |
-| B11 — Review and recovery controls | Partial | [Recovery inventory](../features/work-composer.md) and exact isolated artifact integration are on main. #226 adds a CLI review on its branch. | Add independent recovery/retry and native review and correction controls. | P02, P05, P11 |
+| B11 — Review and recovery controls | Partial | [Recovery inventory](../features/work-composer.md) and exact isolated artifact integration are on main. #226 added the merged CLI review. | Add independent recovery/retry and native review and correction controls. | P02, P05, P11 |
 | B12 — Additional real writer | Conditional | [Provider kinds/capabilities](../../crates/x-agent/src/harness.rs) expose OpenCode and tool-free Claude Code. No second writer path is enabled. | Select an actually installed supported writer/version and prove its path/tool/network restrictions in an owned environment before enabling it. There is also missing adapter implementation; availability alone would not complete this package. No speculative CLI flags or unsafe fallback are justified. | P13, P49 |
 | B13 — Markdown roadmap import | Merged improvement | [#221](https://github.com/0xQuerencia/x/pull/221) adds [bounded Markdown import](../features/roadmap-import.md), reviewed existing graphs and local authored completion markers. | Review exact repository, commit and PR evidence mapping without treating author markers as proof. | P12 |
 | B14 — Reviewed correction loop | Open implementation | [#227](https://github.com/0xQuerencia/x/pull/227) adds a local correction preview and graph plan on its own branch. | Prove process ownership, exact failure and descendant retest plus two-attempt enforcement, then add native review. | P03, P08 |
