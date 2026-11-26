@@ -2,6 +2,36 @@
 //! A review token identifies the already-reviewed exact task, never a new goal.
 
 use super::*;
+use crate::service::State as TaskState;
+
+/// A native control for one exact live review.
+#[derive(Clone, Debug)]
+pub struct PermissionWait {
+    pub step_index: usize,
+    pub review_token: String,
+}
+
+pub(in crate::service) fn permission_waits(state: &TaskState) -> Vec<PermissionWait> {
+    let (Some(task), Some(stops)) = (&state.task, &state.active_graph_stops) else {
+        return Vec::new();
+    };
+    if state.phase != Phase::Running || state.stop.requested() {
+        return Vec::new();
+    }
+    task.steps
+        .iter()
+        .enumerate()
+        .filter_map(|(step_index, step)| {
+            if step.status != "waiting_for_permission" {
+                return None;
+            }
+            Some(PermissionWait {
+                step_index,
+                review_token: stops.permission_review_token(step_index)?.to_string(),
+            })
+        })
+        .collect()
+}
 
 impl Service {
     /// Read the current expired-approval requests for an exact live task.
@@ -15,25 +45,18 @@ impl Service {
             .filter(|task| task.id == task_id && state.phase == Phase::Running)
             .ok_or("The reviewed coding graph is no longer active")?;
         state.stop.check()?;
-        let stops = state
-            .active_graph_stops
-            .as_ref()
-            .ok_or("No active coding graph")?;
-        let reviews = task
-            .steps
-            .iter()
-            .enumerate()
-            .filter(|(_, step)| step.status == "waiting_for_permission")
-            .filter_map(|(index, step)| {
-                let token = stops.permission_review_token(index)?;
-                Some(serde_json::json!({
+        let reviews = permission_waits(&state)
+            .into_iter()
+            .map(|review| {
+                let step = &task.steps[review.step_index];
+                serde_json::json!({
                     "task_id": task_id,
-                    "step_index": index,
+                    "step_index": review.step_index,
                     "title": step.title,
                     "risk": step.risk,
-                    "review_token": token,
+                    "review_token": review.review_token,
                     "note": "Renew only the unchanged queued job for up to five minutes, once.",
-                }))
+                })
             })
             .collect::<Vec<_>>();
         Ok(serde_json::json!({"task_id": task_id, "reviews": reviews}))
