@@ -120,13 +120,14 @@ fn finished_voice_reaches_verified_workspace_and_a_stopped_capture_cannot_move_i
 
     service.voice_stop().unwrap();
     requested.recv_timeout(Duration::from_secs(5)).unwrap();
-    reply.send("go to workspace three".into()).unwrap();
+    // The warm Parakeet eSpeak fixture returned this exact transcription.
+    reply.send("Go to workspace free.".into()).unwrap();
     let snapshot = wait_for(&service, Phase::AwaitingApproval);
     assert!(
         snapshot
             .events
             .iter()
-            .all(|event| !event.text.contains("go to workspace"))
+            .all(|event| !event.text.to_ascii_lowercase().contains("go to workspace"))
     );
     let preview = snapshot.task.unwrap();
     assert_eq!(preview.steps.len(), 1);

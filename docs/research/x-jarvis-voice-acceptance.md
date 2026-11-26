@@ -50,7 +50,10 @@ monotonic clock and nearest-rank p50/p95. All audio inputs were synthetic.
 | Linux, simulated cloud protocol | Ready PCM to first decoded response PCM | 50 | 0.006 ms | 0.008 ms |
 
 The offline transcription test starts with prepared PCM and a resident
-model. The compositor runs start at simulated release, inject the finished
+model. The normal `hex model transcribe` command returned “Go to workspace
+free.” for the synthetic “Go to workspace three.” clip. X now resolves that
+specific homophone in the workspace number slot, and the Hyprland acceptance
+test uses the exact returned transcript. The compositor runs start at simulated release, inject the finished
 transcript, poll status about every millisecond and immediately approve the
 exact preview. Their numbers exclude recognition and human review time.
 The cloud fixture measures local encoding and decoding. The live terminal
