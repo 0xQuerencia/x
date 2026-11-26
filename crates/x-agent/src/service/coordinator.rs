@@ -24,6 +24,8 @@ pub struct BackgroundSnapshot {
     pub cancellable_coding_jobs: Vec<usize>,
     #[serde(skip)]
     pub permission_waits: Vec<super::PermissionWait>,
+    #[serde(skip)]
+    pub graph_jobs: Vec<super::GraphJobView>,
 }
 
 #[derive(Clone)]
@@ -99,6 +101,7 @@ impl State {
             workflow: None,
             graph_workflow: None,
             active_graph_stops: None,
+            graph_activity: None,
             pending_tests: None,
             pending_integration: None,
             project_command: None,
@@ -351,6 +354,7 @@ impl Service {
                 Some(BackgroundSnapshot {
                     cancellable_coding_jobs: cancellable_jobs(&state),
                     permission_waits: super::harness_workflow::permission_waits(&state),
+                    graph_jobs: state.graph_jobs(),
                     task,
                     started_at: run.started_at,
                     events,

@@ -2912,6 +2912,20 @@ fn native_individual_job_stop_preserves_an_independent_provider_run() {
 sleep 60"#,
     );
     graph.nodes[1].requires.clear();
+    let mut gated = graph.nodes[0].clone();
+    gated.id = "gated".into();
+    gated.requires.push("inspect".into());
+    graph.nodes.push(gated);
+    let release = directory.path().join("release-review");
+    fake_claude(
+        directory.path(),
+        true,
+        &format!(
+            r#"until test -e '{}'; do sleep 0.05; done
+echo '{{"type":"result","subtype":"success","is_error":false,"session_id":"5e3b19e7-c7ce-42f0-919d-15a735a1ed16","result":"fixture review"}}'"#,
+            release.display()
+        ),
+    );
     std::fs::write(
         directory.path().join("state/workflows/coding-graph.json"),
         serde_json::to_vec(&graph).unwrap(),
@@ -2921,21 +2935,45 @@ sleep 60"#,
     assert!(service.cancel_coding_job(task.id, 0).is_err());
     service.approve(task.id).unwrap();
     let running = wait_for(&service, |snapshot| {
-        snapshot.events.iter().any(|event| {
-            event.kind == "workflow_activity"
-                && event.text.contains("/ inspect / attempt 1: step_start")
-        })
+        snapshot
+            .graph_jobs
+            .first()
+            .is_some_and(|job| job.phase == GraphJobPhase::Running)
+            && snapshot
+                .graph_jobs
+                .get(1)
+                .is_some_and(|job| job.phase == GraphJobPhase::Running)
+            && snapshot.events.iter().any(|event| {
+                event.kind == "workflow_activity"
+                    && event.text.contains("/ inspect / attempt 1: step_start")
+            })
     });
+    assert_eq!(running.graph_jobs[2].phase, GraphJobPhase::Queued);
+    assert_eq!(running.graph_jobs[2].dependencies.as_ref(), ["inspect"]);
+    assert!(!running.graph_jobs[2].has_checkout);
+    assert!(
+        running
+            .graph_jobs
+            .iter()
+            .all(|job| job.run == running.graph_jobs[0].run)
+    );
     assert!(running.cancellable_coding_jobs.contains(&0));
     assert!(service.cancel_coding_job(task.id + 1, 0).is_err());
     assert!(service.cancel_coding_job(task.id, 100).is_err());
     service.cancel_coding_job(task.id, 0).unwrap();
+    std::fs::write(release, "").unwrap();
     let done = wait_for(&service, |snapshot| !snapshot.phase.is_busy());
     assert_eq!(done.phase, Phase::Failed);
     assert!(done.cancellable_coding_jobs.is_empty());
     let task = done.task.unwrap();
     assert_eq!(task.steps[0].status, "cancelled");
     assert_eq!(task.steps[1].status, "delivered");
+    assert_eq!(task.steps[2].status, "skipped");
+    assert_eq!(done.graph_jobs[0].phase, GraphJobPhase::Stopped);
+    assert_eq!(done.graph_jobs[1].phase, GraphJobPhase::Delivered);
+    assert!(done.graph_jobs[1].has_checkout);
+    assert_eq!(done.graph_jobs[2].phase, GraphJobPhase::Skipped);
+    assert!(!done.graph_jobs[2].has_checkout);
     assert!(service.cancel_coding_job(task.id, 1).is_err());
     assert_eq!(done.pending_job_approvals, Some(0));
 }

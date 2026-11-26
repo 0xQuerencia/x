@@ -161,6 +161,13 @@ impl Assignment {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum CodingProgress {
+    CheckoutRecorded,
+    Dispatch,
+}
+
+type ProgressActivity = Arc<dyn Fn(&str, CodingProgress) + Send + Sync>;
 type JobActivity = Arc<dyn Fn(&str, u8, EventKind) + Send + Sync>;
 type FailureActivity = Arc<dyn Fn(test_runner::CorrectionDraft) + Send + Sync>;
 
@@ -176,6 +183,7 @@ pub struct ApprovedHarnessExecutor {
     worktrees: Arc<Manager>,
     journal: Arc<Journal>,
     activity: Option<JobActivity>,
+    progress: Option<ProgressActivity>,
     failure: Option<FailureActivity>,
     /// Only results produced by this live executor can release artifact inputs.
     /// Reopening a journal never restores authority or trusts supplied JSON.
@@ -231,11 +239,17 @@ impl ApprovedHarnessExecutor {
             worktrees,
             journal,
             activity: None,
+            progress: None,
             failure: None,
             outputs: Mutex::new(HashMap::new()),
             preparation: Mutex::new(()),
             reasons: Mutex::new(HashMap::new()),
         })
+    }
+
+    pub(crate) fn with_progress(mut self, progress: ProgressActivity) -> Self {
+        self.progress = Some(progress);
+        self
     }
 
     pub(crate) fn with_activity(mut self, activity: JobActivity) -> Self {
@@ -400,6 +414,9 @@ impl ApprovedHarnessExecutor {
     ) -> Outcome {
         if stop.requested() || self.journal.mark_dispatch(claim).is_err() {
             return self.finish_failed(claim, stop, Outcome::Unverified);
+        }
+        if let Some(progress) = &self.progress {
+            progress(&assignment.node.id, CodingProgress::Dispatch);
         }
         let result = test_runner::verify_approved_report(
             &self.worktrees,
@@ -605,6 +622,9 @@ impl ApprovedHarnessExecutor {
         if stop.requested() || self.journal.mark_dispatch(claim).is_err() {
             return self.finish_failed(claim, stop, Outcome::Unverified);
         }
+        if let Some(progress) = &self.progress {
+            progress(&assignment.node.id, CodingProgress::Dispatch);
+        }
         let owned = match adapter.start(request, sink, stop) {
             Ok(owned) => owned,
             Err(_) => return self.finish_failed(claim, stop, Outcome::Failed),
@@ -755,6 +775,9 @@ impl Executor for ApprovedHarnessExecutor {
             || self.journal.record_checkout(&claim, &tree).is_err()
         {
             return self.finish_failed(&claim, &stop, Outcome::Unverified);
+        }
+        if let Some(progress) = &self.progress {
+            progress(&node.id, CodingProgress::CheckoutRecorded);
         }
         if stop.requested() {
             return self.finish_failed(&claim, &stop, Outcome::Cancelled);

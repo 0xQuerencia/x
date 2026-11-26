@@ -120,15 +120,19 @@ impl AgentPane {
             && (::x_agent::wm::recent_undo_available() || ::x_agent::sys::recent_undo_available());
         let undo_changed = can_undo != self.undo_visible;
         self.undo_visible = can_undo;
-        let native_review_changed = self.snapshot.as_ref().is_some_and(|previous| {
+        let native_changed = self.snapshot.as_ref().is_some_and(|previous| {
             previous.permission_waits != snapshot.permission_waits
+                || previous.graph_jobs != snapshot.graph_jobs
                 || previous
                     .background_runs
                     .iter()
                     .zip(&snapshot.background_runs)
-                    .any(|(old, current)| old.permission_waits != current.permission_waits)
+                    .any(|(old, current)| {
+                        old.permission_waits != current.permission_waits
+                            || old.graph_jobs != current.graph_jobs
+                    })
         });
-        if serialized == self.shown && !native_review_changed {
+        if serialized == self.shown && !native_changed {
             return listed || undo_changed || composed || answered || reviewed;
         }
         if self.workspace.text.is_empty()
@@ -1117,6 +1121,9 @@ fn task_card(
                 .color(color)
                 .wrap(),
         );
+        if let Some(job) = snapshot.graph_jobs.get(index) {
+            card = card.child(runs::activity_row(p, task.id, job));
+        }
         if step.status == "waiting_for_permission" {
             card = card.child(runs::permission_review(
                 p,

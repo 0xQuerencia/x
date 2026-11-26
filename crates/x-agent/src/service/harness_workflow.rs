@@ -602,6 +602,7 @@ impl Service {
             .as_ref()
             .map_or_else(Uuid::new_v4, |claim| claim.run_id);
         let executor = Arc::new(self.approved_graph_executor(workflow, run, stop, &stops)?);
+        self.start_graph_activity(run, &workflow.graph, workflow.retry.is_some())?;
         let result = scheduler::run_observed_scoped(
             &workflow.graph,
             &workflow.home,
@@ -609,6 +610,7 @@ impl Service {
             &stops,
             PARALLEL_WORKERS,
             |index, update| {
+                self.record_graph_update(run, index, update);
                 let status = match update {
                     NodeUpdate::WaitingForPermission => "waiting_for_permission",
                     NodeUpdate::Running => "running",

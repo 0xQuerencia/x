@@ -158,6 +158,12 @@ impl Service {
                 Arc::clone(&workflow.manager),
                 Arc::clone(&workflow.journal),
             )?
+            .with_progress({
+                let service = self.clone();
+                Arc::new(move |node, progress| {
+                    service.record_graph_progress(task_id, run, node, progress)
+                })
+            })
             .with_activity(Arc::new(move |node, attempt, kind| {
                 service.emit(
                     "workflow_activity",

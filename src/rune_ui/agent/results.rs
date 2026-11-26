@@ -77,6 +77,11 @@ impl Results {
         }
     }
 
+    pub(super) fn show_graph_result(&mut self, run: String, node: String, state: State) {
+        self.expanded = true;
+        self.inspect(run, node, state);
+    }
+
     fn inspect(&mut self, run: String, node: String, state: State) {
         if self.pending.is_none() {
             self.selected = Some((run.clone(), node.clone(), state));

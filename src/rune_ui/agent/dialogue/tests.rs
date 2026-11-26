@@ -407,3 +407,87 @@ fn render_native_work_results_light_and_dark() {
         work_result_runtime(dark, true, SIZE)
     });
 }
+
+fn run_activity_runtime(dark: bool) -> Runtime<Ui> {
+    use ::x_agent::service::{GraphJobPhase, GraphJobView};
+
+    let mut ui = permission_fixture();
+    let snapshot = ui.agent.snapshot.as_mut().unwrap();
+    snapshot.permission_waits.clear();
+    snapshot.cancellable_coding_jobs = vec![0, 1, 2];
+    let task = snapshot.task.as_mut().unwrap();
+    task.text = "Review two independent changes and run the fixed suite.".into();
+    let first = task.steps.remove(0);
+    let run = "7e7b7f09-8fc7-48ac-a990-19ad8a69eee1".parse().unwrap();
+    for (index, (name, phase, status, seconds, dependencies)) in [
+        ("Catalog", GraphJobPhase::Running, "running", 28, Vec::new()),
+        ("Index", GraphJobPhase::Preparing, "running", 12, Vec::new()),
+        (
+            "Tests",
+            GraphJobPhase::Queued,
+            "pending",
+            28,
+            vec!["Catalog".into(), "Index".into()],
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        task.steps.push(Step {
+            title: name.into(),
+            status: status.into(),
+            risk: String::new(),
+            ..first.clone()
+        });
+        snapshot.graph_jobs.push(GraphJobView {
+            run,
+            index,
+            node: Arc::from(name),
+            dependencies: Arc::from(dependencies),
+            phase,
+            elapsed_seconds: seconds,
+            has_checkout: false,
+        });
+    }
+    let mut rt = crate::rune_ui::offscreen::runtime(
+        ui,
+        drawn,
+        SIZE,
+        Env::new(dark, 1.0),
+        TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES),
+    );
+    rt.frame(0.0);
+    rt
+}
+
+#[test]
+fn native_run_activity_keeps_exact_checkout_links_and_scoped_stop() {
+    let mut rt = run_activity_runtime(false);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains("stop-coding-job-1"))
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .all(|el| !el.path.contains("inspect-job-result"))
+    );
+    rt.update(|ui, _| {
+        let snapshot = ui.agent.snapshot.as_mut().unwrap();
+        snapshot.graph_jobs[0].phase = ::x_agent::service::GraphJobPhase::Verified;
+        snapshot.graph_jobs[0].has_checkout = true;
+    });
+    rt.frame(0.0);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains("inspect-job-result-42-0"))
+    );
+}
+
+#[test]
+#[ignore = "writes light/dark native run activity renders"]
+fn render_native_run_activity_light_and_dark() {
+    render_pair("run-activity", run_activity_runtime);
+}

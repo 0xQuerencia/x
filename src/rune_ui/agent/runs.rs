@@ -6,7 +6,8 @@ use super::{step_glyph, task_label};
 use crate::agent_host;
 use crate::rune_ui::Ui;
 use crate::rune_ui::controls::{ButtonKind, DESCRIPTION, Paint, button};
-use x_agent::service::{PermissionWait, Snapshot};
+use x_agent::service::{GraphJobPhase, GraphJobView, Mode, PermissionWait, Snapshot};
+use x_agent::workflows::recovery::State;
 
 pub(super) fn permission_review(
     p: Paint,
@@ -45,6 +46,56 @@ pub(super) fn permission_review(
             .color(p.muted())
             .wrap(),
     );
+    group
+}
+
+pub(super) fn activity_row(p: Paint, task: u64, job: &GraphJobView) -> El {
+    let seconds = job.elapsed_seconds;
+    let elapsed = if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    };
+    let mut group = col()
+        .key(format!("job-activity-{task}-{}", job.index))
+        .gap(4.0)
+        .child(
+            text(format!("{} · {elapsed}", job.phase.label()))
+                .font(DESCRIPTION)
+                .color(p.muted())
+                .wrap(),
+        );
+    if !job.dependencies.is_empty() {
+        group = group.child(
+            text(format!("Depends on {}", job.dependencies.join(", ")))
+                .font(DESCRIPTION)
+                .color(p.muted())
+                .wrap(),
+        );
+    }
+    if job.has_checkout {
+        let state = match job.phase {
+            GraphJobPhase::Verified | GraphJobPhase::Tested => State::Verified,
+            GraphJobPhase::Delivered => State::Delivered,
+            GraphJobPhase::Failed => State::Failed,
+            GraphJobPhase::Stopped => State::Cancelled,
+            _ => State::Unverified,
+        };
+        let run = job.run.to_string();
+        let node = job.node.to_string();
+        group = group.child(button(
+            p,
+            &format!("inspect-job-result-{task}-{}", job.index),
+            "Review recorded checkout",
+            ButtonKind::Secondary,
+            move |ui: &mut Ui, _| {
+                ui.agent.mode = Mode::Work;
+                ui.agent
+                    .results
+                    .show_graph_result(run.clone(), node.clone(), state);
+            },
+        ));
+    }
     group
 }
 
@@ -115,15 +166,18 @@ pub(super) fn panel(p: Paint, snapshot: &Snapshot) -> El {
                 .gap(4.0)
                 .child(
                     text(format!(
-                        "{} {} · {}",
-                        step_glyph(&step.status),
-                        step.title,
-                        if step.status == "waiting_for_permission" {
-                            "waiting for permission"
-                        } else {
-                            &step.status
-                        }
-                    ))
+                                "{} {} · {}",
+                                step_glyph(&step.status),
+                                step.title,
+                                if let Some(job) = run.graph_jobs.get(index) {
+                        line = line.child(activity_row(p, id, job));
+                    }
+                    if step.status == "waiting_for_permission" {
+                                    "waiting for permission"
+                                } else {
+                                    &step.status
+                                }
+                            ))
                     .font(DESCRIPTION)
                     .color(if step.status == "failed" {
                         p.danger()
