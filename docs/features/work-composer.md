@@ -112,6 +112,15 @@ loopback OpenCode service for the exact recorded session. The response reports
 the recorded outcome, acknowledgement, and whether the service returned that
 session in that checkout. The command reads session metadata only.
 
+`hex agent workflow open-worktree <run> <node>` opens an independently
+validated owned checkout from the inventory, including interrupted
+preparations. Opening carries no provider, test, or Git authority.
+`worktree-cleanup-preview <run> <node>` displays the exact clean checkout
+and review token. `worktree-cleanup <run>/<node> <token>` uses Git's
+non-force removal after checking ownership, commit and status again. Cleanup
+requires a stopped or failed preparation with durable evidence that dispatch
+never began. Retained journal records and the primary checkout remain in place.
+
 For an interrupted first attempt before durable checkout preparation, X can
 report that dispatch was never reached. After preparation a missing session
 remains uncertain. Claude Code lookup is unsupported. Every result leaves the

@@ -140,6 +140,42 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
                 _ => need("exactly a recorded run UUID and node id"),
             }
         }
+        "open-worktree" | "worktree-cleanup-preview" => {
+            let mut args = value.split_whitespace();
+            match (args.next(), args.next(), args.next()) {
+                (Some(run), Some(node), None) if command == "open-worktree" => {
+                    match svc.open_coding_worktree(run, node) {
+                        Ok(()) => {
+                            ControlReply::done("Requested the exact checkout in the file manager.")
+                        }
+                        Err(error) => refuse(error),
+                    }
+                }
+                (Some(run), Some(node), None) => {
+                    match svc.preview_coding_worktree_cleanup(run, node) {
+                        Ok(report) => ControlReply::done(report.to_string()),
+                        Err(error) => refuse(error),
+                    }
+                }
+                _ => need("an exact run UUID and node ID"),
+            }
+        }
+        "worktree-cleanup" => {
+            let mut args = value.split_whitespace();
+            match (
+                args.next().and_then(|job| job.split_once('/')),
+                args.next(),
+                args.next(),
+            ) {
+                (Some((run, node)), Some(token), None) => {
+                    match svc.cleanup_coding_worktree(run, node, token) {
+                        Ok(()) => ControlReply::done("Removed the exact reviewed clean checkout."),
+                        Err(error) => refuse(error),
+                    }
+                }
+                _ => need("an exact run UUID/node ID and cleanup review token"),
+            }
+        }
         "reconcile-coding" => {
             let mut args = value.split_whitespace();
             match (args.next(), args.next(), args.next()) {
@@ -262,7 +298,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, reconcile-coding, correction-preview, plan-correction, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, open-worktree, worktree-cleanup-preview, worktree-cleanup, reconcile-coding, correction-preview, plan-correction, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }
