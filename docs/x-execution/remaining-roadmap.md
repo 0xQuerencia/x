@@ -30,13 +30,13 @@ establish current native, installed-provider or physical acceptance.
 | P03 | Finish existing #227: correction loop (B14, A08, B04) | DONE / MERGED | [#227](https://github.com/0xQuerencia/x/pull/227), head `fc447845bd1c2e4a8d0b5d82732412ac755ce4b0`, merge `84a7a259f33abd21240cccde1419cf87578462a7`. Compile, all previews and Linux sanitizer passed. |
 | P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | DONE / MERGED | [#228](https://github.com/0xQuerencia/x/pull/228), head `053117aa86f675ce8690fb1c0f5c82663bf74f92`, merge `bd6a58461371999be8c99d179bc9e5802f0c0db1`. Preparation and desktop expiry follow-up remains in P09. |
 | P05 | Independent provider reconciliation (A02, A09, B11) | IN PROGRESS | [#231](https://github.com/0xQuerencia/x/pull/231), Local exact OpenCode readback and durable pre-dispatch checkpoint pass. A macOS real-graph fixture timed out. The revised fixture uses the real suite budget. Independent provider turn correlation beyond acknowledged sessions remains open. |
-| P06 | Reviewed retry/resume and recovery inventory (A09, A10, B11) | IN PROGRESS | Local branch `codex/x-p06-owned-recovery` stages exact checkout open and explicit clean checkout removal, gated by durable proof of no dispatch. Fresh bounded retry is still pending. |
-| P07 | Native Work result review (B03, B10, B11) | NOT STARTED | See the original-ID evidence below. |
+| P06 | Reviewed retry/resume and recovery inventory (A09, A10, B11) | IN PROGRESS | [#238](https://github.com/0xQuerencia/x/pull/238) implements exact checkout open and separately reviewed cleanup. [#240](https://github.com/0xQuerencia/x/pull/240) implements reviewed retry of independent saved coding nodes with durable proof of no dispatch. Both passed disposable Git fixtures. Dependency and Roadmap-bound resume remain open. |
+| P07 | Native Work result review (B03, B10, B11) | IN PROGRESS | Local `codex/x-p07-native-work-review` adds native exact-result evidence and reuses the separate fast-forward review. Native visual and installed acceptance pending. |
 | P08 | Native correction review (B14, B10, B11) | NOT STARTED | See the original-ID evidence below. |
-| P09 | Native queued wait, Stop and renew (A05, C02, C03, C04) | IN PROGRESS | [#235](https://github.com/0xQuerencia/x/pull/235), head `cf91b7156b9f4721d5c7092946e57e0cefe4a4cb`. Exact platform CI, native keyboard, stale-state and both goldens passed. Preparation and desktop expiry still require separate proof. |
+| P09 | Native queued wait, Stop and renew (A05, C02, C03, C04) | IN PROGRESS | [#235](https://github.com/0xQuerencia/x/pull/235), merge `153397e81f595f26188a640bce8e6cc14f5a343c`. Exact platform CI, native keyboard, stale-state and both goldens passed for the merged slice. [#239](https://github.com/0xQuerencia/x/pull/239) adds preparation and native input-lease expiry fixtures plus refresh for private token-only changes. |
 | P10 | Independent reviewer role and evidence (B05, B01, B04) | NOT STARTED | See the original-ID evidence below. |
 | P11 | Rich run/activity inspector (A06, B10, E10) | NOT STARTED | See the original-ID evidence below. |
-| P12 | Roadmap-to-code/PR evidence matching (B13, A11) | READY FOR CI | [#232](https://github.com/0xQuerencia/x/pull/232), head `832c359cb8dbec5944df4dcf64347a16444e74a7`. Disposable Git and scoped PR fixtures, Compile and three unsigned previews passed. Integration candidate verification is pending. |
+| P12 | Roadmap-to-code/PR evidence matching (B13, A11) | READY FOR CI | [#232](https://github.com/0xQuerencia/x/pull/232), head `5cbb0b3ab8be523bc8c93ac99dad4bb580901c1d`. Disposable Git and scoped PR fixtures passed. Compile and all previews passed at the previous exact head. Current stacked integration checks are pending. |
 | P13 | Orchestrator reliability acceptance and role expansion decision (A01–A12, B01–B14, C01–C04) | NOT STARTED | See the original-ID evidence below. |
 | P14 | Shared execution and evidence contract (A12, C02, C05, C06, H02) | NOT STARTED | See the original-ID evidence below. |
 | P15 | Mixed task authoring beyond the finite parser (C07, C09) | NOT STARTED | See the original-ID evidence below. |
@@ -70,7 +70,7 @@ establish current native, installed-provider or physical acceptance.
 | P43 | Linux desktop parity (G02, G03, G04, A08) | NOT STARTED | See the original-ID evidence below. |
 | P44 | macOS Apple Silicon parity (G07, G08, D10, E10) | NOT STARTED | See the original-ID evidence below. |
 | P45 | Packaging, install, upgrades, rollback and uninstall (A01, G01, G07, G09, G10) | IN PROGRESS | Exact #228 Linux preview ran on an AVX2-only host. Existing Hex release installer and X Arch activation, rollback and helper-ownership fixtures passed. Actual platform installs remain pending. |
-| P46 | Artifact provenance, signing preparation and performance/privacy baseline (G10, G12, H03) | IN PROGRESS | `codex/x-p46-linux-baseline` measured headless startup, status, local preview, idle CPU/RSS and socket activity using a hash- and manifest-verified Linux preview. Desktop/voice and signing acceptance remain pending. |
+| P46 | Artifact provenance, signing preparation and performance/privacy baseline (G10, G12, H03) | IN PROGRESS | [#237](https://github.com/0xQuerencia/x/pull/237) measured headless startup, status, local preview, idle CPU/RSS and socket activity using a hash- and manifest-verified Linux preview. Desktop/voice and signing acceptance remain pending. |
 | P47 | One-candidate real platform and journey QA (G02–G05, G08, G11, G12, G13; J01–J24) | NOT STARTED | See the original-ID evidence below. |
 | P48 | Distribution decision and release candidate handoff (G13, G14) | NOT STARTED | Publication requires the exact-candidate quality gate and explicit owner authorization. |
 | P49 | Additional writer and inherited knowledge capture (B12, H04) | CONDITIONAL / NOT SELECTED | Requires a supported additional writer or an explicitly selected recording/knowledge workflow. |
@@ -153,7 +153,7 @@ establish current native, installed-provider or physical acceptance.
   The provider patch removes reader threads that could outlive a run with
   an inherited pipe. The Rune patch bounds scene label storage, drops stale
   onboarding editor allocations and keeps dynamic status strings out of the
-  process-lifetime translation cache. The local `codex/x-owned-custom-models` change makes imported descriptors owned and proves old definitions drop after rename and removal. The 127 transcription tests and native strict Clippy passed on Linux. Cross-platform checks are pending.
+  process-lifetime translation cache. A full Linux LeakSanitizer run of the current owned-provider-output candidate passed 730 x-agent tests plus one corpus test with zero reports. [#236](https://github.com/0xQuerencia/x/pull/236) makes imported descriptors owned and proves old definitions drop after rename and removal. The 127 transcription tests and native strict Clippy passed on Linux. Cross-platform checks are pending.
 
 ## Original package traceability
 
