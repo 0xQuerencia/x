@@ -197,10 +197,13 @@ pub fn is_builtin_phrase(phrase: &str) -> bool {
 
 impl Workflow {
     pub fn needs_approval(&self) -> bool {
-        self.steps.iter().any(|s| {
+        self.steps.iter().any(|step| {
             matches!(
-                s.action,
-                StepAction::OpencodeTask { .. } | StepAction::CloseOpenedWindow { .. }
+                step.action,
+                StepAction::OpenUrl { .. }
+                    | StepAction::RunAction { .. }
+                    | StepAction::OpencodeTask { .. }
+                    | StepAction::CloseOpenedWindow { .. }
             )
         })
     }
@@ -363,7 +366,13 @@ pub(super) fn check_action(action: &StepAction, home: &Path) -> Result<(), Strin
             {
                 return Err("Typing into windows is not allowed in workflows".into());
             }
-            if !tools::is_low_risk(&actions) {
+            if actions.iter().any(|action| {
+                !action.risk().is_low_risk()
+                    && !matches!(
+                        action,
+                        tools::Action::Url { .. } | tools::Action::Search { .. }
+                    )
+            }) {
                 return Err(
                     "That action needs approval each time, so it cannot be a workflow step".into(),
                 );

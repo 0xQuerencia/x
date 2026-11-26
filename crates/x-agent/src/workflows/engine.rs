@@ -299,9 +299,9 @@ impl Run<'_> {
                 .steps
                 .iter()
                 .find(|s| s.id == *need)
-                .is_some_and(|s| matches!(s.status, StepStatus::Done | StepStatus::Unverified));
+                .is_some_and(|s| s.status == StepStatus::Done);
             if !ok {
-                return Err(format!("needs step {need:?}, which did not succeed"));
+                return Err(format!("needs step {need:?}, which was not verified"));
             }
         }
         Ok(())
@@ -406,6 +406,9 @@ fn summary(name: &str, state: RunState, steps: &[StepReport]) -> String {
         count(StepStatus::Skipped) + count(StepStatus::Pending) + count(StepStatus::Cancelled);
     let total = steps.len();
     match state {
+        RunState::Completed if skipped > 0 => {
+            format!("{name}: {done} verified, {unverified} unverified, {skipped} not run")
+        }
         RunState::Completed if unverified == 0 => {
             format!("{name}: all {total} steps done and checked")
         }

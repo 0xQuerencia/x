@@ -287,7 +287,7 @@ impl Service {
             && tools::plan_rules(text).is_none()
             && let Some(found) = self.match_workflow(text)
         {
-            return self.plan_workflow(text.trim(), found?);
+            return self.plan_workflow_from(text.trim(), found?, source);
         }
         let mut preset = None;
         let mut model_plan = None;

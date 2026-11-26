@@ -797,6 +797,36 @@ mod running {
     }
 
     #[test]
+    fn a_launch_without_readback_cannot_unlock_a_dependent_step() {
+        let h = home();
+        let host = Fake::new();
+        let mut wf = coding(h.path());
+        let mut dependent = step("dependent", open("firefox", None));
+        dependent.requires = vec!["docs".into()];
+        wf.steps = vec![
+            step(
+                "docs",
+                StepAction::OpenUrl {
+                    url: "https://docs.rs".into(),
+                },
+            ),
+            dependent,
+            step("independent", open("vscode", None)),
+        ];
+        let out = run(&wf, &host, &cfg(h.path()));
+        assert_eq!(
+            statuses(&out),
+            vec![
+                StepStatus::Unverified,
+                StepStatus::Skipped,
+                StepStatus::Done
+            ]
+        );
+        assert!(out.report.summary.contains("1 not run"));
+        assert!(!host.log().iter().any(|entry| entry.contains("firefox")));
+    }
+
+    #[test]
     fn every_ordinary_step_is_checked_once_before_it_runs() {
         let h = home();
         let host = Fake::new();

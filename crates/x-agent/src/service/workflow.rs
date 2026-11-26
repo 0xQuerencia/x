@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::edit::{step, task};
-use super::{Review, Service, busy, emit};
+use super::{InputSource, Review, Service, busy, emit};
 use crate::cancellation::Cancellation;
 use crate::harness::{self, RunStatus};
 use crate::opencode;
@@ -226,6 +226,15 @@ impl Service {
     /// Plans a run of `wf`: validates it, checks that everything it needs exists (before
     /// anything is launched), then waits for approval.
     pub fn plan_workflow(&self, text: &str, wf: Workflow) -> Result<super::Task, String> {
+        self.plan_workflow_from(text, wf, InputSource::Text)
+    }
+
+    pub(super) fn plan_workflow_from(
+        &self,
+        text: &str,
+        wf: Workflow,
+        source: InputSource,
+    ) -> Result<super::Task, String> {
         {
             let s = self.lock();
             if s.phase.is_busy() {
@@ -247,7 +256,7 @@ impl Service {
                 problems.join("; ")
             ));
         }
-        let task = self.begin_workflow_task(text, &wf)?;
+        let task = self.begin_workflow_task(text, &wf, source)?;
         self.approve_if_automatic(task.id)?;
         Ok(task)
     }
@@ -259,7 +268,12 @@ impl Service {
         self.plan_workflow(&text, wf)
     }
 
-    fn begin_workflow_task(&self, text: &str, wf: &Workflow) -> Result<super::Task, String> {
+    fn begin_workflow_task(
+        &self,
+        text: &str,
+        wf: &Workflow,
+        source: InputSource,
+    ) -> Result<super::Task, String> {
         let steps = wf
             .steps
             .iter()
@@ -278,7 +292,7 @@ impl Service {
         t.phase = Phase::AwaitingApproval;
         s.phase = Phase::AwaitingApproval;
         s.actions = vec![];
-        s.review = if wf.needs_approval() {
+        s.review = if source == InputSource::HandsFree || wf.needs_approval() {
             Review::Required
         } else {
             Review::LowRisk

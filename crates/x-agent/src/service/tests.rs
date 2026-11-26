@@ -1815,6 +1815,34 @@ mod saved_workflows {
     }
 
     #[test]
+    fn hands_free_and_external_workflows_wait_for_approval_in_autonomous_mode() {
+        let r = rig();
+        r.s.set_autonomy_mode(AutonomyMode::Autonomous);
+        let task = r.s.plan_hands_free("start coding", Mode::Actions).unwrap();
+        assert_eq!(r.s.snapshot(0).phase, Phase::AwaitingApproval);
+        r.s.cancel_foreground_task(task.id).unwrap();
+        assert!(r.host.windows_now().is_empty());
+
+        let mut workflow = r.s.workflow_store().get("coding").unwrap();
+        for action in [
+            StepAction::OpenUrl {
+                url: "https://docs.rs".into(),
+            },
+            StepAction::RunAction {
+                phrase: "search GitHub for rust".into(),
+            },
+        ] {
+            workflow.steps[0].action = action;
+            workflow.steps.truncate(1);
+            r.s.workflow_store().save(&workflow).unwrap();
+            let task = r.s.plan_workflow_by_id("coding").unwrap();
+            assert_eq!(r.s.snapshot(0).phase, Phase::AwaitingApproval);
+            r.s.cancel_foreground_task(task.id).unwrap();
+            assert!(r.s.approve(task.id).is_err());
+        }
+    }
+
+    #[test]
     fn legacy_trust_cannot_start_a_workflow_that_closes_a_window() {
         let r = rig();
         r.s.set_trust_actions(true);
@@ -2023,9 +2051,12 @@ fn audit_records_approval_and_dispatch_without_the_command_text() {
     let audit = tempfile::tempdir().unwrap();
     let (s, _, launcher) = rig();
     s.configure_ledger(audit.path()).unwrap();
+    s.set_autonomy_mode(AutonomyMode::Autonomous);
     let task = s
         .plan("search youtube for private task content", Mode::Actions)
         .unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
     s.approve(task.id).unwrap();
     wait_for(&s, |snapshot| snapshot.phase == Phase::Completed);
     assert_eq!(launcher.launched.lock().unwrap().len(), 1);
@@ -2045,7 +2076,7 @@ fn audit_records_approval_and_dispatch_without_the_command_text() {
         ["planned", "approved", "claimed", "launched", "finished"]
     );
     assert_eq!(records[2]["action"]["idempotency_key"]["task"], task.id);
-    assert_eq!(records[2]["action"]["risk"], "reversible");
+    assert_eq!(records[2]["action"]["risk"], "consequential");
     assert_eq!(records[4]["phase"], "completed");
 }
 

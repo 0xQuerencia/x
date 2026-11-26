@@ -238,14 +238,14 @@ impl Action {
                 ..
             }
             | Self::App { .. }
-            | Self::Url { .. }
-            | Self::Search { .. }
             | Self::Copy { .. }
             | Self::Terminal { .. }
             | Self::Folder { .. }
             | Self::BrowserTab { .. }
             | Self::System { .. } => Risk::Reversible,
             Self::Screenshot { .. }
+            | Self::Url { .. }
+            | Self::Search { .. }
             | Self::Opencode
             | Self::Type { .. }
             | Self::Session { .. }

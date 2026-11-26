@@ -23,7 +23,7 @@ X's *execution policy* is separate from the dictation shortcut's voice modes
 | Execution mode | Behavior |
 | --- | --- |
 | **Default** | Every new desktop task pauses for approval before execution. |
-| **Autonomous** | Low-risk desktop actions start automatically. Typing, closing a window, operating an app, sending selected text to a website, and Work each require approval. |
+| **Autonomous** | Low-risk desktop actions start automatically. Typing, closing a window, operating an app, opening a website, sending a search to a website, and Work each require approval. |
 
 Choose in the **Agent pane → Execution** controls or by CLI:
 
@@ -367,6 +367,10 @@ response explicitly says `executed: false` and `authorization:
 not_requested`; no desktop action, coding harness, approval or merge is
 triggered by this command. `workflow run` reviews a legacy sequential workflow;
 `workflow run-graph` reviews a supported typed graph before execution.
+Saved runs that open a website, use a spoken action step, close a window, or
+run OpenCode require approval in Autonomous mode too. Hands-free speech can
+prepare a saved run for approval. A sequential step with `requires` waits
+for a verified predecessor. An unverified launch skips dependent steps.
 
 ### Workflow DAG schema (development)
 
