@@ -130,6 +130,94 @@ fn fixture() -> Fixture {
 }
 
 #[test]
+fn evidence_checks_one_reviewed_mapping_against_the_selected_checkout() {
+    let f = fixture();
+    f.git(&["remote", "add", "reviewed", "git@github.com:owner/app.git"]);
+    let sha = f.inspect().base_commit;
+    let mapping = format!("https://github.com/owner/app/pull/7 @ {sha}");
+    let source = MARKDOWN.replace(
+        "  Depends: existing",
+        &format!("  Depends: existing\n  Evidence: {mapping}, {mapping}",),
+    );
+    std::fs::write(&f.source, &source).unwrap();
+    let another = format!(
+        "{mapping}, https://github.com/owner/app/pull/9 @ {}",
+        "a".repeat(40)
+    );
+    std::fs::write(&f.source, source.replace(&mapping, &another)).unwrap();
+    assert_eq!(f.inspect().entries[1].evidence_mapping, "ambiguous");
+    std::fs::write(&f.source, &source).unwrap();
+    let proposal = f.inspect();
+    let ui = &proposal.entries[1];
+    assert_eq!(ui.task.evidence.len(), 1);
+    assert_eq!(ui.evidence_mapping, "needs_review");
+    assert_eq!(proposal.entries[2].evidence_mapping, "unmapped");
+    let request = EvidenceRequest {
+        project: f.project.id.to_string(),
+        path: f.source.clone(),
+        inspection: proposal.inspection_id,
+        task: "ui".into(),
+        repository: "owner/app".into(),
+        account: "operator".into(),
+        pull_request: 7,
+        merge_commit: sha.clone(),
+    };
+    let result = f
+        .service
+        .inspect_roadmap_evidence_with(&request, |link, account| {
+            assert_eq!(account, "operator");
+            assert_eq!(link.pull_request, 7);
+            assert_eq!(link.merge_commit, sha);
+            Ok(("MERGED".into(), Some(sha.clone())))
+        })
+        .unwrap();
+    assert_eq!(result["state"], "merged_artifact_observed");
+    assert_eq!(result["changed_completion"], false);
+    assert_eq!(f.inspect().next, ["ui", "backend", "docs"]);
+    assert_eq!(std::fs::read_to_string(&f.source).unwrap(), source);
+    assert_eq!(f.starts.load(Ordering::SeqCst), 0);
+
+    let closed = f
+        .service
+        .inspect_roadmap_evidence_with(&request, |_, _| Ok(("CLOSED".into(), None)))
+        .unwrap();
+    assert_eq!(closed["state"], "closed_without_recorded_merge");
+    let stale = f
+        .service
+        .inspect_roadmap_evidence_with(&request, |_, _| Ok(("MERGED".into(), Some("a".repeat(40)))))
+        .unwrap();
+    assert_eq!(stale["state"], "merge_commit_changed");
+
+    f.git(&[
+        "remote",
+        "set-url",
+        "reviewed",
+        "https://github.com/owner/changed",
+    ]);
+    assert!(
+        f.service
+            .inspect_roadmap_evidence_with(&request, |_, _| {
+                panic!("changed repository cannot reach the reader")
+            })
+            .is_err()
+    );
+    f.git(&[
+        "remote",
+        "set-url",
+        "reviewed",
+        "https://github.com/owner/app",
+    ]);
+    std::fs::write(&f.source, format!("{source}\n## Changed\n")).unwrap();
+    assert!(
+        f.service
+            .inspect_roadmap_evidence_with(&request, |_, _| {
+                panic!("stale source cannot reach the reader")
+            })
+            .is_err()
+    );
+}
+
+#[test]
 fn inspection_and_three_task_proposal_are_inert_and_use_exact_existing_graph_contracts() {
     let f = fixture();
     f.service.set_trust_actions(true);

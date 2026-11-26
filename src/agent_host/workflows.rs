@@ -88,7 +88,9 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
     let need =
         |what: &str| ControlReply::error("usage", format!("agent workflow {command} needs {what}"));
     match command {
-        "roadmap-inspect" | "roadmap-plan" => roadmap::handle(svc, command, value),
+        "roadmap-inspect" | "roadmap-plan" | "roadmap-evidence" => {
+            roadmap::handle(svc, command, value)
+        }
         "list" => ControlReply::done(summary(&store).to_string()),
         "dir" => ControlReply::done(store.dir().display().to_string()),
         "show" if value.is_empty() => need("a workflow id"),

@@ -806,11 +806,14 @@ fn again_section(ui: &Ui, p: Paint, id: u64, layer: &mut Vec<El>) -> El {
         }
         Some((_, Err(error))) => {
             section = section.child(
-                text(tr_fill("Could not transcribe again: {}", tr(error)))
-                    .key("again-error")
-                    .font(super::controls::DESCRIPTION)
-                    .color(p.muted())
-                    .wrap(),
+                text(tr_fill(
+                    "Could not transcribe again: {}",
+                    &crate::desktop::i18n::tr_owned(error),
+                ))
+                .key("again-error")
+                .font(super::controls::DESCRIPTION)
+                .color(p.muted())
+                .wrap(),
             );
         }
         None => {}

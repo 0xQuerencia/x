@@ -142,6 +142,51 @@ impl Manager {
         Ok(())
     }
 
+    pub(crate) fn has_github_remote(
+        &self,
+        project: &Project,
+        repository: &str,
+    ) -> Result<bool, String> {
+        self.verify_project(project)?;
+        let Ok(config) = git(
+            &project.root,
+            &["config", "--local", "--get-regexp", r"^remote\..+\.url$"],
+        ) else {
+            return Ok(false);
+        };
+        Ok(config.lines().any(|line| {
+            let Some((_, url)) = line.split_once(' ') else {
+                return false;
+            };
+            let slug = [
+                "https://github.com/",
+                "git@github.com:",
+                "ssh://git@github.com/",
+            ]
+            .into_iter()
+            .find_map(|prefix| url.strip_prefix(prefix));
+            slug.is_some_and(|slug| {
+                slug.strip_suffix(".git")
+                    .unwrap_or(slug)
+                    .eq_ignore_ascii_case(repository)
+            })
+        }))
+    }
+
+    pub(crate) fn has_ancestor(
+        &self,
+        project: &Project,
+        base: &str,
+        commit: &str,
+    ) -> Result<bool, String> {
+        self.validate_base(project, base)?;
+        if !valid_commit(commit) {
+            return Err("An exact full commit is required".into());
+        }
+        let args = ["merge-base", "--is-ancestor", commit, base];
+        Ok(git(&project.root, &args).is_ok())
+    }
+
     /// Resolve only an independently observed output from this exact run/project.
     /// Persisted JSON is historical evidence, never authority to select a checkout.
     pub(crate) fn validate_artifact(
