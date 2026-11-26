@@ -25,6 +25,8 @@ mod inventory;
 mod mixed;
 mod reconcile;
 mod renewal;
+pub use renewal::PermissionWait;
+pub(super) use renewal::permission_waits;
 
 const WORKTREE_FOLDER: &str = "X Worktrees";
 const PARALLEL_WORKERS: usize = 2;
