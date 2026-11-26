@@ -355,8 +355,8 @@ impl WindowsDesktopHost {
 
     fn model_ready(&self) -> bool {
         let model = crate::transcription::models::definition(self.settings.transcription.model);
-        crate::transcription::models::is_installed(model, &self.settings.transcription.language)
-            && crate::transcription::models::is_verified(model)
+        crate::transcription::models::is_installed(&model, &self.settings.transcription.language)
+            && crate::transcription::models::is_verified(&model)
     }
 
     pub(crate) fn start(&mut self) {
