@@ -17,6 +17,7 @@ use crate::workflows::recovery::{Claim, Journal, State};
 use crate::workflows::scheduler::{self, JobStops, NodeUpdate, Outcome};
 use crate::worktrees::Manager;
 
+use super::corrections::Binding;
 use super::edit::{step, task};
 use super::{AuditKind, Cancellation, Phase, Review, Service, Task, audit_best_effort, busy, emit};
 
@@ -49,6 +50,7 @@ pub(super) struct PendingGraph {
     journal: Arc<Journal>,
     jobs: Vec<Option<PlannedJob>>,
     desktop: Vec<Prepared>,
+    correction: Option<Binding>,
 }
 
 impl PendingGraph {
@@ -206,6 +208,19 @@ impl Service {
         id: &str,
         pinned: Option<&Project>,
     ) -> Result<Task, String> {
+        let graph = self.workflow_store().get_graph(id)?;
+        if graph.id != id {
+            return Err("The workflow file has a different ID".into());
+        }
+        self.plan_graph_review(graph, pinned, None)
+    }
+
+    pub(super) fn plan_graph_review(
+        &self,
+        graph: Graph,
+        pinned: Option<&Project>,
+        correction: Option<Binding>,
+    ) -> Result<Task, String> {
         let phase = self.lock().phase;
         if phase.is_busy() {
             return Err(busy(phase));
@@ -219,13 +234,10 @@ impl Service {
         let support = dir
             .parent()
             .ok_or("Could not locate X's local data directory")?;
-        let graph = self.workflow_store().get_graph(id)?;
-        if graph.id != id {
-            return Err("The workflow file has a different ID".into());
-        }
         let base = home.join(WORKTREE_FOLDER);
         let manager = Arc::new(Manager::new(base.clone(), home.clone()));
         let registry = Registry::new(support.to_path_buf(), home.clone());
+        let journal = Arc::new(Journal::new(support.join("workflow-journal")));
         let desktop =
             desktop_exec::prepare(&graph, self.machine().as_ref(), &self.workflow_config())?;
         let mut projects = HashMap::<String, (Project, String)>::new();
@@ -280,7 +292,12 @@ impl Service {
                 }) {
                     return Err("The selected project changed while preparing the workflow".into());
                 }
-                let commit = manager.starting_commit(&project)?;
+                let commit = if let Some(binding) = &correction {
+                    binding.validate_source(&manager, &project, &journal)?;
+                    binding.commit.clone()
+                } else {
+                    manager.starting_commit(&project)?
+                };
                 super::roadmap::validate_source(&graph, &project, &commit, &home)?;
                 projects.insert(project_id.clone(), (project, commit));
             }
@@ -346,8 +363,14 @@ impl Service {
         let source_note = graph.roadmap.as_ref().map_or_else(String::new, |source| {
             format!(" · Markdown source {} (SHA-256 {}), roadmap {} tasks {}. Completion markers are author-supplied; semantic code/PR matching is not performed.", source.path.display(), source.sha256, source.roadmap_id, source.tasks.iter().map(|task| task.task_id.as_str()).collect::<Vec<_>>().join(", "))
         });
+        let correction_note = correction.as_ref().map_or_else(String::new, |binding| {
+            format!(
+                " · correction {}/2 of failure {}/{} at {}",
+                binding.attempt, binding.source_run, binding.source_node, binding.commit
+            )
+        });
         let preview = format!(
-            "Run reviewed workflow {} with coding checkouts in {} (queued jobs may start for 30 minutes after approval; desktop steps reacquire input and recheck exact targets){source_note}",
+            "Run reviewed workflow {} with coding checkouts in {} (queued jobs may start for 30 minutes after approval; desktop steps reacquire input and recheck exact targets){source_note}{correction_note}",
             graph.name,
             base.display()
         );
@@ -359,9 +382,10 @@ impl Service {
             base,
             manager,
             registry,
-            journal: Arc::new(Journal::new(support.join("workflow-journal"))),
+            journal,
             jobs,
             desktop,
+            correction,
         });
         state.phase = Phase::AwaitingApproval;
         state.review = Review::Required;
@@ -420,9 +444,10 @@ impl Service {
         let result = self.run_approved_graph(&workflow, stop);
         match result {
             Ok(report) => {
-                if let Err(error) = self
-                    .workflow_store()
-                    .record_graph_last(&workflow.graph.id, &report)
+                if workflow.correction.is_none()
+                    && let Err(error) = self
+                        .workflow_store()
+                        .record_graph_last(&workflow.graph.id, &report)
                 {
                     self.emit(
                         "warning",
@@ -509,6 +534,20 @@ impl Service {
             }
         }
         stop.check()?;
+        if let Some(binding) = &workflow.correction {
+            let project = workflow
+                .jobs
+                .iter()
+                .flatten()
+                .find(|job| job.project.id == binding.project_id)
+                .ok_or("The correction project is missing")?;
+            binding.validate_source(&workflow.manager, &project.project, &workflow.journal)?;
+            stop.check()?;
+            self.corrections
+                .lock()
+                .map_err(|_| "Correction history is unavailable")?
+                .consume(binding)?;
+        }
         if workflow.jobs.iter().any(Option::is_some) {
             match std::fs::create_dir(&workflow.base) {
                 Ok(()) => {}

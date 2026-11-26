@@ -83,6 +83,14 @@ rune_ui::agent::composer::tests::render_native_work_composer_light_and_dark --
 no GPU or software Vulkan adapter is available; it does not silently claim a
 visual pass. These component renders supplement the full Rune golden suite.
 
+## Correct an observed failed test (B14)
+
+A failing graph test can expose its bounded stdout/stderr tail in a local-only, in-memory failure review. Select the same registered project and inspect the exact failed run/node from workflow claims with `hex agent workflow correction-preview <run-id>/<node-id>`. Then enter an explicit owner correction goal with `hex agent workflow plan-correction <run-id>/<node-id> "Fix the failing assertion"`. The ordinary task review shows the failed commit, OpenCode goal, isolated checkout and the same fixed test suite. Approve the new task separately; merely reading the failure or planning does not launch work.
+
+At dispatch, X independently rechecks the recorded failing test, worktree identity, clean inputs and immutable commit. The correction writer starts at that exact failed commit and must produce a changed descendant commit before a fresh test node can retest it. No automatic integration, remote push or silent retry is authorized. The failure text remains untrusted and local; only the explicit reviewed goal is sent. A live chain permits at most two correction attempts, one approval per source failure. Restart, a stale source, or the 30-minute review retention limit requires a new independently reviewed task, not replay. The in-memory review holds at most 16 results and is not restored from journal history.
+
+Fixed suites use the existing owned process guard. Linux and macOS retain the project lease until the launched process group is independently observed stopped, and Windows uses a private Job. Each output stream retains at most 8,192 input bytes, and the capture loop closes its pipes on Stop, timeout or read error. Process groups cover members that stay in the owned group. The Git and Cargo fixture exercises real descendant commits, passing retests, failed attempts, stale source and local-only diagnostics. The native correction panel and installed-provider acceptance remain pending.
+
 ## Explicit mixed Actions and Work proposals (C09)
 
 In Actions mode, say or type `open VS Code then ask OpenCode to fix the UI then run cargo tests`, or use the explicit `plan mixed` prefix. X builds a bounded version-4 graph using the selected registered project. It accepts supported open/focus actions, one fresh OpenCode writer and optionally one fixed test suite. Every clause must be understood; an unsupported clause rejects the proposal. Following steps require verified predecessor outcomes, and tests consume the exact committed coding artifact. The ordinary graph review is mandatory even in Autonomous mode. The proposal itself starts no providers, worktrees or desktop actions.

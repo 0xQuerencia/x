@@ -38,6 +38,54 @@ pub struct TestEvidence {
     pub observed_at: u64,
 }
 
+/// A short local-only tail of each independently captured output stream.
+/// This is untrusted test text, not instructions or authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct FailureExcerpt {
+    pub stdout: String,
+    pub stderr: String,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+}
+
+/// A proposed correction of a specific observed test failure, not a grant.
+/// This value is not persisted or sent to a provider by the test runner.
+#[derive(Clone, Debug, Serialize)]
+pub struct CorrectionDraft {
+    pub project_id: uuid::Uuid,
+    pub run_id: uuid::Uuid,
+    pub node_id: String,
+    pub commit: String,
+    pub suite: Suite,
+    pub excerpt: FailureExcerpt,
+}
+
+impl CorrectionDraft {
+    /// The operator must review again if any checkout identity or input changed.
+    /// This check alone never authorizes a correction or retest.
+    pub fn validate_source(
+        &self,
+        manager: &Manager,
+        project: &Project,
+        worktree: &OwnedWorktree,
+    ) -> std::result::Result<(), String> {
+        if self.project_id != project.id
+            || self.run_id != worktree.run_id()
+            || self.node_id != worktree.task_id()
+            || self.commit != worktree.start_commit()
+        {
+            return Err("The reviewed failure belongs to a different checkout".into());
+        }
+        manager.verify_unchanged(project, worktree)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TestReport {
+    pub verification: Verification,
+    pub correction: Option<CorrectionDraft>,
+}
+
 impl TestEvidence {
     pub(crate) fn valid(&self) -> bool {
         self.observed_at > 0 && crate::worktrees::valid_commit(&self.commit)
@@ -107,6 +155,29 @@ pub fn verify_approved(
     )
 }
 
+/// Run the same approved test and return a local correction preview only when
+/// a completed process failed at the exact unchanged checkout.
+pub fn verify_approved_report(
+    manager: &Manager,
+    project: &Project,
+    worktree: &OwnedWorktree,
+    suite: Suite,
+    grants: &Grants,
+    receipt: &Receipt,
+    stop: &Cancellation,
+) -> std::result::Result<TestReport, String> {
+    verify_report_with(
+        manager,
+        project,
+        worktree,
+        suite,
+        grants,
+        receipt,
+        stop,
+        &SystemRunner,
+    )
+}
+
 /// Exact approval scope shared with the native owner-approval path.
 /// Changing the project, run, task, checkout, or test preset changes the scope.
 pub(crate) fn scope_for_suite(project: &Project, worktree: &OwnedWorktree, suite: Suite) -> Scope {
@@ -123,13 +194,18 @@ pub(crate) fn scope_for_suite(project: &Project, worktree: &OwnedWorktree, suite
     }
 }
 
+struct ProcessResult {
+    success: bool,
+    excerpt: FailureExcerpt,
+}
+
 trait Runner {
     fn run(
         &self,
         workspace: &Path,
         suite: Suite,
         stop: &Cancellation,
-    ) -> std::result::Result<bool, String>;
+    ) -> std::result::Result<ProcessResult, String>;
 }
 
 struct SystemRunner;
@@ -140,7 +216,7 @@ impl Runner for SystemRunner {
         workspace: &Path,
         suite: Suite,
         stop: &Cancellation,
-    ) -> std::result::Result<bool, String> {
+    ) -> std::result::Result<ProcessResult, String> {
         let (program, args) = suite.command();
         let mut command = Command::new(program);
         command
@@ -154,9 +230,16 @@ impl Runner for SystemRunner {
             .env_remove("PYTHONSTARTUP")
             .env_remove("RUSTC_WRAPPER")
             .env_remove("CARGO_TARGET_DIR");
-        crate::desktop::capture_scoped(&mut command, MAX_TEST_TIME, Some(stop))
-            .map(|(success, _output)| success)
-            .map_err(|_| "The approved test process did not finish reliably".into())
+        let output = crate::harness::process::capture_test(&mut command, MAX_TEST_TIME, stop)?;
+        Ok(ProcessResult {
+            success: output.success,
+            excerpt: FailureExcerpt {
+                stdout: output.stdout.0,
+                stderr: output.stderr.0,
+                stdout_truncated: output.stdout.1,
+                stderr_truncated: output.stderr.1,
+            },
+        })
     }
 }
 
@@ -172,6 +255,23 @@ fn verify_with(
     stop: &Cancellation,
     runner: &dyn Runner,
 ) -> std::result::Result<Verification, String> {
+    verify_report_with(
+        manager, project, worktree, suite, grants, receipt, stop, runner,
+    )
+    .map(|report| report.verification)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_report_with(
+    manager: &Manager,
+    project: &Project,
+    worktree: &OwnedWorktree,
+    suite: Suite,
+    grants: &Grants,
+    receipt: &Receipt,
+    stop: &Cancellation,
+    runner: &dyn Runner,
+) -> std::result::Result<TestReport, String> {
     if stop.requested() {
         return Err("Stopped before launching project tests".into());
     }
@@ -186,18 +286,33 @@ fn verify_with(
     let status = if stop.requested() || manager.verify_unchanged(project, worktree).is_err() {
         Status::Unknown
     } else {
-        match reported {
-            Ok(true) => Status::Passed,
-            Ok(false) => Status::Failed,
+        match &reported {
+            Ok(process) if process.success => Status::Passed,
+            Ok(_) => Status::Failed,
             Err(_) => Status::Unknown,
         }
     };
-    evaluate(
+    let verification = evaluate(
         &format!("{}-{}", worktree.run_id(), worktree.task_id()),
         suite,
         status,
         unix_now(),
-    )
+    )?;
+    let correction = match (status, reported) {
+        (Status::Failed, Ok(process)) => Some(CorrectionDraft {
+            project_id: project.id,
+            run_id: worktree.run_id(),
+            node_id: worktree.task_id().to_owned(),
+            commit: worktree.start_commit().to_owned(),
+            suite,
+            excerpt: process.excerpt,
+        }),
+        _ => None,
+    };
+    Ok(TestReport {
+        verification,
+        correction,
+    })
 }
 
 fn evaluate(
@@ -262,10 +377,56 @@ mod tests {
             _workspace: &Path,
             _suite: Suite,
             _stop: &Cancellation,
-        ) -> std::result::Result<bool, String> {
+        ) -> std::result::Result<ProcessResult, String> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.result.clone()
+            self.result.clone().map(|success| ProcessResult {
+                success,
+                excerpt: FailureExcerpt {
+                    stdout: "test failure".into(),
+                    stderr: "diagnostic".into(),
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                },
+            })
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observed_failure_proposes_only_the_exact_checkout_and_suite() {
+        let (_temp, project, manager, owned) = fixture();
+        let (grants, receipt) = approval(&project, &owned, Suite::CargoAgent);
+        let runner = MockRunner {
+            result: Ok(false),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let report = verify_report_with(
+            &manager,
+            &project,
+            &owned,
+            Suite::CargoAgent,
+            &grants,
+            &receipt,
+            &Cancellation::default(),
+            &runner,
+        )
+        .unwrap();
+        let mut correction = report.correction.unwrap();
+        assert_eq!(correction.commit, owned.start_commit());
+        assert_eq!(correction.suite, Suite::CargoAgent);
+        assert_eq!(correction.excerpt.stderr, "diagnostic");
+        assert!(
+            correction
+                .validate_source(&manager, &project, &owned)
+                .is_ok()
+        );
+        correction.commit = "0".repeat(40);
+        assert!(
+            correction
+                .validate_source(&manager, &project, &owned)
+                .is_err()
+        );
+        assert_eq!(runner.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
