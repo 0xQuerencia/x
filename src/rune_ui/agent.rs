@@ -1087,7 +1087,9 @@ fn task_card(
         } else if step.status == "stopping" {
             line.push_str(" · Stop requested");
         }
-        if !step.risk.is_empty() && step.status == "pending" {
+        if !step.risk.is_empty()
+            && matches!(step.status.as_str(), "pending" | "waiting_for_permission")
+        {
             line.push_str(&format!("  ·  {}", step.risk));
         }
         if !step.detail.is_empty()
@@ -1102,6 +1104,14 @@ fn task_card(
                 .color(color)
                 .wrap(),
         );
+        if step.status == "waiting_for_permission" {
+            card = card.child(runs::permission_review(
+                p,
+                task.id,
+                index,
+                &snapshot.permission_waits,
+            ));
+        }
         if snapshot.cancellable_coding_jobs.contains(&index) {
             let task_id = task.id;
             card = card.child(button(

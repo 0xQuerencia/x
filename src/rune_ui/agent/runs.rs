@@ -6,7 +6,47 @@ use super::{step_glyph, task_label};
 use crate::agent_host;
 use crate::rune_ui::Ui;
 use crate::rune_ui::controls::{ButtonKind, DESCRIPTION, Paint, button};
-use x_agent::service::Snapshot;
+use x_agent::service::{PermissionWait, Snapshot};
+
+pub(super) fn permission_review(
+    p: Paint,
+    task: u64,
+    index: usize,
+    reviews: &[PermissionWait],
+) -> El {
+    let mut group = col()
+        .key(format!("permission-review-{task}-{index}"))
+        .gap(4.0);
+    if let Some(review) = reviews.iter().find(|review| review.step_index == index) {
+        let token = review.review_token.clone();
+        return group
+            .child(
+                text("This job is waiting for renewed approval.")
+                    .font(DESCRIPTION)
+                    .color(p.muted())
+                    .wrap(),
+            )
+            .child(button(
+                p,
+                &format!("renew-job-{task}-{index}"),
+                &format!("Renew approval for job {}", index + 1),
+                ButtonKind::Secondary,
+                move |_: &mut Ui, _| {
+                    let service = agent_host::service();
+                    if let Err(error) = service.renew_coding_permission(task, &token) {
+                        service.emit("error", &error);
+                    }
+                },
+            ));
+    }
+    group = group.child(
+        text("The approval review expired or was revoked.")
+            .font(DESCRIPTION)
+            .color(p.muted())
+            .wrap(),
+    );
+    group
+}
 
 pub(super) fn panel(p: Paint, snapshot: &Snapshot) -> El {
     let mut panel = col().key("agent-background-runs").gap(10.0);
@@ -78,7 +118,11 @@ pub(super) fn panel(p: Paint, snapshot: &Snapshot) -> El {
                         "{} {} · {}",
                         step_glyph(&step.status),
                         step.title,
-                        step.status
+                        if step.status == "waiting_for_permission" {
+                            "waiting for permission"
+                        } else {
+                            &step.status
+                        }
                     ))
                     .font(DESCRIPTION)
                     .color(if step.status == "failed" {
@@ -95,6 +139,17 @@ pub(super) fn panel(p: Paint, snapshot: &Snapshot) -> El {
                         .color(p.muted())
                         .wrap(),
                 );
+            }
+            if step.status == "waiting_for_permission" {
+                if !step.risk.is_empty() {
+                    line = line.child(
+                        text(step.risk.clone())
+                            .font(DESCRIPTION)
+                            .color(p.muted())
+                            .wrap(),
+                    );
+                }
+                line = line.child(permission_review(p, id, index, &run.permission_waits));
             }
             if run.cancellable_coding_jobs.contains(&index) {
                 line = line.child(button(

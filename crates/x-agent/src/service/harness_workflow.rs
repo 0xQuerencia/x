@@ -24,6 +24,8 @@ use super::{AuditKind, Cancellation, Phase, Review, Service, Task, audit_best_ef
 mod inventory;
 mod mixed;
 mod renewal;
+pub use renewal::PermissionWait;
+pub(super) use renewal::permission_waits;
 
 const WORKTREE_FOLDER: &str = "X Worktrees";
 const PARALLEL_WORKERS: usize = 2;
