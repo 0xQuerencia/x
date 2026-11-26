@@ -265,25 +265,33 @@ fn locale_from_env(lc_all: Option<&str>, lc_messages: Option<&str>, lang: Option
         .to_owned()
 }
 
-/// Translate one UI string. Returns the input unchanged for English or for
-/// strings missing from the table, so dynamic values pass through safely.
-pub(crate) fn tr(english: &str) -> &str {
+/// Translate a static UI label. Dynamically formatted text uses `tr_owned`.
+pub(crate) fn tr(english: &'static str) -> &'static str {
     branded(lookup(english))
+}
+
+pub(crate) fn tr_owned(english: &str) -> String {
+    let text = lookup(english);
+    if crate::app_paths::is_x_build() && text.contains("Hex") {
+        text.replace("Hex", "X")
+    } else {
+        text.to_owned()
+    }
 }
 
 /// X builds show "X" wherever the interface says "Hex". The few distinct strings
 /// that contain the word are rewritten once and kept for the life of the process.
-fn branded(text: &str) -> &str {
+fn branded(text: &'static str) -> &'static str {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     if !crate::app_paths::is_x_build() || !text.contains("Hex") {
         return text;
     }
-    static SEEN: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    static SEEN: OnceLock<Mutex<HashMap<&'static str, &'static str>>> = OnceLock::new();
     let Ok(mut seen) = SEEN.get_or_init(Default::default).lock() else {
         return text;
     };
-    seen.entry(text.to_owned())
+    seen.entry(text)
         .or_insert_with(|| Box::leak(text.replace("Hex", "X").into_boxed_str()))
 }
 
@@ -308,13 +316,13 @@ fn lookup(english: &str) -> &str {
 
 /// Translate a `{}` template and substitute the dynamic value, keeping
 /// language-specific word order intact.
-pub(crate) fn tr_fill(template: &str, value: &str) -> String {
+pub(crate) fn tr_fill(template: &'static str, value: &str) -> String {
     tr(template).replace("{}", value)
 }
 
 /// Translate a template with named `{name}` placeholders and fill them, so
 /// each language can order the values as its grammar needs.
-pub(crate) fn tr_named(template: &str, values: &[(&str, &str)]) -> String {
+pub(crate) fn tr_named(template: &'static str, values: &[(&str, &str)]) -> String {
     values
         .iter()
         .fold(tr(template).to_string(), |text, (name, value)| {
