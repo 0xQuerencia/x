@@ -259,25 +259,43 @@ impl Service {
         }
     }
 
-    pub(super) fn try_reacquire_graph_project(&self, task_id: u64, root: &std::path::Path) -> bool {
-        let Ok(mut coordinator) = self.coordinator.lock() else {
-            return false;
-        };
+    /// None means another run owns this project. True means a released
+    /// reservation was reacquired and the recorded project must be rechecked.
+    pub(super) fn try_reacquire_graph_project(
+        &self,
+        task_id: u64,
+        root: &std::path::Path,
+    ) -> Option<bool> {
+        let mut coordinator = self.coordinator.lock().ok()?;
+        if coordinator
+            .leases
+            .get(&task_id)?
+            .iter()
+            .any(|path| path == root)
+        {
+            return Some(false);
+        }
         if coordinator.leases.iter().any(|(owner, held)| {
             *owner != task_id
                 && held
                     .iter()
                     .any(|path| root.starts_with(path) || path.starts_with(root))
         }) {
-            return false;
+            return None;
         }
-        let Some(roots) = coordinator.leases.get_mut(&task_id) else {
-            return false;
-        };
-        if !roots.iter().any(|path| path == root) {
-            roots.push(root.to_path_buf());
+        coordinator
+            .leases
+            .get_mut(&task_id)?
+            .push(root.to_path_buf());
+        Some(true)
+    }
+
+    pub(super) fn release_graph_project(&self, task_id: u64, root: &std::path::Path) {
+        if let Ok(mut coordinator) = self.coordinator.lock()
+            && let Some(roots) = coordinator.leases.get_mut(&task_id)
+        {
+            roots.retain(|held| held != root);
         }
-        true
     }
 
     fn for_run(&self, run: &Run) -> Self {

@@ -229,10 +229,17 @@ fn permission_wait_releases_only_idle_projects_and_requires_reacquisition() {
     assert!(!service.workers_finished());
     assert!(service.reserve_roots(102, vec![roots[0].clone()]).is_err());
     let independent = service.reserve_roots(102, vec![roots[1].clone()]).unwrap();
-    assert!(!service.try_reacquire_graph_project(101, &roots[1]));
+    assert_eq!(service.try_reacquire_graph_project(101, &roots[1]), None);
 
     drop(independent);
-    assert!(service.try_reacquire_graph_project(101, &roots[1]));
+    assert_eq!(
+        service.try_reacquire_graph_project(101, &roots[1]),
+        Some(true)
+    );
+    assert_eq!(
+        service.try_reacquire_graph_project(101, &roots[1]),
+        Some(false)
+    );
     assert!(service.reserve_roots(103, vec![roots[1].clone()]).is_err());
     drop(graph);
     assert!(service.workers_finished());
