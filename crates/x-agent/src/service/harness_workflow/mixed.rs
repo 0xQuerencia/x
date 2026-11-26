@@ -94,6 +94,8 @@ impl Service {
             drop(state);
             stop.check()?;
             let service = self.clone();
+            let failure_service = self.clone();
+            let correction = workflow.correction.clone();
             let coding = ApprovedHarnessExecutor::new(
                 &workflow.graph,
                 run,
@@ -106,6 +108,9 @@ impl Service {
                     "workflow_activity",
                     &format!("{run} / {node} / attempt {attempt}: {}", kind.as_str()),
                 );
+            }))
+            .with_failure(Arc::new(move |draft| {
+                failure_service.remember_correction(draft, correction.as_ref());
             }));
             let service = self.clone();
             let acquire: AcquireInput = Arc::new(move |stop| {
