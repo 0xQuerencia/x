@@ -916,6 +916,56 @@ fn voice_flow_plans_from_the_hex_transcript_and_waits_for_approval() {
 }
 
 #[test]
+fn stop_after_transcription_prevents_the_automatic_desktop_plan() {
+    use std::sync::mpsc::{self, Receiver, Sender};
+
+    struct Preparing {
+        entered: Sender<()>,
+        release: Mutex<Receiver<()>>,
+    }
+    impl Launcher for Preparing {
+        fn launch(&self, _: &Action) -> Result<String, String> {
+            panic!("a stopped transcript cannot launch a desktop action");
+        }
+        fn prepare_window(
+            &self,
+            _: &crate::wm::Request,
+        ) -> Result<Option<crate::wm::WindowTarget>, String> {
+            self.entered.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap();
+            Ok(None)
+        }
+    }
+
+    let stt = Arc::new(FakeStt::default());
+    *stt.transcript.lock().unwrap() = Some(Ok("go to workspace three".into()));
+    let (entered, in_preparation) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let service = Service::new(
+        stt,
+        Arc::new(Preparing {
+            entered,
+            release: Mutex::new(released),
+        }),
+        None,
+    );
+    service.set_autonomy_mode(AutonomyMode::Autonomous);
+    service.voice_start(Mode::Actions).unwrap();
+    service.voice_stop().unwrap();
+    in_preparation.recv_timeout(Duration::from_secs(2)).unwrap();
+    service.cancel_foreground();
+    release.send(()).unwrap();
+    wait_for(&service, |_| service.lock().voice_route.is_none());
+    let snapshot = service.snapshot(0);
+    assert_eq!(snapshot.phase, Phase::Idle);
+    assert!(snapshot.task.is_none());
+}
+
+#[test]
 fn no_speech_returns_to_idle() {
     let (s, _, _) = rig();
     s.voice_start(Mode::Actions).unwrap();

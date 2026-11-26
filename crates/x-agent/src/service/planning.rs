@@ -11,6 +11,7 @@ impl Service {
         text: &str,
         cmd: &context::commands::Command,
         source: InputSource,
+        voice_route: Option<&Cancellation>,
     ) -> Result<Task, String> {
         {
             let s = self.lock();
@@ -45,6 +46,7 @@ impl Service {
                     browser_share: false,
                 }),
                 require_review: private_context,
+                voice_route: voice_route.cloned(),
                 ..PlanOptions::default()
             },
         )?;
@@ -76,6 +78,7 @@ impl Service {
         &self,
         text: &str,
         smart: bool,
+        voice_route: Option<&Cancellation>,
     ) -> Result<Option<(Vec<Action>, ModelPlanning)>, String> {
         let Some(planner) = self.planner.lock().ok().and_then(|p| p.clone()) else {
             return Ok(None);
@@ -85,6 +88,9 @@ impl Service {
             let mut state = self.lock();
             if state.phase.is_busy() || state.model_stop.is_some() {
                 return Ok(None);
+            }
+            if let Some(route) = voice_route {
+                route.check()?;
             }
             state.model_stop = Some(stop.clone());
         }
@@ -147,17 +153,17 @@ impl Service {
     }
 
     pub fn plan(&self, text: &str, mode: Mode) -> Result<Task, String> {
-        self.plan_with(text, mode, false, InputSource::Text)
+        self.plan_with(text, mode, false, InputSource::Text, None)
     }
 
     /// Voice recorded by an explicit push-to-talk gesture.
     pub fn plan_spoken(&self, text: &str, mode: Mode) -> Result<Task, String> {
-        self.plan_with(text, mode, false, InputSource::PushToTalk)
+        self.plan_with(text, mode, false, InputSource::PushToTalk, None)
     }
 
     /// Ambient audio after the wake word is never treated like push-to-talk.
     pub fn plan_hands_free(&self, text: &str, mode: Mode) -> Result<Task, String> {
-        self.plan_with(text, mode, false, InputSource::HandsFree)
+        self.plan_with(text, mode, false, InputSource::HandsFree, None)
     }
 
     /// Wake-free audio can propose one local desktop action for owner review.
@@ -197,7 +203,7 @@ impl Service {
     /// Like `plan`, but the model also decides whether the speech was a command at all;
     /// `Err(NOT_A_COMMAND)` means it was dictation and nothing was planned.
     pub fn plan_smart(&self, text: &str) -> Result<Task, String> {
-        self.plan_with(text, Mode::Actions, true, InputSource::PushToTalk)
+        self.plan_with(text, Mode::Actions, true, InputSource::PushToTalk, None)
     }
 
     pub(super) fn plan_with(
@@ -206,7 +212,11 @@ impl Service {
         mode: Mode,
         smart: bool,
         source: InputSource,
+        voice_route: Option<&Cancellation>,
     ) -> Result<Task, String> {
+        if let Some(route) = voice_route {
+            route.check()?;
+        }
         if self.request_stop_from_text(text) {
             return self
                 .lock()
@@ -244,6 +254,7 @@ impl Service {
                     source,
                     session,
                     work_harness,
+                    voice_route: voice_route.cloned(),
                     ..PlanOptions::default()
                 },
             );
@@ -260,7 +271,7 @@ impl Service {
                     let explain = Command::Transform(Transform::Explain, Scope::Selection);
                     return self.plan_edit(text.trim(), explain);
                 }
-                return self.plan_contextual(text.trim(), &cmd, source);
+                return self.plan_contextual(text.trim(), &cmd, source, voice_route);
             }
             if let Some(cmd) = crate::edit::commands::parse(&tools::strip_wake_word(text)) {
                 use crate::edit::commands::Command;
@@ -287,7 +298,7 @@ impl Service {
             && tools::plan_rules(text).is_none()
             && let Some(found) = self.match_workflow(text)
         {
-            return self.plan_workflow_from(text.trim(), found?, source);
+            return self.plan_workflow_from(text.trim(), found?, source, voice_route);
         }
         let mut preset = None;
         let mut model_plan = None;
@@ -300,7 +311,8 @@ impl Service {
                 Origin::Decider
             };
             if preset.is_none()
-                && let Some((actions, planning)) = self.model_plan(text.trim(), smart)?
+                && let Some((actions, planning)) =
+                    self.model_plan(text.trim(), smart, voice_route)?
             {
                 preset = Some(actions);
                 model_plan = Some(planning);
@@ -313,6 +325,7 @@ impl Service {
             origin,
             source,
             model_plan,
+            voice_route: voice_route.cloned(),
             ..PlanOptions::default()
         };
         if let Some([Action::Session { goal }]) = preset.as_deref() {
@@ -430,6 +443,9 @@ impl Service {
         let mut s = self.lock();
         if s.phase.is_busy() {
             return Err(busy(s.phase));
+        }
+        if let Some(route) = &options.voice_route {
+            route.check()?;
         }
         if let Some(planning) = &options.model_plan {
             planning.stop.check()?;

@@ -136,7 +136,9 @@ ordinary dictation. Smart only runs after you use the shortcut.
 desktop or compositor. Dictation's own shortcut keeps working, and the two never record at
 once: X refuses to start while any task or recording of its own is in flight. After
 Stop, an outstanding transcription request must return before another Agent
-recording starts. Its late transcript is discarded. Transcription activity
+recording starts. Its late transcript is discarded. Stop also blocks a
+finished transcript from creating a new typed desktop plan while it is being
+prepared. Transcription activity
 reports status without adding the utterance to the event stream. The exact
 submitted command is still visible in the task preview.
 

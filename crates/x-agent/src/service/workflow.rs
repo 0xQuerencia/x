@@ -239,7 +239,7 @@ impl Service {
     /// Plans a run of `wf`: validates it, checks that everything it needs exists (before
     /// anything is launched), then waits for approval.
     pub fn plan_workflow(&self, text: &str, wf: Workflow) -> Result<super::Task, String> {
-        self.plan_workflow_from(text, wf, InputSource::Text)
+        self.plan_workflow_from(text, wf, InputSource::Text, None)
     }
 
     pub(super) fn plan_workflow_from(
@@ -247,6 +247,7 @@ impl Service {
         text: &str,
         wf: Workflow,
         source: InputSource,
+        voice_route: Option<&Cancellation>,
     ) -> Result<super::Task, String> {
         {
             let s = self.lock();
@@ -271,7 +272,7 @@ impl Service {
                 problems.join("; ")
             ));
         }
-        let task = self.begin_workflow_task(text, &wf, source)?;
+        let task = self.begin_workflow_task(text, &wf, source, voice_route)?;
         self.approve_if_automatic(task.id)?;
         Ok(task)
     }
@@ -288,6 +289,7 @@ impl Service {
         text: &str,
         wf: &Workflow,
         source: InputSource,
+        voice_route: Option<&Cancellation>,
     ) -> Result<super::Task, String> {
         let steps = wf
             .steps
@@ -303,6 +305,9 @@ impl Service {
         let mut s = self.lock();
         if s.phase.is_busy() {
             return Err(busy(s.phase));
+        }
+        if let Some(route) = voice_route {
+            route.check()?;
         }
         s.grants.clear();
         s.guard = None;

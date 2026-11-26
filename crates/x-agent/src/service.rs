@@ -258,7 +258,7 @@ struct State {
     stop: Cancellation,
     model_stop: Option<Cancellation>,
     voice_mode: Mode,
-    voice_draining: bool,
+    voice_route: Option<Cancellation>,
     workspace: Option<PathBuf>,
     selected_session: Option<harness::Session>,
     session_list: Option<session_targets::SessionList>,
@@ -300,6 +300,7 @@ struct PlanOptions {
     work_access: harness::WorkAccess,
     work_harness: harness::Kind,
     model_plan: Option<ModelPlanning>,
+    voice_route: Option<Cancellation>,
 }
 
 struct ModelPlanning {
@@ -395,7 +396,7 @@ impl Service {
             create_workspace: false,
             undo: vec![],
             voice_mode: Mode::Actions,
-            voice_draining: false,
+            voice_route: None,
             workspace: None,
             selected_session: None,
             session_list: None,

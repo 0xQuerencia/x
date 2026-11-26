@@ -109,6 +109,11 @@ impl Service {
                 &format!("Could not revoke pending job approvals: {error}"),
             );
         }
+        if task_id.is_none()
+            && let Some(route) = &s.voice_route
+        {
+            route.request();
+        }
         if s.model_stop.as_ref().is_some_and(Cancellation::request) {
             emit(&mut s, "info", "Stop requested for the pending plan");
         }
@@ -164,7 +169,7 @@ impl Service {
             if s.phase.is_busy() {
                 return Err(busy(s.phase));
             }
-            if s.voice_draining {
+            if s.voice_route.is_some() {
                 return Err("The previous recording is still stopping".into());
             }
             s.voice_mode = mode;
@@ -180,47 +185,62 @@ impl Service {
 
     pub fn voice_stop(&self) -> Result<(), String> {
         let _voice_control = self.lock_voice_control();
+        let route = Cancellation::default();
         let mode = {
             let mut s = self.lock();
             if s.phase != Phase::Listening {
                 return Err("Not listening".into());
             }
             set_phase(&mut s, Phase::Transcribing);
-            s.voice_draining = true;
+            s.voice_route = Some(route.clone());
             s.voice_mode
         };
         let me = self.clone();
         if let Err(error) = thread::Builder::new()
             .name("x-transcribe".into())
-            .spawn(move || me.transcribe(mode))
+            .spawn(move || me.transcribe(mode, route))
         {
             let mut s = self.lock();
-            s.voice_draining = false;
+            s.voice_route = None;
             self.discard_voice(s);
             return Err(format!("Could not finish the recording: {error}"));
         }
         Ok(())
     }
 
-    fn transcribe(&self, mode: Mode) {
+    fn transcribe(&self, mode: Mode, route: Cancellation) {
         let result = self.stt.stop_print();
         {
-            let mut s = self.lock();
-            s.voice_draining = false;
-            if s.phase != Phase::Transcribing {
-                return; // Only this worker can release its stop request.
+            let mut state = self.lock();
+            if state.phase != Phase::Transcribing || route.requested() {
+                state.voice_route = None;
+                return;
             }
             match &result {
-                Ok(_) => emit(&mut s, "heard", "Finished local transcription"),
-                Err(SttError::NoSpeech) => emit(&mut s, "info", "No speech heard"),
-                Err(_) => emit(&mut s, "error", "Local transcription failed"),
+                Ok(_) => emit(&mut state, "heard", "Finished local transcription"),
+                Err(SttError::NoSpeech) => emit(&mut state, "info", "No speech heard"),
+                Err(_) => emit(&mut state, "error", "Local transcription failed"),
             }
-            set_phase(&mut s, Phase::Idle);
+            set_phase(&mut state, Phase::Idle);
         }
         if let Ok(text) = result
-            && let Err(error) = self.plan_spoken(&text, mode)
+            && let Err(error) =
+                self.plan_with(&text, mode, false, InputSource::PushToTalk, Some(&route))
+            && !route.requested()
         {
             self.emit("error", &error);
+        }
+        self.lock().voice_route = None;
+    }
+
+    pub fn voice_cancel(&self) {
+        let _voice_control = self.lock_voice_control();
+        let state = self.lock();
+        if let Some(route) = &state.voice_route {
+            route.request();
+        }
+        if matches!(state.phase, Phase::Listening | Phase::Transcribing) {
+            self.discard_voice(state);
         }
     }
 
@@ -241,7 +261,7 @@ impl Service {
         for _ in 0..200 {
             if {
                 let state = self.lock();
-                !state.phase.is_busy() && !state.voice_draining
+                !state.phase.is_busy() && state.voice_route.is_none()
             } && self.workers_finished()
             {
                 return;
