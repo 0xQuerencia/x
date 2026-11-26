@@ -811,3 +811,6 @@ mod model_swap_tests {
         assert!(swap.poll().is_none());
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod voice_benchmark;

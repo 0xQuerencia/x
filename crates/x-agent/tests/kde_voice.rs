@@ -10,6 +10,9 @@ use x_agent::phase::Phase;
 use x_agent::service::{ActionCompletion, Mode, RealLauncher, Service};
 use x_agent::wm::{self, Cap, EditorTyping, SupportState};
 
+#[path = "support/voice_latency.rs"]
+mod voice_latency;
+
 #[test]
 #[ignore = "use scripts/smoke-x/kde-voice.sh for a disposable KWin desktop"]
 fn kde_requires_session_opt_in() {
@@ -25,7 +28,7 @@ fn kde_requires_session_opt_in() {
     );
 }
 
-fn native_workspace() -> usize {
+fn native_workspace() -> u64 {
     let output = Command::new("kdotool").arg("get_desktop").output().unwrap();
     assert!(output.status.success());
     String::from_utf8(output.stdout)
@@ -72,4 +75,11 @@ fn kde_verifies_workspace_switch_after_typed_approval() {
         thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(native_workspace(), 2);
+}
+
+#[test]
+#[ignore = "benchmark in a disposable KWin session with X_TEST_VOICE_BENCH_RUNS set"]
+fn offline_voice_path_latency() {
+    assert_eq!(std::env::var("X_TEST_ISOLATED_KDE").as_deref(), Ok("1"));
+    voice_latency::run("linux-kde-wayland", native_workspace);
 }

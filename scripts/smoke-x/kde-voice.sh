@@ -44,5 +44,9 @@ trap 'kill "$kwin" 2>/dev/null || true; wait "$kwin" 2>/dev/null || true' EXIT
 if ! gdbus wait --session --timeout 5 org.kde.KWin; then cat "$1/kwin.log" >&2; exit 1; fi
 export WAYLAND_DISPLAY=wayland-kde X_TEST_ISOLATED_KDE=1
 "$2" --ignored --exact kde_requires_session_opt_in
-X_ENABLE_EXPERIMENTAL_KDE=1 "$2" --ignored --exact kde_verifies_workspace_switch_after_typed_approval
+export X_ENABLE_EXPERIMENTAL_KDE=1
+"$2" --ignored --exact kde_verifies_workspace_switch_after_typed_approval
+if [[ -n "${X_TEST_VOICE_BENCH_RUNS:-}" ]]; then
+  "$2" --ignored --exact offline_voice_path_latency --nocapture
+fi
 SESSION

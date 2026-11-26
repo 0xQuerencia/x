@@ -15,6 +15,9 @@ use x_agent::service::{
 };
 use x_agent::tools::{EffectEvidence, EffectState, Reply};
 
+#[path = "support/voice_latency.rs"]
+mod voice_latency;
+
 struct FinishedTranscript {
     requests: Sender<()>,
     replies: Mutex<Receiver<String>>,
@@ -244,4 +247,14 @@ fn saved_workflow_inserts_literal_text_once_and_rejects_a_reused_editor() {
     assert!(failed.steps[1].detail.contains("plain text field"));
     assert_eq!(std::fs::read_to_string(output).unwrap(), literal);
     std::fs::write(home.join("close-editor"), []).unwrap();
+}
+
+#[test]
+#[ignore = "benchmark in a disposable Hyprland session with X_TEST_VOICE_BENCH_RUNS set"]
+fn offline_voice_path_latency() {
+    assert_eq!(
+        std::env::var("X_TEST_ISOLATED_HYPRLAND").as_deref(),
+        Ok("1")
+    );
+    voice_latency::run("linux-hyprland", workspace);
 }

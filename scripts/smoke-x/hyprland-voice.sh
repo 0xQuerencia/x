@@ -151,7 +151,9 @@ app.run()
 PYTHON
 chmod 700 "$scratch/bin/mousepad"
 export PATH="$scratch/bin:$PATH"
-if ! X_TEST_ISOLATED_HYPRLAND=1 "$binary" --ignored --test-threads=1 --nocapture; then
+filter=""
+if [[ -n "${X_TEST_VOICE_BENCH_RUNS:-}" ]]; then filter="offline_voice_path_latency"; fi
+if ! X_TEST_ISOLATED_HYPRLAND=1 "$binary" --ignored --test-threads=1 --nocapture "$filter"; then
   hyprctl -j clients >&2
 
   exit 1
