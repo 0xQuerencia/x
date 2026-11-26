@@ -58,6 +58,30 @@ idle → listening → transcribing → planning → [approval if required] → 
      → completed | failed | cancelled
 ```
 
+## Experimental Gemini Live talkback
+
+On Linux, enable **Gemini talkback** in Labs and run `hex agent talkback`
+from a visible terminal that reports key press and release. Supply your
+project's key via `X_GEMINI_LIVE_API_KEY`. Talkback asks for consent for each
+terminal session. Hold Space to record locally and release to send only that
+clip to Google. Space interrupts the current reply. Escape or leaving the
+terminal cancels local recording and playback. Q exits.
+
+Google may use unpaid inputs and responses to improve its products, and
+human reviewers may process them. Keep talkback free of sensitive,
+confidential, or personal information. Project quotas apply to unpaid usage.
+[Gemini terms](https://aistudio.google.com/docs/terms#unpaid-services) ·
+[Gemini rate limits](https://aistudio.google.com/docs/rate-limits)
+
+The default model is `gemini-3.8-live`. `--model` selects another Gemini Live
+model. A recording is capped at ten seconds and opens one short connection
+on release. Connection expiry, GoAway, quota and network errors return to
+quiet mode. A later key press can start a new turn. The command handles
+microphone audio and spoken responses only. Dictation and desktop actions
+use their existing paths when talkback is off or unavailable.
+[Gemini Live model](https://aistudio.google.com/docs/models/gemini-3.8-live) ·
+[Live session limits](https://aistudio.google.com/docs/live-api/session-management)
+
 ## Using it
 
 ### What execution results prove

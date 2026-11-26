@@ -99,10 +99,11 @@ pub enum Feature {
     HideMenuBarIcon,
     MovableMeetingCapsules,
     XAgent,
+    GeminiTalkback,
 }
 
 impl Feature {
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 41] = [
         Self::Meetings,
         Self::VoiceFilter,
         Self::Playground,
@@ -143,6 +144,7 @@ impl Feature {
         Self::HideMenuBarIcon,
         Self::MovableMeetingCapsules,
         Self::XAgent,
+        Self::GeminiTalkback,
     ];
 
     /// The features this OS and build have.
@@ -205,7 +207,8 @@ impl Feature {
             | Self::KeepRecordings
             | Self::HideMenuBarIcon
             | Self::MovableMeetingCapsules
-            | Self::XAgent => Audience::Everyone,
+            | Self::XAgent
+            | Self::GeminiTalkback => Audience::Everyone,
         }
     }
 
@@ -255,6 +258,7 @@ impl Feature {
             | Self::RecentDictations
             | Self::HideMenuBarIcon => cfg!(target_os = "macos"),
             Self::KeyboardModelSwitching => crate::keyboard_input_sources::available(),
+            Self::GeminiTalkback => cfg!(target_os = "linux"),
             Self::Playground
             | Self::LiveText
             | Self::VocabularyBiasing
@@ -319,6 +323,7 @@ impl Feature {
             Self::HideMenuBarIcon => "hide-menu-bar-icon",
             Self::MovableMeetingCapsules => "movable-meeting-capsules",
             Self::XAgent => "x-agent",
+            Self::GeminiTalkback => "gemini-talkback",
         }
     }
 
@@ -365,6 +370,7 @@ impl Feature {
             Self::HideMenuBarIcon => "labs.hide_menu_bar_icon",
             Self::MovableMeetingCapsules => "labs.movable_meeting_capsules",
             Self::XAgent => "labs.x_agent",
+            Self::GeminiTalkback => "labs.gemini_talkback",
         }
     }
 
@@ -470,6 +476,9 @@ impl Feature {
             Self::MovableMeetingCapsules => {
                 "Drag meeting capsules such as Meeting transcript ready out of the way; they come back in the corner you left them"
             }
+            Self::GeminiTalkback => {
+                "Enable experimental push-to-talk in `hex agent talkback`. With your consent it sends that recording to Google. Unpaid inputs and responses may be reviewed and used to improve Google products."
+            }
             Self::XAgent => {
                 "X: speak safe desktop Actions and delegate Work to OpenCode, with a visible plan, approval and Stop; normal dictation is unchanged"
             }
@@ -523,6 +532,7 @@ impl Feature {
             Self::HideMenuBarIcon => settings.labs.hide_menu_bar_icon,
             Self::MovableMeetingCapsules => settings.labs.movable_meeting_capsules,
             Self::XAgent => settings.labs.x_agent,
+            Self::GeminiTalkback => settings.labs.gemini_talkback,
         }
     }
 
@@ -571,6 +581,7 @@ impl Feature {
             &mut labs.hide_menu_bar_icon,
             &mut labs.movable_meeting_capsules,
             &mut labs.x_agent,
+            &mut labs.gemini_talkback,
         ]
     }
 
@@ -619,6 +630,7 @@ impl Feature {
             Self::HideMenuBarIcon => settings.labs.hide_menu_bar_icon = on,
             Self::MovableMeetingCapsules => settings.labs.movable_meeting_capsules = on,
             Self::XAgent => settings.labs.x_agent = on,
+            Self::GeminiTalkback => settings.labs.gemini_talkback = on,
             // Off, no shortcut keeps a key only the feature allows.
             Self::StandaloneSpecialKeys => {
                 settings.labs.standalone_special_keys = on;
