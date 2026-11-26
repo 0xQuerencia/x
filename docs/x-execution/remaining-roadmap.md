@@ -25,18 +25,18 @@ establish current native, installed-provider or physical acceptance.
 
 | Package | Work | State | Current evidence or prerequisite |
 |---|---|---|---|
-| P01 | Reconcile current source and roadmap (A01, A11, H07) | READY FOR CI | Opening source and PR reconciliation recorded in [#230](https://github.com/0xQuerencia/x/pull/230). The full original plan is unavailable locally. |
+| P01 | Reconcile current source and roadmap (A01, A11, H07) | DONE / MERGED | [#230](https://github.com/0xQuerencia/x/pull/230), merge `e4dc5a7dbeed2bd107b3ca17a8032a9a003b83b9`. Original criteria remain provisional until the source plan is supplied. |
 | P02 | Finish existing #226: exact diff/test review (B03, B11) | DONE / MERGED | [#226](https://github.com/0xQuerencia/x/pull/226), head `e155d2129ca25bc949989aec8d81d58587e01c72`, merge `45b9a7ee9ff5099fa461fc8c4133ede21ae1cef1`. |
-| P03 | Finish existing #227: correction loop (B14, A08, B04) | IN PROGRESS | [#227](https://github.com/0xQuerencia/x/pull/227), remote head `3ce5c9e1e0d11c1d8109d24ff11fa6e77abea52d`. Separate local integration worktree. Owned fixed-suite capture and the end-to-end correction chain pass locally. Latest-main integration and platform CI are pending. |
-| P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | IN PROGRESS | [#228](https://github.com/0xQuerencia/x/pull/228), remote head `c9db3353c3eb4710b52f9c5dfee1d44c2c0f8f49`. Exact integration fixture reproduced locally and passes with the local registration fix. The real 61-second predecessor fixture passed. Combined head, cross-platform CI and native review remain. |
-| P05 | Independent provider reconciliation (A02, A09, B11) | IN PROGRESS | Local exact-session lookup reuses the registered OpenCode service. Fixture verification and remaining delivery proof are pending. |
+| P03 | Finish existing #227: correction loop (B14, A08, B04) | READY FOR CI | [#227](https://github.com/0xQuerencia/x/pull/227), head `fc447845bd1c2e4a8d0b5d82732412ac755ce4b0`. Local core and sanitizer passed. Exact preview jobs tracked below. |
+| P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | READY FOR CI | [#228](https://github.com/0xQuerencia/x/pull/228), head `25909ea36576b41c490a81903ccb2e1c13ab7b6a`. Combined local tests pass. It must follow #227 in main. |
+| P05 | Independent provider reconciliation (A02, A09, B11) | IN PROGRESS | [#231](https://github.com/0xQuerencia/x/pull/231), head `12ad692d8f44d6d172eec5042bed8536106a6d6c`. Local exact OpenCode readback passes. Independent terminal-turn correlation without a durable acknowledgement remains open. |
 | P06 | Reviewed retry/resume and recovery inventory (A09, A10, B11) | NOT STARTED | See the original-ID evidence below. |
 | P07 | Native Work result review (B03, B10, B11) | NOT STARTED | See the original-ID evidence below. |
 | P08 | Native correction review (B14, B10, B11) | NOT STARTED | See the original-ID evidence below. |
-| P09 | Native queued wait, Stop and renew (A05, C02, C03, C04) | NOT STARTED | See the original-ID evidence below. |
+| P09 | Native queued wait, Stop and renew (A05, C02, C03, C04) | IN PROGRESS | Local branch `codex/x-p09-native-queued-renewal` reuses exact #228 tokens for foreground and background controls. Native visual and stale-state checks pending. |
 | P10 | Independent reviewer role and evidence (B05, B01, B04) | NOT STARTED | See the original-ID evidence below. |
 | P11 | Rich run/activity inspector (A06, B10, E10) | NOT STARTED | See the original-ID evidence below. |
-| P12 | Roadmap-to-code/PR evidence matching (B13, A11) | NOT STARTED | See the original-ID evidence below. |
+| P12 | Roadmap-to-code/PR evidence matching (B13, A11) | READY FOR CI | [#232](https://github.com/0xQuerencia/x/pull/232), head `339a7b8aa57817d203d5efdd4459fe0cc5cb69dc`. Disposable Git and scoped PR fixtures passed. |
 | P13 | Orchestrator reliability acceptance and role expansion decision (A01–A12, B01–B14, C01–C04) | NOT STARTED | See the original-ID evidence below. |
 | P14 | Shared execution and evidence contract (A12, C02, C05, C06, H02) | NOT STARTED | See the original-ID evidence below. |
 | P15 | Mixed task authoring beyond the finite parser (C07, C09) | NOT STARTED | See the original-ID evidence below. |
@@ -114,6 +114,42 @@ establish current native, installed-provider or physical acceptance.
   Combined exact-candidate CI remains.
   See the [Linux failure](https://github.com/0xQuerencia/x/actions/runs/45713786937/job/139555187934)
   and [macOS failure](https://github.com/0xQuerencia/x/actions/runs/45713787052/job/139554603050).
+
+## Subsequent checks
+
+- P03 exact Compile [45731455496](https://github.com/0xQuerencia/x/actions/runs/45731455496)
+  passed. [macOS preview](https://github.com/0xQuerencia/x/actions/runs/45731455526),
+  [Linux preview](https://github.com/0xQuerencia/x/actions/runs/45731523507) and
+  [Windows preview](https://github.com/0xQuerencia/x/actions/runs/45731527534)
+  are the current artifact gates. Full Linux LeakSanitizer reproduced 8,736
+  leaked bytes in 168 allocations on the earlier main tree and correction
+  candidate. The allocations came from an intentionally forgotten test
+  window handle. After the context engine took normal ownership, the full
+  x-agent sanitizer run passed 722 unit tests and one corpus test, with nine
+  ignored and zero reported leaks. This covers the x-agent test processes.
+- P04 local combined gate passed 728 library tests and one corpus test,
+  with ten ignored. The explicit delayed-predecessor test at the combined
+  code tree completed successfully in 61.11 seconds. The lease fixture
+  exercised releasing an idle project without releasing a live project's
+  lease, then reacquiring after competing work released it. Native checks
+  passed 15 CLI tests, 21 host tests and 418 Rune tests with six Rune tests
+  ignored on the tree before the test-only leak fix. Exact platform CI is
+  in progress.
+- P05 installed OpenCode 2.2.7 served exact session/checkout metadata in a
+  disposable loopback instance and refused a missing session. No prompt was
+  sent. A Rust fixture also checked stale and mismatched identity, prior
+  acknowledgement, interrupted preparation and byte-for-byte journal
+  preservation.
+- P12 local roadmap tests exercised exact source SHA, closed or changed PR
+  evidence, duplicate mapping collapse and verified commit ancestry in a
+  disposable checkout. Physical and full J01–J24 acceptance remain pending.
+- Additional memory ownership work is in progress in
+  `codex/x-owned-provider-output` and `codex/x-rune-allocation-lifetime`.
+  The provider patch removes reader threads that could outlive a run with
+  an inherited pipe. The Rune patch bounds scene label storage, drops stale
+  onboarding editor allocations and keeps dynamic status strings out of the
+  process-lifetime translation cache. Imported speech-model definitions still
+  retain historical names and descriptors in a process-lifetime registry.
 
 ## Original package traceability
 
