@@ -9,6 +9,9 @@ use crate::workflows::scheduler::Executor;
 
 pub(super) struct GraphExecutor {
     coding: ApprovedHarnessExecutor,
+    service: Service,
+    task_id: u64,
+    project_roots: HashMap<String, PathBuf>,
     pub(super) desktop: DesktopExecutor,
 }
 
@@ -21,6 +24,24 @@ impl Executor for GraphExecutor {
     }
     fn verified_worktree_key(&self, node: &Node) -> Option<String> {
         self.coding.verified_worktree_key(node)
+    }
+    fn release_idle_projects(&self, active: &[&Node]) {
+        let roots = active
+            .iter()
+            .filter_map(|node| self.project_roots.get(node.job.project_id()?))
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>();
+        self.service
+            .release_idle_graph_projects(self.task_id, &roots);
+    }
+    fn try_acquire_project(&self, node: &Node) -> bool {
+        match node.job.project_id() {
+            Some(id) => self
+                .project_roots
+                .get(id)
+                .is_some_and(|root| self.service.try_reacquire_graph_project(self.task_id, root)),
+            None => true,
+        }
     }
     fn outcome_reason(&self, node: &Node) -> Option<String> {
         match node.job {
@@ -136,7 +157,19 @@ impl Service {
                 Arc::clone(&grants),
                 Arc::clone(&workflow.journal),
             )?;
-            Ok(GraphExecutor { coding, desktop })
+            let project_roots = workflow
+                .jobs
+                .iter()
+                .flatten()
+                .map(|job| (job.project.id.to_string(), job.project.root.clone()))
+                .collect();
+            Ok(GraphExecutor {
+                coding,
+                service: self.clone(),
+                task_id,
+                project_roots,
+                desktop,
+            })
         })();
         if result.is_err() {
             for receipt in issued {

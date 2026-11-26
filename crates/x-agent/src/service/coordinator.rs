@@ -242,6 +242,35 @@ impl Service {
         })
     }
 
+    pub(super) fn release_idle_graph_projects(&self, task_id: u64, active: &[&std::path::Path]) {
+        if let Ok(mut coordinator) = self.coordinator.lock()
+            && let Some(roots) = coordinator.leases.get_mut(&task_id)
+        {
+            roots.retain(|root| active.contains(&root.as_path()));
+        }
+    }
+
+    pub(super) fn try_reacquire_graph_project(&self, task_id: u64, root: &std::path::Path) -> bool {
+        let Ok(mut coordinator) = self.coordinator.lock() else {
+            return false;
+        };
+        if coordinator.leases.iter().any(|(owner, held)| {
+            *owner != task_id
+                && held
+                    .iter()
+                    .any(|path| root.starts_with(path) || path.starts_with(root))
+        }) {
+            return false;
+        }
+        let Some(roots) = coordinator.leases.get_mut(&task_id) else {
+            return false;
+        };
+        if !roots.iter().any(|path| path == root) {
+            roots.push(root.to_path_buf());
+        }
+        true
+    }
+
     fn for_run(&self, run: &Run) -> Self {
         let mut service = self.clone();
         service.state = Arc::clone(&run.state);

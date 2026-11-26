@@ -33,8 +33,13 @@ impl JobStops {
         permission: Permission,
         scope: Scope,
     ) -> Result<(), String> {
-        if index >= self.nodes.len() || self.requested(index) {
+        if index >= self.nodes.len() {
             return Err("The reviewed job is not available".into());
+        }
+        // A scoped Stop may arrive before graph setup finishes. Keep the
+        // assignment for scheduler accounting, but leave it without renewal.
+        if self.requested(index) {
+            return Ok(());
         }
         let mut renewals = self
             .renewals
