@@ -163,3 +163,148 @@ impl Manager {
         })
     }
 }
+
+/// Local read-only review of the exact recorded checkout. The patch covers
+/// committed changes only; uncommitted inputs are explicitly distinguished.
+#[derive(Debug, Serialize)]
+pub struct WorktreeReview {
+    pub path: PathBuf,
+    pub base_commit: String,
+    pub current_commit: String,
+    pub clean_inputs: bool,
+    pub tracked_changes: bool,
+    pub untracked_files: bool,
+    /// None means the bounded committed file metadata was incomplete.
+    pub binary_changes: Option<bool>,
+    pub committed_diff: String,
+    pub diff_truncated: bool,
+    pub test_evidence: Option<crate::verification::test_runner::TestEvidence>,
+    /// None means no test result was recorded. False means it is historical
+    /// evidence only, not evidence for the checkout currently being reviewed.
+    pub test_matches_checkout: Option<bool>,
+}
+
+impl Manager {
+    pub fn review_reserved(
+        &self,
+        project: &Project,
+        run: Uuid,
+        node: &str,
+        reservation: &Reservation,
+        test: Option<&crate::verification::test_runner::TestEvidence>,
+    ) -> Result<WorktreeReview, String> {
+        let Inspection::Owned {
+            path,
+            current_commit: head,
+            ..
+        } = self.inspect_reserved(project, run, node, reservation)?
+        else {
+            return Err("The recorded checkout is not available for review".into());
+        };
+        let before = review_status(&path)?;
+        const MAX_DIFF_BYTES: usize = 24_000;
+        let (diff, diff_truncated) = review_diff(
+            &path,
+            &reservation.approved_base,
+            &head,
+            "--patch",
+            MAX_DIFF_BYTES,
+        )?;
+        let (files, files_truncated) = review_diff(
+            &path,
+            &reservation.approved_base,
+            &head,
+            "--numstat",
+            MAX_DIFF_BYTES,
+        )?;
+        let binary_changes = if files
+            .split(|byte| *byte == b'\n')
+            .any(|line| line.starts_with(b"-\t-\t"))
+        {
+            Some(true)
+        } else {
+            (!files_truncated).then_some(false)
+        };
+        let after = review_status(&path)?;
+        let Inspection::Owned {
+            path: observed,
+            current_commit,
+            ..
+        } = self.inspect_reserved(project, run, node, reservation)?
+        else {
+            return Err("The checkout changed during review; refresh it".into());
+        };
+        if observed != path || current_commit != head || before != after {
+            return Err("The checkout changed during review; refresh it".into());
+        }
+        let clean_inputs = after.is_empty();
+        let entries = || {
+            after
+                .split(|byte| *byte == 0)
+                .filter(|entry| !entry.is_empty())
+        };
+        let tracked_changes = entries().any(|entry| !entry.starts_with(b"?? "));
+        let untracked_files = entries().any(|entry| entry.starts_with(b"?? "));
+        Ok(WorktreeReview {
+            path,
+            base_commit: reservation.approved_base.clone(),
+            test_matches_checkout: test.map(|test| {
+                clean_inputs && test.valid() && test.passed.is_some() && test.commit == head
+            }),
+            current_commit: head,
+            clean_inputs,
+            tracked_changes,
+            untracked_files,
+            binary_changes,
+            committed_diff: patch_text(&diff, diff_truncated),
+            diff_truncated,
+            test_evidence: test.cloned(),
+        })
+    }
+}
+
+fn review_status(path: &Path) -> Result<Vec<u8>, String> {
+    let args = [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--no-renames",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+    ];
+    let (ok, status) = crate::desktop::capture(&mut git_command(path, &args), TIMEOUT)?;
+    if !ok {
+        return Err("Git refused to inspect checkout inputs".into());
+    }
+    Ok(status)
+}
+
+fn review_diff(
+    path: &Path,
+    base: &str,
+    head: &str,
+    selection: &str,
+    cap: usize,
+) -> Result<(Vec<u8>, bool), String> {
+    let args = [
+        "diff",
+        selection,
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--no-renames",
+        "--submodule=short",
+        base,
+        head,
+        "--",
+    ];
+    crate::desktop::capture_prefix(&mut git_command(path, &args), TIMEOUT, cap)
+}
+
+fn patch_text(bytes: &[u8], truncated: bool) -> String {
+    let bytes = match std::str::from_utf8(bytes) {
+        Err(error) if truncated && error.error_len().is_none() => &bytes[..error.valid_up_to()],
+        _ => bytes,
+    };
+    String::from_utf8_lossy(bytes).into_owned()
+}
