@@ -716,14 +716,18 @@ pub(super) fn restart_hex(ui: &mut Ui) {
 pub(super) fn practice(ui: &mut Ui) -> &mut TextEdit {
     match ui.first_run.as_mut() {
         Some(s) => &mut s.practice,
-        // The field shows only with the first run.
-        None => Box::leak(Box::default()),
+        None => {
+            ui.closed_practice_edit = TextEdit::default();
+            &mut ui.closed_practice_edit
+        }
     }
 }
 
 pub(super) fn practice_changed(ui: &mut Ui, tx: &mut Tx) {
     if let Some(s) = ui.first_run.as_mut() {
         s.on_practice_change(tx);
+    } else {
+        ui.closed_practice_edit = TextEdit::default();
     }
 }
 
