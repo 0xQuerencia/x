@@ -297,6 +297,16 @@ pub enum AgentCommand {
         #[command(flatten)]
         output: Output,
     },
+    /// Read one GitHub pull request via your installed GitHub CLI, without writes.
+    GithubPr {
+        repository: String,
+        number: u32,
+        /// Exact expected authenticated GitHub login.
+        #[arg(long)]
+        account: String,
+        #[command(flatten)]
+        output: Output,
+    },
     /// Plan a clean fast-forward of a task branch into its primary checkout.
     /// Requires project/run/task/start commit and separate owner approval.
     IntegrateFastForward {
@@ -632,6 +642,19 @@ pub(super) fn run(command: AgentCommand) -> u8 {
                 path,
                 start_line: line,
                 line_count: count,
+            },
+            output,
+        ),
+        AgentCommand::GithubPr {
+            repository,
+            number,
+            account,
+            output,
+        } => (
+            AgentAction::GithubPr {
+                repository,
+                number,
+                account,
             },
             output,
         ),
