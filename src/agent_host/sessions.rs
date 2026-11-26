@@ -48,6 +48,30 @@ pub(super) fn verify(session: &Session) -> Result<(), String> {
     with_lookup(|get| read_selected(get, &session.workspace, &session.id).map(drop))
 }
 
+pub(super) fn reconcile_exact(workspace: &Path, id: &SessionId) -> Result<(), String> {
+    with_lookup(|get| read_reconciled(get, workspace, id))
+}
+
+fn read_reconciled(get: &mut ApiGet<'_>, workspace: &Path, id: &SessionId) -> Result<(), String> {
+    let raw = exact_session(get, id)?;
+    let directory = raw
+        .directory()
+        .map(Path::new)
+        .filter(|path| path.is_absolute());
+    if directory.and_then(|dir| dir.canonicalize().ok()).as_deref() != Some(workspace) {
+        return Err("OpenCode returned a different checkout".into());
+    }
+    Ok(())
+}
+
+fn exact_session(get: &mut ApiGet<'_>, id: &SessionId) -> Result<OpenCodeSession, String> {
+    let raw = opencode::get_session(get, id.as_str()).map_err(|error| error.to_string())?;
+    if raw.id != id.as_str() {
+        return Err("OpenCode returned a different session ID".into());
+    }
+    Ok(raw)
+}
+
 fn with_lookup<T>(run: impl FnOnce(&mut ApiGet<'_>) -> Result<T, String>) -> Result<T, String> {
     let deadline = Instant::now() + DEADLINE;
     let connection = opencode_service::find_bounded(DEADLINE).map_err(|error| error.message())?;
@@ -108,10 +132,7 @@ fn read_selected(
     workspace: &Path,
     id: &SessionId,
 ) -> Result<Session, String> {
-    let raw = opencode::get_session(get, id.as_str()).map_err(|error| error.to_string())?;
-    if raw.id != id.as_str() {
-        return Err("OpenCode returned a different session ID".into());
-    }
+    let raw = exact_session(get, id)?;
     scoped(&raw, workspace)
         .ok_or_else(|| "That OpenCode session is unavailable in this project".into())
 }
@@ -121,6 +142,32 @@ mod tests {
     use super::*;
     use crate::desktop::opencode_service::tests::state_root;
     use serde_json::json;
+
+    #[test]
+    fn delivery_readback_refuses_wrong_session_and_worktree() {
+        let directory = state_root("delivery-readback");
+        let workspace = directory.canonicalize().unwrap();
+        let id = SessionId::try_from("ses_reviewed".to_owned()).unwrap();
+        let lookup = |response: serde_json::Value| {
+            let mut get = |path: &str| {
+                assert_eq!(path, "/api/session/ses_reviewed");
+                Ok(response.to_string().into_bytes())
+            };
+            read_reconciled(&mut get, &workspace, &id)
+        };
+        assert!(
+            lookup(json!({"id": "ses_reviewed", "location": {"directory": workspace}})).is_ok()
+        );
+        assert!(lookup(json!({"id": "ses_other", "location": {"directory": workspace}})).is_err());
+        assert!(lookup(json!({"id": "ses_reviewed", "location": {"directory": "."}})).is_err());
+        assert!(
+            lookup(
+                json!({"id": "ses_reviewed", "location": {"directory": workspace.join("gone")}})
+            )
+            .is_err()
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn discover_filters_to_open_unique_sessions_in_the_exact_project() {
