@@ -25,6 +25,7 @@ pub mod composer;
 mod computer_dialogue;
 mod coordinator;
 mod corrections;
+pub use corrections::CorrectionReview;
 mod desktop_lease;
 mod edit;
 mod effects;

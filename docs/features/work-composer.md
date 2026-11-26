@@ -89,7 +89,10 @@ A failing graph test can expose its bounded stdout/stderr tail in a local-only, 
 
 At dispatch, X independently rechecks the recorded failing test, worktree identity, clean inputs and immutable commit. The correction writer starts at that exact failed commit and must produce a changed descendant commit before a fresh test node can retest it. No automatic integration, remote push or silent retry is authorized. The failure text remains untrusted and local; only the explicit reviewed goal is sent. A live chain permits at most two correction attempts, one approval per source failure. Restart, a stale source, or the 30-minute review retention limit requires a new independently reviewed task, not replay. The in-memory review holds at most 16 results and is not restored from journal history.
 
-Fixed suites use the existing owned process guard. Linux and macOS retain the project lease until the launched process group is independently observed stopped, and Windows uses a private Job. Each output stream retains at most 8,192 input bytes, and the capture loop closes its pipes on Stop, timeout or read error. Process groups cover members that stay in the owned group. The Git and Cargo fixture exercises real descendant commits, passing retests, failed attempts, stale source and local-only diagnostics. The native correction panel and installed-provider acceptance remain pending.
+Fixed suites use the existing owned process guard. Linux and macOS retain the project lease until the launched process group is independently observed stopped, and Windows uses a private Job. Each output stream retains at most 8,192 input bytes, and the capture loop closes its pipes on Stop, timeout or read error. Process groups cover members that stay in the owned group. The Git and Cargo fixture exercises real descendant commits, passing retests, failed attempts, stale source and local-only diagnostics. In the native Work result, **Review failed test and correction** opens the local
+diagnostic tail and exact failed commit. It shows the remaining attempt, offers an
+explicit correction goal, and sends the resulting writer/retest graph to the
+usual separate approval card. Installed-provider acceptance remains pending.
 
 ## Explicit mixed Actions and Work proposals (C09)
 

@@ -2,8 +2,9 @@
 
 use std::sync::mpsc::{Receiver, TryRecvError, sync_channel};
 
-use rune::{El, col, row, text};
-use x_agent::service::CodingReviewEntry;
+use rune::{El, TextEdit, col, row, text};
+use rune_kit::TextInput;
+use x_agent::service::{CodingReviewEntry, CorrectionReview};
 use x_agent::workflows::recovery::State;
 use x_agent::worktrees::WorktreeReview;
 
@@ -14,6 +15,7 @@ use crate::rune_ui::{Ui, list_detail};
 enum Reply {
     Entries(Vec<CodingReviewEntry>),
     Review(Box<WorktreeReview>),
+    Correction(Box<CorrectionReview>),
     Note(&'static str),
 }
 
@@ -23,6 +25,8 @@ pub(super) struct Results {
     entries: Vec<CodingReviewEntry>,
     selected: Option<(String, String, State)>,
     review: Option<Box<WorktreeReview>>,
+    correction: Option<Box<CorrectionReview>>,
+    goal: TextEdit,
     pending: Option<Receiver<Result<Reply, String>>>,
     note: Option<String>,
 }
@@ -40,6 +44,7 @@ impl Results {
         match reply {
             Ok(Reply::Entries(entries)) => self.entries = entries,
             Ok(Reply::Review(review)) => self.review = Some(review),
+            Ok(Reply::Correction(review)) => self.correction = Some(review),
             Ok(Reply::Note(note)) => self.note = Some(note.into()),
             Err(error) => self.note = Some(error),
         }
@@ -66,6 +71,8 @@ impl Results {
         if self.pending.is_none() {
             self.selected = None;
             self.review = None;
+            self.correction = None;
+            self.goal = TextEdit::default();
             self.start(|| {
                 agent_host::service()
                     .recent_coding_reviews()
@@ -78,6 +85,8 @@ impl Results {
         if self.pending.is_none() {
             self.selected = Some((run.clone(), node.clone(), state));
             self.review = None;
+            self.correction = None;
+            self.goal = TextEdit::default();
             self.start(move || {
                 agent_host::service()
                     .coding_worktree_review(&run, &node)
@@ -153,6 +162,13 @@ pub(super) fn panel(p: Paint, results: &Results) -> El {
                         },
                     )),
             );
+        if let Some(correction) = &results.correction {
+            return finish_panel(
+                p,
+                results,
+                view.child(correction_panel(p, results, correction)),
+            );
+        }
         if let Some(review) = &results.review {
             view = view.child(evidence(p, review));
             if *state == State::Verified
@@ -183,6 +199,28 @@ pub(super) fn panel(p: Paint, results: &Results) -> El {
                 ));
             }
         }
+        if results
+            .review
+            .as_ref()
+            .and_then(|review| review.test_evidence.as_ref())
+            .is_some_and(|test| test.passed == Some(false))
+        {
+            let source = format!("{run}/{node}");
+            view = view.child(button(
+                p,
+                "work-result-review-correction",
+                "Review failed test and correction",
+                ButtonKind::Secondary,
+                move |ui: &mut Ui, _| {
+                    let source = source.clone();
+                    ui.agent.results.start(move || {
+                        agent_host::service()
+                            .review_correction_failure(&source)
+                            .map(|review| Reply::Correction(Box::new(review)))
+                    });
+                },
+            ));
+        }
     } else if results.entries.is_empty() && results.pending.is_none() && results.note.is_none() {
         view = view.child(line(p, "No recorded Work checkouts."));
     } else {
@@ -199,6 +237,10 @@ pub(super) fn panel(p: Paint, results: &Results) -> El {
             ));
         }
     }
+    finish_panel(p, results, view)
+}
+
+fn finish_panel(p: Paint, results: &Results, mut view: El) -> El {
     if results.pending.is_some() {
         view = view.child(line(p, "Checking the recorded Work result…"));
     }
@@ -210,6 +252,102 @@ pub(super) fn panel(p: Paint, results: &Results) -> El {
 
 fn line(p: Paint, value: impl Into<String>) -> El {
     text(value.into()).font(DESCRIPTION).color(p.text()).wrap()
+}
+
+fn correction_panel(p: Paint, results: &Results, review: &CorrectionReview) -> El {
+    let failure = &review.failure;
+    let mut view = col()
+        .key("work-result-correction")
+        .gap(8.0)
+        .child(line(
+            p,
+            format!("{} failed at {}", failure.suite.label(), failure.commit),
+        ))
+        .child(line(
+            p,
+            "Test output stays local. Enter only the information you want OpenCode to receive.",
+        ));
+    let excerpt = &failure.excerpt;
+    for (title, value, truncated) in [
+        (
+            "Standard output",
+            excerpt.stdout.as_str(),
+            excerpt.stdout_truncated,
+        ),
+        (
+            "Standard error",
+            excerpt.stderr.as_str(),
+            excerpt.stderr_truncated,
+        ),
+    ] {
+        if value.is_empty() {
+            continue;
+        }
+        view = view
+            .child(line(
+                p,
+                if truncated {
+                    format!("{title} · truncated tail")
+                } else {
+                    title.into()
+                },
+            ))
+            .child(
+                col().h(130.0).child(list_detail::card_scroll(
+                    title,
+                    text(value.to_owned())
+                        .font(p.k.ty.mono)
+                        .color(p.text())
+                        .wrap(),
+                )),
+            );
+    }
+    let Some(attempt) = review.next_attempt else {
+        return view.child(line(
+            p,
+            "This test result has no remaining correction approval.",
+        ));
+    };
+    let source = format!("{}/{}", failure.run_id, failure.node_id);
+    view.child(line(
+        p,
+        format!("Correction attempt {attempt} of {}.", review.max_attempts),
+    ))
+    .child(line(
+        p,
+        format!(
+            "OpenCode makes an isolated commit, then X reruns {} on that commit.",
+            failure.suite.label()
+        ),
+    ))
+    .child(
+        TextInput::new(&results.goal)
+            .placeholder("Correction goal")
+            .width(None)
+            .on_edit(|ui: &mut Ui| &mut ui.agent.results.goal)
+            .build(p.k)
+            .key("work-result-correction-goal"),
+    )
+    .child(button(
+        p,
+        "work-result-plan-correction",
+        "Review correction plan",
+        ButtonKind::Secondary,
+        move |ui: &mut Ui, _| {
+            let source = source.clone();
+            let results = &mut ui.agent.results;
+            let goal = results.goal.text.trim().to_owned();
+            if goal.is_empty() {
+                results.note = Some("Enter an explicit correction goal.".into());
+                return;
+            }
+            results.start(move || {
+                agent_host::service()
+                    .plan_correction(&source, &goal)
+                    .map(|_| Reply::Note("Review and approve the separate correction plan above."))
+            });
+        },
+    ))
 }
 
 fn evidence(p: Paint, review: &WorktreeReview) -> El {
@@ -320,4 +458,32 @@ pub(super) fn fixture(stale: bool) -> Results {
         })),
         ..Results::default()
     }
+}
+
+#[cfg(test)]
+pub(super) fn correction_fixture(exhausted: bool) -> Results {
+    use x_agent::verification::test_runner::{CorrectionDraft, FailureExcerpt, Suite};
+    let mut result = fixture(false);
+    let selected = result.selected.as_mut().unwrap();
+    selected.2 = State::Failed;
+    result.correction = Some(Box::new(CorrectionReview {
+        failure: CorrectionDraft {
+            project_id: "cd2eb7c6-9b31-4cfe-b990-5b69061f4c25".parse().unwrap(),
+            run_id: selected.0.parse().unwrap(),
+            node_id: selected.1.clone(),
+            commit: "b".repeat(40),
+            suite: Suite::CargoWorkspace,
+            excerpt: FailureExcerpt {
+                stdout: "test calendar::ends_on_the_selected_date … FAILED".into(),
+                stderr: "assertion failed
+  expected 30, got 29"
+                    .into(),
+                stdout_truncated: false,
+                stderr_truncated: true,
+            },
+        },
+        next_attempt: (!exhausted).then_some(2),
+        max_attempts: 2,
+    }));
+    result
 }
