@@ -35,14 +35,33 @@ impl Executor for GraphExecutor {
         self.service
             .release_idle_graph_projects(self.task_id, &roots);
     }
-    fn try_acquire_project(&self, node: &Node) -> bool {
-        match node.job.project_id() {
-            Some(id) => self.projects.get(id).is_some_and(|project| {
+    fn try_acquire_project(&self, node: &Node) -> Result<bool, String> {
+        let Some(id) = node.job.project_id() else {
+            return Ok(true);
+        };
+        let expected = self
+            .projects
+            .get(id)
+            .ok_or("The reviewed project is unavailable")?;
+        let Some(reacquired) = self
+            .service
+            .try_reacquire_graph_project(self.task_id, &expected.root)
+        else {
+            return Ok(false);
+        };
+        if reacquired {
+            let unchanged = self.registry.validated_resolve(id).is_ok_and(|current| {
+                current.id == expected.id
+                    && current.root == expected.root
+                    && current.git_common_dir == expected.git_common_dir
+            });
+            if !unchanged {
                 self.service
-                    .try_reacquire_graph_project(self.task_id, &project.root)
-            }),
-            None => true,
+                    .release_graph_project(self.task_id, &expected.root);
+                return Err("The registered project changed while the node waited".into());
+            }
         }
+        Ok(true)
     }
     fn outcome_reason(&self, node: &Node) -> Option<String> {
         match node.job {
@@ -53,20 +72,7 @@ impl Executor for GraphExecutor {
     fn execute(&self, node: Node, stop: Cancellation) -> Outcome {
         match node.job {
             Job::Desktop { .. } => self.desktop.execute(node, stop),
-            _ => {
-                let current_project = node.job.project_id().and_then(|id| {
-                    let expected = self.projects.get(id)?;
-                    let current = self.registry.validated_resolve(id).ok()?;
-                    (current.id == expected.id
-                        && current.root == expected.root
-                        && current.git_common_dir == expected.git_common_dir)
-                        .then_some(current)
-                });
-                if current_project.is_none() {
-                    return Outcome::Failed;
-                }
-                self.coding.execute(node, stop)
-            }
+            _ => self.coding.execute(node, stop),
         }
     }
 }

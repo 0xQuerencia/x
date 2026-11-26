@@ -80,8 +80,8 @@ pub trait Executor: Send + Sync + 'static {
     /// Release reservations with no active worker while a node awaits approval.
     fn release_idle_projects(&self, _active: &[&Node]) {}
     /// A paused graph can dispatch only after reacquiring its project.
-    fn try_acquire_project(&self, _node: &Node) -> bool {
-        true
+    fn try_acquire_project(&self, _node: &Node) -> Result<bool, String> {
+        Ok(true)
     }
     /// Optional native diagnostic, never model prose or raw process output.
     fn outcome_reason(&self, _node: &Node) -> Option<String> {
@@ -328,9 +328,23 @@ pub(crate) fn run_observed_scoped(
                     progressed = true;
                     continue;
                 }
-                if !executor.try_acquire_project(node) {
-                    waiting_for_project = true;
-                    continue;
+                match executor.try_acquire_project(node) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        waiting_for_project = true;
+                        continue;
+                    }
+                    Err(reason) => {
+                        stops.close_permission_review(index);
+                        finished[index] = Some(Outcome::Failed);
+                        notes[index] = reason;
+                        observe(index, NodeUpdate::Finished(Outcome::Failed));
+                        if node.on_failure == super::model::OnFailure::Stop {
+                            stop_new = true;
+                        }
+                        progressed = true;
+                        continue;
+                    }
                 }
                 stops.close_permission_review(index);
                 let runner = Arc::clone(&executor);
