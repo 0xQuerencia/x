@@ -11,7 +11,8 @@ pub(super) struct GraphExecutor {
     coding: ApprovedHarnessExecutor,
     service: Service,
     task_id: u64,
-    project_roots: HashMap<String, PathBuf>,
+    registry: Arc<Registry>,
+    projects: HashMap<String, Project>,
     pub(super) desktop: DesktopExecutor,
 }
 
@@ -28,18 +29,18 @@ impl Executor for GraphExecutor {
     fn release_idle_projects(&self, active: &[&Node]) {
         let roots = active
             .iter()
-            .filter_map(|node| self.project_roots.get(node.job.project_id()?))
-            .map(PathBuf::as_path)
+            .filter_map(|node| self.projects.get(node.job.project_id()?))
+            .map(|project| project.root.as_path())
             .collect::<Vec<_>>();
         self.service
             .release_idle_graph_projects(self.task_id, &roots);
     }
     fn try_acquire_project(&self, node: &Node) -> bool {
         match node.job.project_id() {
-            Some(id) => self
-                .project_roots
-                .get(id)
-                .is_some_and(|root| self.service.try_reacquire_graph_project(self.task_id, root)),
+            Some(id) => self.projects.get(id).is_some_and(|project| {
+                self.service
+                    .try_reacquire_graph_project(self.task_id, &project.root)
+            }),
             None => true,
         }
     }
@@ -52,7 +53,20 @@ impl Executor for GraphExecutor {
     fn execute(&self, node: Node, stop: Cancellation) -> Outcome {
         match node.job {
             Job::Desktop { .. } => self.desktop.execute(node, stop),
-            _ => self.coding.execute(node, stop),
+            _ => {
+                let current_project = node.job.project_id().and_then(|id| {
+                    let expected = self.projects.get(id)?;
+                    let current = self.registry.validated_resolve(id).ok()?;
+                    (current.id == expected.id
+                        && current.root == expected.root
+                        && current.git_common_dir == expected.git_common_dir)
+                        .then_some(current)
+                });
+                if current_project.is_none() {
+                    return Outcome::Failed;
+                }
+                self.coding.execute(node, stop)
+            }
         }
     }
 }
@@ -124,6 +138,8 @@ impl Service {
             drop(state);
             stop.check()?;
             let service = self.clone();
+            let failure_service = self.clone();
+            let correction = workflow.correction.clone();
             let coding = ApprovedHarnessExecutor::new(
                 &workflow.graph,
                 run,
@@ -136,6 +152,9 @@ impl Service {
                     "workflow_activity",
                     &format!("{run} / {node} / attempt {attempt}: {}", kind.as_str()),
                 );
+            }))
+            .with_failure(Arc::new(move |draft| {
+                failure_service.remember_correction(draft, correction.as_ref());
             }));
             let service = self.clone();
             let acquire: AcquireInput = Arc::new(move |stop| {
@@ -157,17 +176,18 @@ impl Service {
                 Arc::clone(&grants),
                 Arc::clone(&workflow.journal),
             )?;
-            let project_roots = workflow
+            let projects = workflow
                 .jobs
                 .iter()
                 .flatten()
-                .map(|job| (job.project.id.to_string(), job.project.root.clone()))
+                .map(|job| (job.project.id.to_string(), job.project.clone()))
                 .collect();
             Ok(GraphExecutor {
                 coding,
                 service: self.clone(),
                 task_id,
-                project_roots,
+                registry: Arc::clone(&workflow.registry),
+                projects,
                 desktop,
             })
         })();

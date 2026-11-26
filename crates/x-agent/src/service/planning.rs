@@ -110,7 +110,8 @@ impl Service {
 
     /// True when this request would go to the model (the rules do not know it).
     pub fn needs_model(&self, text: &str) -> bool {
-        if project_commands::parse(text).is_some()
+        if mixed_proposal::recognizes(text)
+            || project_commands::parse(text).is_some()
             || session_targets::spoken_target(text).is_some()
             || session_targets::spoken_work(text).is_some()
         {
@@ -222,6 +223,9 @@ impl Service {
             && let Some(command) = project_commands::parse(text)
         {
             return self.plan_project_command(command);
+        }
+        if mode == Mode::Actions && mixed_proposal::recognizes(text) {
+            return self.plan_mixed_proposal(text);
         }
         let planning_started = Instant::now();
         if mode == Mode::Actions

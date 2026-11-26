@@ -3116,6 +3116,149 @@ printf '{{"type":"step_start","sessionID":"%s","part":{{"type":"step-start"}}}}\
 }
 
 #[test]
+fn reviewed_correction_retests_a_real_descendant_and_exhausts_its_chain() {
+    use crate::verification::test_runner::Suite;
+    use crate::workflows::dag::{ARTIFACT_VERSION, ArtifactInput, InputProof, Job};
+
+    for (name, outcomes) in [("passing", &[0][..]), ("exhausted", &[1, 1][..])] {
+        let (service, directory, repo, mut graph) = graph_workflow_fixture();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+        };
+        std::fs::create_dir(repo.join("src")).unwrap();
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = \"correction-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("Cargo.lock"),
+            "version = 4\n\n[[package]]\nname = \"correction-fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join(".gitignore"), "target/\n").unwrap();
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            "#[test] fn behavior() { assert_eq!(1, 0, \"LOCAL_PRIVATE_TEST_MARKER\"); }\n",
+        )
+        .unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "failing correction fixture"]);
+        fake_opencode(
+            directory.path(),
+            r#"set -e
+case "$*" in
+  *LOCAL_PRIVATE_TEST_MARKER*) exit 43;;
+  *'Owner goal: make this pass'*) printf '#[test] fn behavior() { assert_eq!(1, 1); }\n' > src/lib.rs;;
+  *'Inspect fixture inspect'*) printf '// original committed fixture\n' >> src/lib.rs;;
+  *'Owner goal: leave it failing'*) printf '// an independently committed correction attempt\n' >> src/lib.rs;;
+  *) exit 44;;
+esac
+git add -- src/lib.rs
+git commit -qm correction
+echo '{"type":"step_start","sessionID":"ses_correction_fixture","part":{"type":"step-start"}}'"#,
+        );
+        service.set_workspace(repo.to_str().unwrap()).unwrap();
+        let project_id = graph.nodes[0].job.project_id().unwrap().to_owned();
+        graph.version = ARTIFACT_VERSION;
+        graph.nodes[0].required_commit = true;
+        graph.nodes[1].requires.clear();
+        graph.nodes[1].inputs = vec![ArtifactInput {
+            node: "inspect".into(),
+            proof: InputProof::Committed,
+        }];
+        graph.nodes[1].job = Job::Test {
+            project_id,
+            suite: Suite::CargoWorkspace,
+        };
+        std::fs::write(
+            directory.path().join("state/workflows/coding-graph.json"),
+            serde_json::to_vec(&graph).unwrap(),
+        )
+        .unwrap();
+        let initial = service.plan_graph_workflow(&graph.id).unwrap();
+        service.approve(initial.id).unwrap();
+        assert_eq!(
+            wait_for(&service, |s| !s.phase.is_busy()).phase,
+            Phase::Failed
+        );
+
+        let journal = crate::workflows::recovery::Journal::new(
+            directory.path().join("state/workflow-journal"),
+        );
+        let claims = journal.snapshot().unwrap();
+        let original = &claims[1];
+        let mut source = format!("{}/{}", original.run_id, original.node_id);
+        let mut commit = original.test_evidence.as_ref().unwrap().commit.clone();
+        let original_path = service
+            .coding_worktree_review(&original.run_id.to_string(), &original.node_id)
+            .unwrap()
+            .path;
+        let dirty_path = original_path.join("review-dirty");
+        std::fs::write(&dirty_path, "dirty").unwrap();
+        assert!(service.plan_correction(&source, "make this pass").is_err());
+        std::fs::remove_file(dirty_path).unwrap();
+
+        for (index, expected_fail) in outcomes.iter().enumerate() {
+            let preview = service.correction_preview(&source).unwrap();
+            assert_eq!(preview["next_attempt"], index + 1, "{name}");
+            assert!(preview.to_string().contains("LOCAL_PRIVATE_TEST_MARKER"));
+            let goal = if *expected_fail == 0 {
+                "make this pass"
+            } else {
+                "leave it failing"
+            };
+            let plan = service.plan_correction(&source, goal).unwrap();
+            assert!(plan.steps[0].title.contains(&commit));
+            assert!(!plan.steps[0].title.contains("LOCAL_PRIVATE_TEST_MARKER"));
+            assert_eq!(journal.snapshot().unwrap().len(), 2 + 2 * index);
+            service.approve(plan.id).unwrap();
+            let result = wait_for(&service, |s| !s.phase.is_busy());
+            assert_eq!(
+                result.phase,
+                if *expected_fail == 0 {
+                    Phase::Completed
+                } else {
+                    Phase::Failed
+                },
+                "{name}"
+            );
+            let claims = journal.snapshot().unwrap();
+            let writer = &claims[2 + index * 2];
+            let retest = &claims[3 + index * 2];
+            let tested = retest.test_evidence.as_ref().unwrap();
+            assert_ne!(tested.commit, commit);
+            assert_eq!(tested.commit, writer.artifact.as_ref().unwrap().commit());
+            assert_eq!(tested.suite, Suite::CargoWorkspace);
+            assert_eq!(tested.passed, Some(*expected_fail == 0));
+            assert!(
+                service
+                    .plan_correction(&source, "replay the old failure")
+                    .is_err()
+            );
+            commit = tested.commit.clone();
+            source = format!("{}/{}", retest.run_id, retest.node_id);
+        }
+        assert!(
+            service
+                .plan_correction(&source, "run another attempt")
+                .is_err()
+        );
+        assert!(
+            !std::fs::read_to_string(repo.join("src/lib.rs"))
+                .unwrap()
+                .contains("assert_eq!(1, 1)")
+        );
+        assert!(!repo.join("target").exists());
+    }
+}
+
+#[test]
 fn interrupted_preparation_inventory_retains_exact_partial_allocations_without_replaying() {
     use crate::workflows::recovery::{Begin, Journal};
     use crate::worktrees::{Manager, Reservation};

@@ -116,6 +116,30 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
             Ok(report) => ControlReply::done(report.to_string()),
             Err(error) => refuse(error),
         },
+        "correction-preview" => match svc.correction_preview(value) {
+            Ok(report) => ControlReply::done(report.to_string()),
+            Err(error) => refuse(error),
+        },
+        "plan-correction" => match value.split_once(' ') {
+            Some((source, goal)) => match svc.plan_correction(source, goal) {
+                Ok(_) => super::snapshot(0),
+                Err(error) => refuse(error),
+            },
+            None => need("an exact failure run/node identity and a correction goal"),
+        },
+        "review-worktree" => {
+            let mut args = value.split_whitespace();
+            match (args.next(), args.next(), args.next()) {
+                (Some(run), Some(node), None) => match svc.coding_worktree_review(run, node) {
+                    Ok(review) => match serde_json::to_string(&review) {
+                        Ok(json) => ControlReply::done(json),
+                        Err(_) => refuse("Could not serialize the local worktree review".into()),
+                    },
+                    Err(error) => refuse(error),
+                },
+                _ => need("exactly a recorded run UUID and node id"),
+            }
+        }
         "permission-waits" => match value.parse::<u64>() {
             Ok(task_id) => match svc.coding_permission_reviews(task_id) {
                 Ok(report) => ControlReply::done(report.to_string()),
@@ -225,7 +249,7 @@ pub(super) fn handle(svc: &Service, command: &str, value: &str) -> ControlReply 
         },
         _ => ControlReply::error(
             "usage",
-            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
+            "workflow commands: list, show, preview, permissions, uncertain, claims, worktrees, review-worktree, correction-preview, plan-correction, permission-waits, renew-permission, run, run-graph, test-project, last, last-graph, delete, duplicate, import, import-graph, undo, dir",
         ),
     }
 }

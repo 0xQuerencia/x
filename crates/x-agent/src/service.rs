@@ -24,6 +24,7 @@ use crate::tools::{self, Action, Risk};
 pub mod composer;
 mod computer_dialogue;
 mod coordinator;
+mod corrections;
 mod desktop_lease;
 mod edit;
 mod effects;
@@ -33,6 +34,7 @@ mod integration;
 mod launch;
 mod ledger;
 mod lifecycle;
+mod mixed_proposal;
 mod notices;
 mod planning;
 mod policy;
@@ -319,6 +321,7 @@ pub struct Service {
     state: Arc<Mutex<State>>,
     scoped_grants: Arc<Grants>,
     coordinator: Arc<Mutex<coordinator::Coordinator>>,
+    corrections: Arc<Mutex<corrections::History>>,
     desktop_lock: Arc<desktop_lease::Lock>,
     stt: Arc<dyn Stt>,
     launcher: Arc<dyn Launcher>,
@@ -395,6 +398,7 @@ impl Service {
             state: Arc::new(Mutex::new(state)),
             scoped_grants: Arc::new(Grants::default()),
             coordinator: Arc::new(Mutex::new(coordinator::Coordinator::default())),
+            corrections: Arc::new(Mutex::new(corrections::History::default())),
             desktop_lock: Arc::new(desktop_lease::Lock::default()),
             stt,
             launcher,

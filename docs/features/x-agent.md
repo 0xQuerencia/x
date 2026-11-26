@@ -650,7 +650,14 @@ assigns it to a private, unnamed Job with kill-on-close and no breakaway before
 resuming the one freshly validated primary thread. Assignment, thread identity
 or resume failure refuses startup and cleans up the retained process handle.
 Stop uses `TerminateJobObject`, without an external `taskkill` helper or a PID
-lookup. Unix retains its owned process-group termination path.
+lookup. Linux retains the direct child unreaped while checking the owned
+process group and bounding output drain after the root exits. A nonempty group
+is terminated before the worker releases its lease; failed observation keeps
+cleanup pending instead of claiming success. This Linux procfs observation is
+not a kernel Job guarantee, and cannot cover processes that leave the group
+or external services. Other Unix systems retain their existing termination
+path. Linux fixtures check a surviving descendant and independent group Stop;
+actual desktop/provider acceptance remains separate.
 
 Windows closure requires both the direct process to exit and
 `QueryInformationJobObject` to report zero active processes. X closes the
@@ -1382,6 +1389,6 @@ obtain fresh evidence.
 
 ### Review an expired queued coding approval (A05)
 
-A ready coding or fixed-suite test node whose exact queued receipt expired enters `waiting_for_permission` without launching or holding a worker slot. Independent jobs keep running; required dependents still wait. The operator can inspect the original reviewed step using `hex agent workflow permission-waits <task-id>`, then explicitly approve only that unchanged step with `hex agent workflow renew-permission <task-id> <review-token>`. The token expires after ten minutes; renewal grants up to five minutes of queue time once. The original dispatch revalidates project, immutable base, inputs, provider role and the one-use launch receipt. A Stop, revocation, missing receipt, changed identity, stale token or second renewal cannot recreate authority. The foreground or exact background task remains identifiable by its task ID; no restart restores renewal authority.
+A ready coding or fixed-suite test node whose exact queued receipt expired enters `waiting_for_permission` without launching or holding a worker slot. The scheduler releases idle project reservations and requires a fresh project lease before dispatch. Independent jobs keep running; required dependents still wait. The operator can inspect the original reviewed step using `hex agent workflow permission-waits <task-id>`, then explicitly approve only that unchanged step with `hex agent workflow renew-permission <task-id> <review-token>`. The token expires after ten minutes; renewal grants up to five minutes of queue time once. The original dispatch revalidates project, immutable base, inputs, provider role and the one-use launch receipt. A Stop, revocation, missing receipt, changed identity, stale token or second renewal cannot recreate authority. The foreground or exact background task remains identifiable by its task ID; no restart restores renewal authority.
 
-The first slice covers queued coding and test nodes before worker dispatch, not expired desktop grants or expiry during checkout preparation. The waiting state and existing Stop remain visible in task status; the dedicated native review button and physical delayed-provider acceptance remain separate. Synthetic-clock grants and scheduler fixtures exercise the expiry, one-use renewal and predecessor non-replay boundaries. No test or review token is a general process-launch grant.
+The first slice covers queued coding and test nodes before worker dispatch, not expired desktop grants or expiry during checkout preparation. The waiting state and existing Stop remain visible in task status; the dedicated native review button and physical delayed-provider acceptance remain separate. Deterministic grant fixtures and a 61-second subprocess predecessor exercise expiry, one-use renewal and predecessor non-replay. No test or review token is a general process-launch grant.

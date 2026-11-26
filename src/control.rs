@@ -376,6 +376,12 @@ pub enum AgentAction {
         command: String,
         value: String,
     },
+    /// Explicit, read-only GitHub pull request metadata inspection.
+    GithubPr {
+        repository: String,
+        number: u32,
+        account: String,
+    },
     /// Explicit owner-reviewed fast-forward of one X-owned Git worktree.
     IntegrateFastForward {
         project: String,

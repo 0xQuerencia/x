@@ -877,6 +877,17 @@ pub fn handle(action: AgentAction) -> ControlReply {
             let r = x_agent::wm::report();
             ControlReply::done(serde_json::to_string(&r).unwrap_or_default())
         }
+        AgentAction::GithubPr {
+            repository,
+            number,
+            account,
+        } => match x_agent::github_read::inspect(&repository, number, &account) {
+            Ok(report) => match serde_json::to_string(&report) {
+                Ok(json) => ControlReply::unchanged(json),
+                Err(_) => ControlReply::error("unavailable", "Could not serialize GitHub metadata"),
+            },
+            Err(error) => ControlReply::error("refused", error),
+        },
         AgentAction::Workflow { command, value } => workflows::handle(svc, &command, &value),
         AgentAction::IntegrateFastForward {
             project,

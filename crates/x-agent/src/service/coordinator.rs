@@ -215,7 +215,16 @@ impl Service {
     }
 
     pub(super) fn reserve_work(&self, state: &State, task_id: u64) -> Result<Lease, String> {
-        let roots = state.work_roots();
+        self.reserve_roots(task_id, state.work_roots())
+    }
+
+    pub(super) fn reserve_worktree_review(&self, root: PathBuf) -> Result<Lease, String> {
+        // Task IDs start at one. A review uses the same project exclusion
+        // without binding a foreground or background task.
+        self.reserve_roots(0, vec![root])
+    }
+
+    fn reserve_roots(&self, task_id: u64, roots: Vec<PathBuf>) -> Result<Lease, String> {
         let mut coordinator = self
             .coordinator
             .lock()
