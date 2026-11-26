@@ -12,12 +12,12 @@
 //! stays saved, and the listener runs the default model until it is fixed
 //! ([`runnable`]).
 
-use std::collections::HashMap;
+use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
@@ -163,8 +163,8 @@ pub enum Status {
 /// show it.
 #[derive(Clone)]
 pub struct Imported {
-    pub definition: &'static ModelDefinition,
-    pub architecture: &'static str,
+    pub definition: Arc<ModelDefinition>,
+    pub architecture: String,
     pub sha256: String,
     pub source: String,
     pub license: Option<String>,
@@ -178,7 +178,7 @@ pub struct Imported {
 struct Entry {
     id: CustomModelId,
     manifest: Manifest,
-    definition: &'static ModelDefinition,
+    definition: Arc<ModelDefinition>,
     receipt: Option<Receipt>,
 }
 
@@ -187,10 +187,6 @@ struct Registry {
     /// The folder and modification time the entries were read at.
     stamp: Option<(PathBuf, Option<SystemTime>)>,
     entries: Vec<Entry>,
-    /// Definitions built so far, by ID and name: a rename or re-import
-    /// builds one, and every other read reuses it.
-    built: HashMap<(CustomModelId, String), &'static ModelDefinition>,
-    placeholders: HashMap<CustomModelId, &'static ModelDefinition>,
 }
 
 static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(Mutex::default);
@@ -246,10 +242,11 @@ impl Registry {
                     tracing::warn!(path = %path.display(), "ignoring an unreadable imported model manifest");
                     continue;
                 };
-                let definition = *self
-                    .built
-                    .entry((id, manifest.name.clone()))
-                    .or_insert_with(|| build(id, &manifest));
+                let definition = self
+                    .entry(id)
+                    .filter(|entry| entry.manifest == manifest)
+                    .map(|entry| entry.definition.clone())
+                    .unwrap_or_else(|| Arc::new(build(id, &manifest)));
                 let receipt = fs::read(receipt_path(&model_file(&directory, id)))
                     .ok()
                     .and_then(|data| serde_json::from_slice::<Receipt>(&data).ok())
@@ -298,81 +295,68 @@ fn receipt_path(model: &Path) -> PathBuf {
     model.with_extension("gguf.verified.json")
 }
 
-/// A `'static` definition for `manifest`, as the catalog's are. Each is
-/// built once per ID and name, so the few bytes it keeps are bounded by the
-/// imports and renames a person makes.
-fn build(id: CustomModelId, manifest: &Manifest) -> &'static ModelDefinition {
-    let leak = |text: &str| -> &'static str { Box::leak(text.to_owned().into_boxed_str()) };
-    let languages: Vec<&'static str> = manifest
+fn build(id: CustomModelId, manifest: &Manifest) -> ModelDefinition {
+    let languages: Vec<_> = manifest
         .languages
         .iter()
         .filter_map(|code| known_language(code))
         .collect();
-    let languages: &'static [&'static str] = if languages.is_empty() {
-        &["en"]
-    } else {
-        Box::leak(languages.into_boxed_slice())
-    };
-    let architecture = ARCHITECTURES
-        .iter()
-        .find(|(name, _)| *name == manifest.architecture)
-        .map_or_else(|| leak(&manifest.architecture), |(name, _)| *name);
-    let artifact: &'static GgufArtifact = Box::leak(Box::new(GgufArtifact {
-        // `models_dir().join` keeps an absolute path, so a found file loads
-        // where it is.
-        filename: leak(&manifest.path.as_ref().map_or_else(
+    let artifact = GgufArtifact {
+        // Joining an absolute path keeps a found model in its original location.
+        filename: Cow::Owned(manifest.path.as_ref().map_or_else(
             || format!("custom/{}.gguf", id.digits()),
             |path| path.to_string_lossy().into_owned(),
         )),
         revision: "",
         repository: "",
         bytes: manifest.bytes,
-        sha256: leak(&manifest.sha256),
-        architecture,
-        variant: leak(&manifest.variant),
-    }));
-    Box::leak(Box::new(ModelDefinition {
+        sha256: Cow::Owned(manifest.sha256.clone()),
+        architecture: Cow::Owned(manifest.architecture.clone()),
+        variant: Cow::Owned(manifest.variant.clone()),
+    };
+    let accepts_language_hint = takes_language_hint(&manifest.architecture);
+    ModelDefinition {
         id: TranscriptionModelId::Custom(id),
-        name: leak(&manifest.name),
+        name: Cow::Owned(manifest.name.clone()),
         realtime: "Unknown",
         word_error_rate: None,
         streams: false,
-        runtime: ModelRuntime::Gguf(artifact),
-        languages,
-        accepts_language_hint: takes_language_hint(architecture),
-        supports_language_detection: manifest.detects_language && takes_language_hint(architecture),
-    }))
+        runtime: ModelRuntime::Gguf(Cow::Owned(artifact)),
+        languages: if languages.is_empty() {
+            Cow::Borrowed(&["en"])
+        } else {
+            Cow::Owned(languages)
+        },
+        accepts_language_hint,
+        supports_language_detection: manifest.detects_language && accepts_language_hint,
+    }
 }
 
-/// The definition for `id`: its manifest's, or a placeholder that is never
-/// available when nothing is imported under it (a deleted import, or an ID
-/// from another machine's settings).
-pub fn definition(id: CustomModelId) -> &'static ModelDefinition {
-    let mut registry = registry();
+/// A missing import retains its saved ID for fallback and user guidance.
+pub fn definition(id: CustomModelId) -> Arc<ModelDefinition> {
+    let registry = registry();
     if let Some(entry) = registry.entry(id) {
-        return entry.definition;
+        return entry.definition.clone();
     }
-    registry.placeholders.entry(id).or_insert_with(|| {
-        build(
-            id,
-            &Manifest {
-                name: "Imported model".into(),
-                metadata_name: String::new(),
-                architecture: String::new(),
-                variant: String::new(),
-                languages: vec!["en".into()],
-                detects_language: false,
-                bytes: 0,
-                sha256: "0".repeat(64),
-                source: String::new(),
-                license: None,
-                repository: None,
-                imported_at: 0,
-                path: None,
-                origin: None,
-            },
-        )
-    })
+    Arc::new(build(
+        id,
+        &Manifest {
+            name: "Imported model".into(),
+            metadata_name: String::new(),
+            architecture: String::new(),
+            variant: String::new(),
+            languages: vec!["en".into()],
+            detects_language: false,
+            bytes: 0,
+            sha256: "0".repeat(64),
+            source: String::new(),
+            license: None,
+            repository: None,
+            imported_at: 0,
+            path: None,
+            origin: None,
+        },
+    ))
 }
 
 /// Whether a found file is already in use as an import.
@@ -418,11 +402,8 @@ pub fn imported() -> Vec<Imported> {
         .entries
         .iter()
         .map(|entry| Imported {
-            definition: entry.definition,
-            architecture: match entry.definition.runtime {
-                ModelRuntime::Gguf(artifact) => artifact.architecture,
-                ModelRuntime::AppleSpeech => "",
-            },
+            definition: entry.definition.clone(),
+            architecture: entry.manifest.architecture.clone(),
             sha256: entry.manifest.sha256.clone(),
             source: entry.manifest.source.clone(),
             license: entry.manifest.license.clone(),
@@ -455,7 +436,7 @@ pub fn fallback() -> TranscriptionSelection {
     let recommended = super::models::recommended_selection(&language);
     let installed = |selection: &TranscriptionSelection| {
         let model = super::models::definition(selection.model);
-        model.available() && super::models::is_installed(model, &selection.language)
+        model.available() && super::models::is_installed(&model, &selection.language)
     };
     if installed(&recommended) {
         return recommended;
@@ -961,10 +942,10 @@ mod tests {
         let definition = definition(id);
         assert_eq!(definition.name, "Parakeet primeLine");
         assert_eq!(definition.id, TranscriptionModelId::Custom(id));
-        assert_eq!(definition.languages, ["en", "de"]);
+        assert_eq!(definition.languages.as_ref(), ["en", "de"]);
         assert!(!definition.accepts_language_hint && !definition.streams);
         assert!(is_registered(id));
-        let ModelRuntime::Gguf(artifact) = definition.runtime else {
+        let ModelRuntime::Gguf(artifact) = &definition.runtime else {
             unreachable!("imports are GGUF files")
         };
         assert_eq!(artifact.bytes, fs::metadata(&source).unwrap().len());
@@ -973,19 +954,23 @@ mod tests {
             super::super::models::sha256_hex(&source, None).unwrap()
         );
         assert!(
-            super::super::models::model_path(definition)
+            super::super::models::model_path(&definition)
                 .unwrap()
                 .is_file()
         );
+        let original = Arc::downgrade(&definition);
         // The same file again keeps the one import.
         assert_eq!(
             import(&source, Some("primeLine"), &AtomicBool::new(false)).unwrap(),
             id
         );
         assert_eq!(super::definition(id).name, "primeLine");
+        assert_eq!(definition.name, "Parakeet primeLine");
+        drop(definition);
+        assert!(original.upgrade().is_none());
         // A copy whose time moved but whose contents match repairs; one
         // that changed stays refused.
-        let copy = super::super::models::model_path(super::definition(id)).unwrap();
+        let copy = super::super::models::model_path(&super::definition(id)).unwrap();
         let receipt = receipt_path(&copy);
         let written = fs::read(&receipt).unwrap();
         fs::write(&receipt, br#"{"bytes":0,"sha256":"","modified_ns":0}"#).unwrap();
@@ -1016,8 +1001,10 @@ mod tests {
         rename(id, "  German  Parakeet ").unwrap();
         assert_eq!(super::definition(id).name, "German Parakeet");
         assert!(rename(id, "  ").is_err());
+        let removed = Arc::downgrade(&super::definition(id));
         remove(id).unwrap();
         assert!(!is_registered(id));
+        assert!(removed.upgrade().is_none());
         assert!(source.is_file());
         assert_eq!(super::definition(id).name, "Imported model");
         assert!(!super::definition(id).available());
@@ -1039,7 +1026,7 @@ mod tests {
         assert_eq!(status(id), Status::Ready);
         let model = definition(id);
         assert_eq!(model.name, "Mine");
-        assert_eq!(super::super::models::model_path(model).unwrap(), source);
+        assert_eq!(super::super::models::model_path(&model).unwrap(), source);
         let added = imported()
             .into_iter()
             .find(|import| import.definition.id == TranscriptionModelId::Custom(id))

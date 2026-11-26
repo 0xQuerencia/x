@@ -182,10 +182,10 @@ fn prepare_selection(
         let model = crate::transcription::models::validate(selection)?;
         if matches!(model.runtime, ModelRuntime::Gguf(_)) {
             if installed_only {
-                crate::transcription::models::verify_installed(model, canceled)?;
+                crate::transcription::models::verify_installed(&model, canceled)?;
                 progress.store(model.download_bytes().unwrap_or(0), Ordering::Relaxed);
             } else {
-                crate::transcription::models::download_with_progress(model, canceled, progress)?;
+                crate::transcription::models::download_with_progress(&model, canceled, progress)?;
             }
         }
         check_canceled()?;

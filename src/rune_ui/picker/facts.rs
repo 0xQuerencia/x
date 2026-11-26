@@ -46,7 +46,7 @@ impl State {
 }
 
 pub(super) struct Entry {
-    pub(super) def: &'static ModelDefinition,
+    pub(super) def: std::sync::Arc<ModelDefinition>,
     pub(super) recommendation: Option<Recommendation>,
     pub(super) supports: bool,
     pub(super) state: State,
@@ -66,16 +66,16 @@ pub(super) fn entries(ui: &Ui, language: &str, models: &[PickerModel]) -> Vec<En
     let details = picker::benchmark_details_on(ui);
     models
         .iter()
-        .map(|&(def, recommendation)| Entry {
-            def,
-            recommendation: picker::shown_recommendation(recommendation, def, language, details),
+        .map(|(def, recommendation)| Entry {
+            def: def.clone(),
+            recommendation: picker::shown_recommendation(*recommendation, def, language, details),
             supports: def.supports_language(language),
             state: state(ui, def, language),
         })
         .collect()
 }
 
-fn state(ui: &Ui, def: &'static ModelDefinition, language: &str) -> State {
+fn state(ui: &Ui, def: &ModelDefinition, language: &str) -> State {
     let installed = ui.picker.installed(def, def.language_for(language));
     if let Some((label, fraction)) = picker::preparation(ui, def) {
         State::Preparing { label, fraction }
@@ -218,7 +218,7 @@ pub(super) fn download_label(entry: &Entry) -> String {
     match entry.state {
         State::InUse | State::Downloaded => tr("Downloaded").into(),
         State::OnComputer => tr("On this computer").into(),
-        _ => size_text(entry.def),
+        _ => size_text(&entry.def),
     }
 }
 
@@ -271,13 +271,13 @@ pub(super) fn role(ui: &Ui, entry: &Entry, others: &[&Entry]) -> Option<&'static
         Some(Recommendation::Vocabulary) => Some(tr("Reads your vocabulary")),
         None if others.len() > 1
             && others.iter().all(|other| {
-                language_count(other.def) < language_count(entry.def)
+                language_count(&other.def) < language_count(&entry.def)
                     || other.def.id == entry.def.id
             }) =>
         {
             Some(tr("Most languages"))
         }
-        None if reads_vocabulary(ui, entry.def) => Some(tr("Reads your vocabulary")),
+        None if reads_vocabulary(ui, &entry.def) => Some(tr("Reads your vocabulary")),
         None => None,
     }
 }
@@ -382,7 +382,8 @@ pub(super) fn compact_progress(p: Paint, entry: &Entry) -> El {
 /// Use or Download for a model that can be chosen, at the button size of
 /// the compare columns.
 pub(super) fn choose_button(p: Paint, entry: &Entry, primary: bool) -> El {
-    let def = entry.def;
+    let def = entry.def.as_ref();
+    let id = def.id;
     let label = if downloads(entry) {
         tr_fill("Download {}", &def.size_label())
     } else {
@@ -397,17 +398,18 @@ pub(super) fn choose_button(p: Paint, entry: &Entry, primary: bool) -> El {
         } else {
             ButtonKind::Secondary
         },
-        move |ui: &mut Ui, _| choose(ui, def),
+        move |ui: &mut Ui, _| choose(ui, id),
     )
 }
 
 /// The list's quieter Use or download action, at row size.
 pub(super) fn row_choose_button(p: Paint, entry: &Entry) -> El {
-    let def = entry.def;
+    let def = entry.def.as_ref();
+    let id = def.id;
     if !downloads(entry) {
         return Button::new(tr("Use"))
             .variant(ButtonVariant::Neutral)
-            .on_press_tx(move |ui: &mut Ui, _| choose(ui, def))
+            .on_press_tx(move |ui: &mut Ui, _| choose(ui, id))
             .build_small_push(p.k)
             .key("choose-model");
     }
@@ -426,7 +428,7 @@ pub(super) fn row_choose_button(p: Paint, entry: &Entry) -> El {
                 )
                 .child(text(size).key("label").font(tnum(font)).color(ink))
         })
-        .on_press_tx(move |ui: &mut Ui, _| choose(ui, def))
+        .on_press_tx(move |ui: &mut Ui, _| choose(ui, id))
         .build_small_push(p.k)
         .key("choose-model")
         // A ghost's label lines up with the row's other right edges.
