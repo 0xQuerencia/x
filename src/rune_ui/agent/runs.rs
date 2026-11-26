@@ -161,31 +161,34 @@ pub(super) fn panel(p: Paint, snapshot: &Snapshot) -> El {
                     .wrap(),
             );
         for (index, step) in run.task.steps.iter().enumerate() {
+            let job = run.graph_jobs.get(index);
+            let title = format!("{} {}", step_glyph(&step.status), step.title);
+            let title = if job.is_some() {
+                title
+            } else {
+                let status = if step.status == "waiting_for_permission" {
+                    "waiting for permission"
+                } else {
+                    &step.status
+                };
+                format!("{title} · {status}")
+            };
             let mut line = col()
                 .key(format!("background-step-{id}-{index}"))
                 .gap(4.0)
                 .child(
-                    text(format!(
-                                "{} {} · {}",
-                                step_glyph(&step.status),
-                                step.title,
-                                if let Some(job) = run.graph_jobs.get(index) {
-                        line = line.child(activity_row(p, id, job));
-                    }
-                    if step.status == "waiting_for_permission" {
-                                    "waiting for permission"
-                                } else {
-                                    &step.status
-                                }
-                            ))
-                    .font(DESCRIPTION)
-                    .color(if step.status == "failed" {
-                        p.danger()
-                    } else {
-                        p.text()
-                    })
-                    .wrap(),
+                    text(title)
+                        .font(DESCRIPTION)
+                        .color(if step.status == "failed" {
+                            p.danger()
+                        } else {
+                            p.text()
+                        })
+                        .wrap(),
                 );
+            if let Some(job) = job {
+                line = line.child(activity_row(p, id, job));
+            }
             if !step.detail.is_empty() {
                 line = line.child(
                     text(step.detail.clone())
