@@ -39,13 +39,7 @@ impl Service {
             .ok_or("Workflow storage is not configured")?;
         let support = dir.parent().ok_or("Local data directory is unavailable")?;
         let journal = Journal::new(support.join("workflow-journal"));
-        let exact_claim = || {
-            journal
-                .snapshot()?
-                .into_iter()
-                .find(|claim| claim.run_id == run && claim.node_id == node)
-                .ok_or_else(|| "No matching recorded worktree".to_owned())
-        };
+        let exact_claim = || journal.exact_claim(run, node);
         let claim = exact_claim()?;
         if matches!(claim.state, State::Claimed | State::Unverified) {
             return Err("Review is unavailable while this claim's outcome is uncertain".into());
