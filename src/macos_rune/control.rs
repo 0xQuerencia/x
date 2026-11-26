@@ -866,7 +866,7 @@ fn status(
         meeting,
         model: ModelReport {
             id: selection.model.as_str().into(),
-            name: definition.name.into(),
+            name: definition.name.as_ref().to_owned(),
             language: selection.language.clone(),
             installed: crate::transcription::models::is_installed(&definition, &selection.language),
             preparing: published
