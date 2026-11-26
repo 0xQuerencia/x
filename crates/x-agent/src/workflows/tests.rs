@@ -323,6 +323,39 @@ mod validation {
     }
 
     #[test]
+    fn typed_text_requires_its_own_allowlisted_opener_and_plain_line() {
+        let h = home();
+        let mut workflow = coding(h.path());
+        workflow.steps = vec![
+            step("opener", open("terminal", None)),
+            step(
+                "note",
+                StepAction::TypeText {
+                    opened_by: "opener".into(),
+                    text: "Café".into(),
+                },
+            ),
+        ];
+        assert!(
+            workflow.validate(h.path()).unwrap_err()[0]
+                .message
+                .contains("text-editor")
+        );
+        workflow.steps[0].action = open("text-editor", None);
+        workflow.validate(h.path()).unwrap();
+        assert!(workflow.needs_approval());
+        workflow.steps[1].action = StepAction::TypeText {
+            opened_by: "opener".into(),
+            text: "one\ntwo".into(),
+        };
+        assert!(
+            workflow.validate(h.path()).unwrap_err()[0]
+                .message
+                .contains("one line")
+        );
+    }
+
+    #[test]
     fn arguments_are_checked() {
         let h = home();
         let outside_home = if cfg!(windows) { r"C:\Windows" } else { "/etc" };
@@ -794,6 +827,36 @@ mod running {
         assert_eq!(out.report.steps[0].status, StepStatus::Unverified);
         assert!(out.report.summary.contains("could not be verified"));
         assert!(!out.report.summary.contains("all 1 steps"));
+    }
+
+    #[test]
+    fn a_launch_without_readback_cannot_unlock_a_dependent_step() {
+        let h = home();
+        let host = Fake::new();
+        let mut wf = coding(h.path());
+        let mut dependent = step("dependent", open("firefox", None));
+        dependent.requires = vec!["docs".into()];
+        wf.steps = vec![
+            step(
+                "docs",
+                StepAction::OpenUrl {
+                    url: "https://docs.rs".into(),
+                },
+            ),
+            dependent,
+            step("independent", open("vscode", None)),
+        ];
+        let out = run(&wf, &host, &cfg(h.path()));
+        assert_eq!(
+            statuses(&out),
+            vec![
+                StepStatus::Unverified,
+                StepStatus::Skipped,
+                StepStatus::Done
+            ]
+        );
+        assert!(out.report.summary.contains("1 not run"));
+        assert!(!host.log().iter().any(|entry| entry.contains("firefox")));
     }
 
     #[test]

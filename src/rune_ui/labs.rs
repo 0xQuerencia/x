@@ -513,6 +513,7 @@ fn row_key(feature: Feature) -> &'static str {
         Feature::HideMenuBarIcon => "lab-hide-menu-bar-icon",
         Feature::MovableMeetingCapsules => "lab-movable-meeting-capsules",
         Feature::XAgent => "lab-x-agent",
+        Feature::GeminiTalkback => "lab-gemini-talkback",
     }
 }
 

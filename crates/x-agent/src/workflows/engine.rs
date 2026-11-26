@@ -168,6 +168,25 @@ pub trait Host: Send + Sync {
         stop.check()?;
         self.close_window(window)
     }
+    fn text_editor_ready(&self) -> Result<(), String> {
+        Err("Verified editor typing is unsupported on this desktop".into())
+    }
+    fn type_text(
+        &self,
+        _window: &WinInfo,
+        _text: &str,
+    ) -> Result<crate::tools::ExecutionOutcome, String> {
+        Err("Verified editor typing is unsupported on this desktop".into())
+    }
+    fn type_text_scoped(
+        &self,
+        window: &WinInfo,
+        text: &str,
+        stop: &crate::cancellation::Cancellation,
+    ) -> Result<crate::tools::ExecutionOutcome, String> {
+        stop.check()?;
+        self.type_text(window, text)
+    }
     fn opencode_ready(&self) -> Result<(), String>;
     fn opencode(&self, goal: &str, dir: &Path) -> Result<String, String>;
     /// Whether this step may run. The person approved the workflow as a whole; this is the
@@ -299,9 +318,9 @@ impl Run<'_> {
                 .steps
                 .iter()
                 .find(|s| s.id == *need)
-                .is_some_and(|s| matches!(s.status, StepStatus::Done | StepStatus::Unverified));
+                .is_some_and(|s| s.status == StepStatus::Done);
             if !ok {
-                return Err(format!("needs step {need:?}, which did not succeed"));
+                return Err(format!("needs step {need:?}, which was not verified"));
             }
         }
         Ok(())
@@ -374,12 +393,12 @@ impl Run<'_> {
             }
             self.reversals.extend(result.reversals);
             self.set(i, result.status, &result.detail);
+            if result.status == StepStatus::Cancelled || self.host.cancelled() {
+                self.mark_rest(i + 1, StepStatus::Skipped, "stopped before this step");
+                self.go(RunState::Cancelled);
+                return;
+            }
             match result.status {
-                StepStatus::Cancelled => {
-                    self.mark_rest(i + 1, StepStatus::Skipped, "stopped before this step");
-                    self.go(RunState::Cancelled);
-                    return;
-                }
                 StepStatus::Failed if step.on_failure == super::model::OnFailure::Stop => {
                     stopped_by = Some(format!("step {:?}", step.id));
                 }
@@ -406,6 +425,9 @@ fn summary(name: &str, state: RunState, steps: &[StepReport]) -> String {
         count(StepStatus::Skipped) + count(StepStatus::Pending) + count(StepStatus::Cancelled);
     let total = steps.len();
     match state {
+        RunState::Completed if skipped > 0 => {
+            format!("{name}: {done} verified, {unverified} unverified, {skipped} not run")
+        }
         RunState::Completed if unverified == 0 => {
             format!("{name}: all {total} steps done and checked")
         }

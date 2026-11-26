@@ -916,6 +916,56 @@ fn voice_flow_plans_from_the_hex_transcript_and_waits_for_approval() {
 }
 
 #[test]
+fn stop_after_transcription_prevents_the_automatic_desktop_plan() {
+    use std::sync::mpsc::{self, Receiver, Sender};
+
+    struct Preparing {
+        entered: Sender<()>,
+        release: Mutex<Receiver<()>>,
+    }
+    impl Launcher for Preparing {
+        fn launch(&self, _: &Action) -> Result<String, String> {
+            panic!("a stopped transcript cannot launch a desktop action");
+        }
+        fn prepare_window(
+            &self,
+            _: &crate::wm::Request,
+        ) -> Result<Option<crate::wm::WindowTarget>, String> {
+            self.entered.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap();
+            Ok(None)
+        }
+    }
+
+    let stt = Arc::new(FakeStt::default());
+    *stt.transcript.lock().unwrap() = Some(Ok("go to workspace three".into()));
+    let (entered, in_preparation) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let service = Service::new(
+        stt,
+        Arc::new(Preparing {
+            entered,
+            release: Mutex::new(released),
+        }),
+        None,
+    );
+    service.set_autonomy_mode(AutonomyMode::Autonomous);
+    service.voice_start(Mode::Actions).unwrap();
+    service.voice_stop().unwrap();
+    in_preparation.recv_timeout(Duration::from_secs(2)).unwrap();
+    service.cancel_foreground();
+    release.send(()).unwrap();
+    wait_for(&service, |_| service.lock().voice_route.is_none());
+    let snapshot = service.snapshot(0);
+    assert_eq!(snapshot.phase, Phase::Idle);
+    assert!(snapshot.task.is_none());
+}
+
+#[test]
 fn no_speech_returns_to_idle() {
     let (s, _, _) = rig();
     s.voice_start(Mode::Actions).unwrap();
@@ -1815,6 +1865,34 @@ mod saved_workflows {
     }
 
     #[test]
+    fn hands_free_and_external_workflows_wait_for_approval_in_autonomous_mode() {
+        let r = rig();
+        r.s.set_autonomy_mode(AutonomyMode::Autonomous);
+        let task = r.s.plan_hands_free("start coding", Mode::Actions).unwrap();
+        assert_eq!(r.s.snapshot(0).phase, Phase::AwaitingApproval);
+        r.s.cancel_foreground_task(task.id).unwrap();
+        assert!(r.host.windows_now().is_empty());
+
+        let mut workflow = r.s.workflow_store().get("coding").unwrap();
+        for action in [
+            StepAction::OpenUrl {
+                url: "https://docs.rs".into(),
+            },
+            StepAction::RunAction {
+                phrase: "search GitHub for rust".into(),
+            },
+        ] {
+            workflow.steps[0].action = action;
+            workflow.steps.truncate(1);
+            r.s.workflow_store().save(&workflow).unwrap();
+            let task = r.s.plan_workflow_by_id("coding").unwrap();
+            assert_eq!(r.s.snapshot(0).phase, Phase::AwaitingApproval);
+            r.s.cancel_foreground_task(task.id).unwrap();
+            assert!(r.s.approve(task.id).is_err());
+        }
+    }
+
+    #[test]
     fn legacy_trust_cannot_start_a_workflow_that_closes_a_window() {
         let r = rig();
         r.s.set_trust_actions(true);
@@ -1896,12 +1974,14 @@ mod saved_workflows {
     fn the_step_gate_follows_the_approval_state() {
         use crate::workflows::Host;
         let r = rig();
+        let task = r.s.plan("start coding", Mode::Actions).unwrap();
         let bridge = super::super::workflow::Bridge {
             svc: r.s.clone(),
             inner: r.host.clone(),
+            stop: r.s.lock().stop.clone(),
+            task_id: Some(task.id),
         };
         let step = coding(r.home.path()).steps[0].action.clone();
-        r.s.plan("start coding", Mode::Actions).unwrap();
         assert!(!bridge.permit(&step), "planned but not approved");
         r.s.lock().phase = Phase::Running; // as approve() would, without starting the run
         assert!(bridge.permit(&step), "approved and running");
@@ -1917,17 +1997,17 @@ mod saved_workflows {
     fn the_step_gate_refuses_anything_not_in_the_approved_run() {
         use crate::workflows::Host;
         let r = rig();
+        let task = r.s.plan("start coding", Mode::Actions).unwrap();
         let bridge = super::super::workflow::Bridge {
             svc: r.s.clone(),
             inner: r.host.clone(),
+            stop: r.s.lock().stop.clone(),
+            task_id: Some(task.id),
         };
         let wf = coding(r.home.path());
         let first = wf.steps[0].action.clone();
-        // Not approved yet: nothing is permitted.
-        assert!(!bridge.permit(&first));
-        let t = r.s.plan("start coding", Mode::Actions).unwrap();
         assert!(!bridge.permit(&first), "still awaiting approval");
-        r.s.approve(t.id).unwrap();
+        r.s.approve(task.id).unwrap();
         let stranger = StepAction::OpencodeTask {
             goal: "rm things".into(),
             directory: "~/projects/my-project".into(),
@@ -2023,9 +2103,12 @@ fn audit_records_approval_and_dispatch_without_the_command_text() {
     let audit = tempfile::tempdir().unwrap();
     let (s, _, launcher) = rig();
     s.configure_ledger(audit.path()).unwrap();
+    s.set_autonomy_mode(AutonomyMode::Autonomous);
     let task = s
         .plan("search youtube for private task content", Mode::Actions)
         .unwrap();
+    assert_eq!(s.snapshot(0).phase, Phase::AwaitingApproval);
+    assert!(launcher.launched.lock().unwrap().is_empty());
     s.approve(task.id).unwrap();
     wait_for(&s, |snapshot| snapshot.phase == Phase::Completed);
     assert_eq!(launcher.launched.lock().unwrap().len(), 1);
@@ -2045,7 +2128,7 @@ fn audit_records_approval_and_dispatch_without_the_command_text() {
         ["planned", "approved", "claimed", "launched", "finished"]
     );
     assert_eq!(records[2]["action"]["idempotency_key"]["task"], task.id);
-    assert_eq!(records[2]["action"]["risk"], "reversible");
+    assert_eq!(records[2]["action"]["risk"], "consequential");
     assert_eq!(records[4]["phase"], "completed");
 }
 

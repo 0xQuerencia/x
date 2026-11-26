@@ -27,6 +27,7 @@ pub enum EffectEvidence {
     ClipboardReadback,
     OwnedFileWrite,
     AccessibilityObservation,
+    AccessibilityTextReadback,
 }
 
 impl EffectEvidence {
@@ -37,6 +38,7 @@ impl EffectEvidence {
                 | Self::SystemReadback
                 | Self::ClipboardReadback
                 | Self::OwnedFileWrite
+                | Self::AccessibilityTextReadback
         )
     }
 }

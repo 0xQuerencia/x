@@ -8,9 +8,10 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use super::edit::{step, task};
-use super::{Review, Service, busy, emit};
+use super::{InputSource, Review, Service, busy, emit};
 use crate::cancellation::Cancellation;
 use crate::harness::{self, RunStatus};
 use crate::opencode;
@@ -19,13 +20,16 @@ use crate::tools::Action;
 use crate::wm::{Cap, WinInfo};
 use crate::workflows::{self, Config, Host, Match, StepStatus, Store, Workflow};
 
-const POLL: std::time::Duration = std::time::Duration::from_millis(150);
+const POLL: Duration = Duration::from_millis(150);
+const RUN_LIMIT: Duration = Duration::from_secs(180);
 
 /// Wraps a machine with what only the service knows: Stop, live step progress, and the
 /// supervised OpenCode runner.
 pub(super) struct Bridge {
     pub(super) svc: Service,
     pub(super) inner: Arc<dyn Host>,
+    pub(super) stop: Cancellation,
+    pub(super) task_id: Option<u64>,
 }
 
 impl Bridge {
@@ -33,18 +37,12 @@ impl Bridge {
         &self,
         action: impl FnOnce(&Cancellation) -> Result<T, String>,
     ) -> Result<T, String> {
-        let (id, stop) = {
-            let state = self.svc.lock();
-            (
-                state.task.as_ref().ok_or("No approved workflow task")?.id,
-                state.stop.clone(),
-            )
-        };
+        let id = self.task_id.ok_or("No approved workflow task")?;
         let _lease = self
             .svc
-            .acquire_desktop(id, &stop, std::time::Duration::from_secs(15))?;
-        stop.check()?;
-        action(&stop)
+            .acquire_desktop(id, &self.stop, Duration::from_secs(15))?;
+        self.stop.check()?;
+        action(&self.stop)
     }
 }
 
@@ -95,8 +93,11 @@ impl Host for Bridge {
     /// cancelled) is refused.
     fn permit(&self, action: &workflows::StepAction) -> bool {
         let s = self.svc.lock();
-        let allowed = !s.stop.requested()
+        let allowed = !self.stop.requested()
             && s.phase == Phase::Running
+            && s.task
+                .as_ref()
+                .is_some_and(|task| Some(task.id) == self.task_id)
             && s.workflow
                 .as_ref()
                 .is_some_and(|w| w.steps.iter().any(|st| &st.action == action));
@@ -108,6 +109,18 @@ impl Host for Bridge {
         allowed
     }
 
+    fn text_editor_ready(&self) -> Result<(), String> {
+        self.inner.text_editor_ready()
+    }
+
+    fn type_text(
+        &self,
+        window: &WinInfo,
+        text: &str,
+    ) -> Result<crate::tools::ExecutionOutcome, String> {
+        self.desktop(|stop| self.inner.type_text_scoped(window, text, stop))
+    }
+
     fn opencode_ready(&self) -> Result<(), String> {
         let found = self.svc.harness.is_some();
         found
@@ -116,12 +129,12 @@ impl Host for Bridge {
     }
 
     fn opencode(&self, goal: &str, dir: &Path) -> Result<String, String> {
-        let stop = self.svc.lock().stop.child();
+        let stop = self.stop.child();
         self.svc.run_opencode_step(goal, dir, &stop)
     }
 
     fn cancelled(&self) -> bool {
-        self.svc.lock().stop.requested()
+        self.stop.requested()
     }
 
     fn progress(&self, index: usize, status: StepStatus, detail: &str) {
@@ -226,6 +239,16 @@ impl Service {
     /// Plans a run of `wf`: validates it, checks that everything it needs exists (before
     /// anything is launched), then waits for approval.
     pub fn plan_workflow(&self, text: &str, wf: Workflow) -> Result<super::Task, String> {
+        self.plan_workflow_from(text, wf, InputSource::Text, None)
+    }
+
+    pub(super) fn plan_workflow_from(
+        &self,
+        text: &str,
+        wf: Workflow,
+        source: InputSource,
+        voice_route: Option<&Cancellation>,
+    ) -> Result<super::Task, String> {
         {
             let s = self.lock();
             if s.phase.is_busy() {
@@ -238,6 +261,8 @@ impl Service {
         let bridge = Bridge {
             svc: self.clone(),
             inner: self.machine(),
+            stop: Cancellation::default(),
+            task_id: None,
         };
         let problems = workflows::preflight(&wf, &bridge, &cfg);
         if !problems.is_empty() {
@@ -247,7 +272,7 @@ impl Service {
                 problems.join("; ")
             ));
         }
-        let task = self.begin_workflow_task(text, &wf)?;
+        let task = self.begin_workflow_task(text, &wf, source, voice_route)?;
         self.approve_if_automatic(task.id)?;
         Ok(task)
     }
@@ -259,15 +284,30 @@ impl Service {
         self.plan_workflow(&text, wf)
     }
 
-    fn begin_workflow_task(&self, text: &str, wf: &Workflow) -> Result<super::Task, String> {
+    fn begin_workflow_task(
+        &self,
+        text: &str,
+        wf: &Workflow,
+        source: InputSource,
+        voice_route: Option<&Cancellation>,
+    ) -> Result<super::Task, String> {
         let steps = wf
             .steps
             .iter()
-            .map(|s| step(&s.action.describe(), s.action.risk()))
+            .map(|s| {
+                let mut preview = step(&s.action.describe(), s.action.risk());
+                if let workflows::StepAction::TypeText { text, .. } = &s.action {
+                    preview.detail = format!("Literal line: {text:?}");
+                }
+                preview
+            })
             .collect();
         let mut s = self.lock();
         if s.phase.is_busy() {
             return Err(busy(s.phase));
+        }
+        if let Some(route) = voice_route {
+            route.check()?;
         }
         s.grants.clear();
         s.guard = None;
@@ -278,7 +318,7 @@ impl Service {
         t.phase = Phase::AwaitingApproval;
         s.phase = Phase::AwaitingApproval;
         s.actions = vec![];
-        s.review = if wf.needs_approval() {
+        s.review = if source == InputSource::HandsFree || wf.needs_approval() {
             Review::Required
         } else {
             Review::LowRisk
@@ -300,7 +340,16 @@ impl Service {
 
     /// The approved run, on its own thread.
     pub(super) fn run_workflow(&self) {
-        let Some(wf) = self.lock().workflow.clone() else {
+        let deadline = Instant::now() + RUN_LIMIT;
+        let (workflow, stop, task_id) = {
+            let state = self.lock();
+            (
+                state.workflow.clone(),
+                state.stop.until(deadline),
+                state.task.as_ref().map(|task| task.id),
+            )
+        };
+        let Some(wf) = workflow else {
             return self.finish(
                 Phase::Failed,
                 Some("The workflow is no longer pending".into()),
@@ -311,8 +360,13 @@ impl Service {
         let bridge = Bridge {
             svc: self.clone(),
             inner: self.machine(),
+            stop,
+            task_id,
         };
         let outcome = workflows::run(&wf, &bridge, &self.workflow_config());
+        if outcome.report.state == workflows::RunState::Cancelled && Instant::now() >= deadline {
+            self.emit("info", "Workflow stopped at its three-minute limit");
+        }
         self.workflow_store().record_last(&wf.id, &outcome.report);
         let report = &outcome.report;
         if report.undoable > 0 {

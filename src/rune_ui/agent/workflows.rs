@@ -27,9 +27,10 @@ pub(super) enum Kind {
     CloseOpenedWindow,
     RunAction,
     Opencode,
+    TypeText,
 }
 
-const KINDS: [Kind; 11] = [
+const KINDS: [Kind; 12] = [
     Kind::OpenApp,
     Kind::OpenTerminal,
     Kind::OpenDirectory,
@@ -41,6 +42,7 @@ const KINDS: [Kind; 11] = [
     Kind::CloseOpenedWindow,
     Kind::RunAction,
     Kind::Opencode,
+    Kind::TypeText,
 ];
 
 impl Kind {
@@ -57,6 +59,7 @@ impl Kind {
             Self::CloseOpenedWindow => "Close window opened by earlier step",
             Self::RunAction => "Run X action",
             Self::Opencode => "OpenCode task",
+            Self::TypeText => "Insert text into new editor",
         }
     }
 
@@ -91,6 +94,7 @@ impl Kind {
             Self::RunAction => Some("search github for rust lifetimes"),
             Self::CloseOpenedWindow => Some("step-1 (earlier opening step ID)"),
             Self::Opencode => Some("What OpenCode should do"),
+            Self::TypeText => Some("Literal text to insert"),
             _ => None,
         }
     }
@@ -108,7 +112,7 @@ pub(super) struct StepEd {
     /// 0 means automatic (only safe if a single window matches).
     pick: u8,
     text: TextEdit,
-    /// OpenCode's folder (its goal is `text`).
+    /// OpenCode folder or the earlier editor step ID for inserting text.
     folder: TextEdit,
 }
 
@@ -190,6 +194,11 @@ impl StepEd {
                 ed.kind = Kind::RunAction;
                 ed.text.text = phrase.clone();
             }
+            StepAction::TypeText { opened_by, text } => {
+                ed.kind = Kind::TypeText;
+                ed.text.text = text.clone();
+                ed.folder.text = opened_by.clone();
+            }
             StepAction::OpencodeTask { goal, directory } => {
                 ed.kind = Kind::Opencode;
                 ed.text.text = goal.clone();
@@ -246,6 +255,10 @@ impl StepEd {
             },
             Kind::RunAction => StepAction::RunAction {
                 phrase: self.text.text.trim().into(),
+            },
+            Kind::TypeText => StepAction::TypeText {
+                opened_by: self.folder.text.trim().into(),
+                text: self.text.text.clone(),
             },
             Kind::Opencode => StepAction::OpencodeTask {
                 goal: self.text.text.trim().into(),
@@ -1091,12 +1104,17 @@ fn step_row(p: Paint, step: &StepEd, i: usize, count: usize) -> El {
             },
         ));
     }
-    if kind == Kind::Opencode {
+    if matches!(kind, Kind::Opencode | Kind::TypeText) {
+        let hint = if kind == Kind::TypeText {
+            "Earlier editor step ID"
+        } else {
+            "~/projects/my-project"
+        };
         line = line.child(input(
             p,
             &step.folder,
             key("folder"),
-            tr("~/projects/my-project"),
+            tr(hint),
             move |ui: &mut Ui| match ui
                 .agent
                 .workflows
@@ -1170,6 +1188,22 @@ mod editor_tests {
         let editor = StepEd::from(&original);
         assert_eq!(editor.app_name(), "org.example.SpecialEditor");
         assert_eq!(editor.to_step(Some(&original)).action, original.action);
+    }
+
+    #[test]
+    fn editor_keeps_the_exact_literal_line_and_opener() {
+        let original = Step {
+            id: "note".into(),
+            action: StepAction::TypeText {
+                opened_by: "step-1".into(),
+                text: "  a literal line  ".into(),
+            },
+            requires: vec!["step-1".into()],
+            timeout_secs: None,
+            on_failure: OnFailure::Stop,
+        };
+        let editor = StepEd::from(&original);
+        assert_eq!(editor.to_step(Some(&original)), original);
     }
 
     #[test]
