@@ -348,6 +348,9 @@ impl ApprovedHarnessExecutor {
         claim: &Claim,
         stop: &Cancellation,
     ) -> Outcome {
+        if stop.requested() || self.journal.mark_dispatch(claim).is_err() {
+            return self.finish_failed(claim, stop, Outcome::Unverified);
+        }
         let result = test_runner::verify_approved_report(
             &self.worktrees,
             &assignment.project,
@@ -488,6 +491,9 @@ impl ApprovedHarnessExecutor {
             },
             allow_commands: commands,
         };
+        if stop.requested() || self.journal.mark_dispatch(claim).is_err() {
+            return self.finish_failed(claim, stop, Outcome::Unverified);
+        }
         let owned = match adapter.start(request, sink, stop) {
             Ok(owned) => owned,
             Err(_) => return self.finish_failed(claim, stop, Outcome::Failed),

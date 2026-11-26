@@ -14,7 +14,7 @@ use crate::grants::{Grants, Permission, Receipt, Scope};
 use crate::projects::Project;
 use crate::worktrees::{Manager, OwnedWorktree};
 
-const MAX_TEST_TIME: Duration = Duration::from_secs(120);
+pub(crate) const MAX_TEST_TIME: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
