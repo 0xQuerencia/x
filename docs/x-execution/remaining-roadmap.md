@@ -27,8 +27,8 @@ establish current native, installed-provider or physical acceptance.
 |---|---|---|---|
 | P01 | Reconcile current source and roadmap (A01, A11, H07) | DONE / MERGED | [#230](https://github.com/0xQuerencia/x/pull/230), merge `e4dc5a7dbeed2bd107b3ca17a8032a9a003b83b9`. Original criteria remain provisional until the source plan is supplied. |
 | P02 | Finish existing #226: exact diff/test review (B03, B11) | DONE / MERGED | [#226](https://github.com/0xQuerencia/x/pull/226), head `e155d2129ca25bc949989aec8d81d58587e01c72`, merge `45b9a7ee9ff5099fa461fc8c4133ede21ae1cef1`. |
-| P03 | Finish existing #227: correction loop (B14, A08, B04) | READY FOR CI | [#227](https://github.com/0xQuerencia/x/pull/227), head `fc447845bd1c2e4a8d0b5d82732412ac755ce4b0`. Local core and sanitizer passed. Exact preview jobs tracked below. |
-| P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | READY FOR CI | [#228](https://github.com/0xQuerencia/x/pull/228), head `25909ea36576b41c490a81903ccb2e1c13ab7b6a`. Combined local tests pass. It must follow #227 in main. |
+| P03 | Finish existing #227: correction loop (B14, A08, B04) | DONE / MERGED | [#227](https://github.com/0xQuerencia/x/pull/227), head `fc447845bd1c2e4a8d0b5d82732412ac755ce4b0`, merge `84a7a259f33abd21240cccde1419cf87578462a7`. Compile, all previews and Linux sanitizer passed. |
+| P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | READY FOR CI | [#228](https://github.com/0xQuerencia/x/pull/228), head `053117aa86f675ce8690fb1c0f5c82663bf74f92`. Merged #227 is in its base. Mac preview on the previous head timed out in the real graph fixture. Reacquisition now revalidates only released leases. |
 | P05 | Independent provider reconciliation (A02, A09, B11) | IN PROGRESS | [#231](https://github.com/0xQuerencia/x/pull/231), head `12ad692d8f44d6d172eec5042bed8536106a6d6c`. Local exact OpenCode readback passes. Independent terminal-turn correlation without a durable acknowledgement remains open. |
 | P06 | Reviewed retry/resume and recovery inventory (A09, A10, B11) | NOT STARTED | See the original-ID evidence below. |
 | P07 | Native Work result review (B03, B10, B11) | NOT STARTED | See the original-ID evidence below. |
@@ -121,7 +121,7 @@ establish current native, installed-provider or physical acceptance.
   passed. [macOS preview](https://github.com/0xQuerencia/x/actions/runs/45731455526),
   [Linux preview](https://github.com/0xQuerencia/x/actions/runs/45731523507) and
   [Windows preview](https://github.com/0xQuerencia/x/actions/runs/45731527534)
-  are the current artifact gates. Full Linux LeakSanitizer reproduced 8,736
+  passed on the merged tree. No public preview was published from the merge. Full Linux LeakSanitizer reproduced 8,736
   leaked bytes in 168 allocations on the earlier main tree and correction
   candidate. The allocations came from an intentionally forgotten test
   window handle. After the context engine took normal ownership, the full
@@ -144,7 +144,7 @@ establish current native, installed-provider or physical acceptance.
   evidence, duplicate mapping collapse and verified commit ancestry in a
   disposable checkout. Physical and full J01–J24 acceptance remain pending.
 - Additional memory ownership work is in progress in
-  `codex/x-owned-provider-output` and `codex/x-rune-allocation-lifetime`.
+  [#233](https://github.com/0xQuerencia/x/pull/233) and `codex/x-rune-allocation-lifetime`.
   The provider patch removes reader threads that could outlive a run with
   an inherited pipe. The Rune patch bounds scene label storage, drops stale
   onboarding editor allocations and keeps dynamic status strings out of the
