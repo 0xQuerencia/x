@@ -35,7 +35,7 @@ These maps distinguish implemented behavior and automated checks from physical
 desktop, microphone and release acceptance.
 Agents can [read retained transcripts](transcript-cli.md) and
 [control the running app](control-cli.md) with the release CLI.
-[Labs](labs.md) is one switch, on by default, for every unfinished feature.
+[Labs](labs.md) lists experimental features with individual opt-in switches.
 Its Restore shortcut default toggle (off by default) puts a Restore default
 button beside Paste last dictation's shortcut (#613); its Sort and filter
 models toggle (off by default) adds a sort and a saved-language filter to the
