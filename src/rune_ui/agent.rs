@@ -116,7 +116,15 @@ impl AgentPane {
             && (::x_agent::wm::recent_undo_available() || ::x_agent::sys::recent_undo_available());
         let undo_changed = can_undo != self.undo_visible;
         self.undo_visible = can_undo;
-        if serialized == self.shown {
+        let native_review_changed = self.snapshot.as_ref().is_some_and(|previous| {
+            previous.permission_waits != snapshot.permission_waits
+                || previous
+                    .background_runs
+                    .iter()
+                    .zip(&snapshot.background_runs)
+                    .any(|(old, current)| old.permission_waits != current.permission_waits)
+        });
+        if serialized == self.shown && !native_review_changed {
             return listed || undo_changed || composed || answered;
         }
         if self.workspace.text.is_empty()

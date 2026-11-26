@@ -5,7 +5,7 @@ use super::*;
 use crate::service::State as TaskState;
 
 /// A native control for one exact live review.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PermissionWait {
     pub step_index: usize,
     pub review_token: String,

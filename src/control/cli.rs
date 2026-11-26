@@ -702,17 +702,17 @@ fn offline_model(command: ModelCommand) -> u8 {
         ModelCommand::Status { model, language } => {
             let selection = selection(model, language)?;
             let model = definition(selection.model);
-            let installed = is_installed(model, &selection.language);
+            let installed = is_installed(&model, &selection.language);
             println!(
                 "{}\t{}\t{}\t{}",
                 if installed { "installed" } else { "missing" },
-                if installed && is_verified(model) {
+                if installed && is_verified(&model) {
                     "verified"
                 } else {
                     "unverified"
                 },
                 model.name,
-                model_path(model)?.display()
+                model_path(&model)?.display()
             );
             Ok(())
         }
