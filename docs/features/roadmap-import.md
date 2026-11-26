@@ -128,6 +128,24 @@ project/base identity are checked again when a saved graph is reviewed and
 immediately before its first dispatch. A new source state requires a new
 proposal; it never silently replaces the approved instructions.
 
+## Check linked implementation evidence
+
+An optional `Evidence` field accepts up to three distinct links:
+
+```md
+  Evidence: https://github.com/owner/repo/pull/123 @ 0123456789abcdef0123456789abcdef01234567
+```
+
+Use the full merge commit. Inspection labels each task's mapping `unmapped`,
+`needs_review`, or `ambiguous`. Duplicate identical links collapse into one.
+To check an exact link, use `hex agent roadmap evidence FILE` with the project,
+current inspection ID, task, repository, account, PR number and merge commit
+shown by `--help`. The registered checkout needs a matching GitHub remote URL.
+X reads the selected PR through the installed GitHub CLI, checks its merge
+commit and verifies ancestry in the inspected local checkout. A changed
+source, wrong project, stale merge or absent local ancestry prevents a
+confirmed mapping. Source completion and run approval stay under owner control.
+
 ## Implementation and verification limits
 
 `workflows/roadmap.rs` parses the structured document and validates provenance;

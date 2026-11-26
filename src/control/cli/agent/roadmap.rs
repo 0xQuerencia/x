@@ -1,5 +1,5 @@
 use super::*;
-use x_agent::service::roadmap::CommandRequest;
+use x_agent::service::roadmap::{CommandRequest, EvidenceRequest};
 use x_agent::verification::test_runner::Suite;
 use x_agent::workflows::dag::HarnessKind;
 
@@ -10,6 +10,26 @@ pub enum RoadmapCommand {
         file: String,
         #[arg(long)]
         project: String,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Check one source evidence link at an exact inspected revision.
+    Evidence {
+        file: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        inspection: String,
+        #[arg(long)]
+        task: String,
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        pull_request: u32,
+        #[arg(long)]
+        merge_commit: String,
         #[command(flatten)]
         output: Output,
     },
@@ -50,6 +70,39 @@ pub(super) fn route(command: RoadmapCommand) -> Result<(AgentAction, Output), St
             None,
             output,
         ),
+        RoadmapCommand::Evidence {
+            file,
+            project,
+            inspection,
+            task,
+            repository,
+            account,
+            pull_request,
+            merge_commit,
+            output,
+        } => {
+            let path = std::path::absolute(file)
+                .map_err(|_| "Could not resolve the selected roadmap file")?;
+            let request = EvidenceRequest {
+                project,
+                path,
+                inspection,
+                task,
+                repository,
+                account,
+                pull_request,
+                merge_commit,
+            };
+            let value = serde_json::to_string(&request)
+                .map_err(|_| "Could not encode the roadmap evidence request")?;
+            return Ok((
+                AgentAction::Workflow {
+                    command: "roadmap-evidence".into(),
+                    value,
+                },
+                output,
+            ));
+        }
         RoadmapCommand::Plan {
             file,
             project,
