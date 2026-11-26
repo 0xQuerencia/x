@@ -124,11 +124,8 @@ impl Host for SystemHost {
 
     #[cfg(target_os = "linux")]
     fn text_editor_ready(&self) -> Result<(), String> {
-        use crate::context::a11y::{Accessibility, Atspi};
-        if !wm::detect().is_ok_and(|backend| backend.name() == "Hyprland") {
-            return Err("Verified editor typing is unsupported on this desktop".into());
-        }
-        Atspi.available()
+        let backend = wm::detect()?;
+        wm::editor_typing_for(Some(backend.name())).ready()
     }
 
     #[cfg(target_os = "linux")]

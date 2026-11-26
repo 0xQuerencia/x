@@ -32,9 +32,11 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "linux")]
+pub(crate) use report::editor_typing_for;
 pub use report::{
-    CapabilityReport, Doctor, KeyFilePermissions, ProbeEvidence, ProbeSource, Report, SupportState,
-    detect, doctor, report,
+    CapabilityReport, Doctor, EditorTyping, KeyFilePermissions, ProbeEvidence, ProbeSource, Report,
+    SupportState, detect, doctor, report,
 };
 #[cfg(windows)]
 pub(crate) fn native_handle(id: &str) -> Option<usize> {

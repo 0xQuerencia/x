@@ -41,6 +41,13 @@ except Exception as e:  # missing python-gobject or at-spi2-core typelib
 
 pid = int(sys.argv[1])
 if pid == 0:
+    if OP == "editor_probe":
+        try:
+            desktop = Atspi.get_desktop(0)
+            if desktop is None or desktop.get_child_count() < 0:
+                out(error="the accessibility registry did not answer")
+        except Exception:
+            out(error="the accessibility registry did not answer")
     out(probe=True)
 deadline = time.monotonic() + BUDGET
 

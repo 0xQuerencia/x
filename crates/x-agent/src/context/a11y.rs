@@ -356,6 +356,11 @@ pub fn parse_done(bytes: &[u8]) -> Result<(), EditError> {
 
 impl Atspi {
     #[cfg(target_os = "linux")]
+    pub(crate) fn editor_ready(&self) -> Result<(), String> {
+        parse_reply(&run_op(0, "editor_probe", &serde_json::json!({}))?).map(drop)
+    }
+
+    #[cfg(target_os = "linux")]
     pub(crate) fn insert_checked(
         &self,
         pid: u32,

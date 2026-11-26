@@ -861,6 +861,11 @@ continues to describe the backend's advertised operations.
   opt-in.
 
 The probe performs no window changes and returns no window names or IDs.
+The separate `desktop.editor_typing` field describes literal workflow text.
+Hyprland reports `verify_target_on_use` when its AT-SPI registry answers, or
+`accessibility_unavailable` otherwise. KDE Wayland, Windows and macOS report
+`unsupported` for this operation. An answering registry alone cannot prove a
+specific editor or field is writable.
 
 The [desktop contract tests](../../crates/x-agent/src/wm/tests/contract.rs)
 exercise the controller with each adapter's advertised operations and check

@@ -156,6 +156,10 @@ fn saved_workflow_inserts_literal_text_once_and_rejects_a_reused_editor() {
     );
     let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
     let output = home.join("editor-text");
+    assert_eq!(
+        x_agent::wm::report().editor_typing,
+        x_agent::wm::EditorTyping::VerifyTargetOnUse
+    );
     let (requests, _requested) = channel();
     let (_reply, replies) = channel();
     let service = Service::new(

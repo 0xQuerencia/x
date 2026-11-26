@@ -55,6 +55,50 @@ pub struct CapabilityReport {
     pub evidence: ProbeEvidence,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorTyping {
+    Unsupported,
+    AccessibilityUnavailable,
+    VerifyTargetOnUse,
+}
+
+impl EditorTyping {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn ready(self) -> Result<(), String> {
+        match self {
+            Self::VerifyTargetOnUse => Ok(()),
+            Self::AccessibilityUnavailable => {
+                Err("The desktop accessibility registry is unavailable".into())
+            }
+            Self::Unsupported => {
+                Err("Verified editor typing is unsupported on this desktop".into())
+            }
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Unsupported => "unsupported",
+            Self::AccessibilityUnavailable => "accessibility unavailable",
+            Self::VerifyTargetOnUse => "accessibility answered, editor checked at execution",
+        }
+    }
+}
+
+pub(crate) fn editor_typing_for(backend: Option<&str>) -> EditorTyping {
+    #[cfg(target_os = "linux")]
+    if backend == Some("Hyprland") {
+        return if crate::context::a11y::Atspi.editor_ready().is_ok() {
+            EditorTyping::VerifyTargetOnUse
+        } else {
+            EditorTyping::AccessibilityUnavailable
+        };
+    }
+    let _ = backend;
+    EditorTyping::Unsupported
+}
+
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub desktop: String,
@@ -63,6 +107,7 @@ pub struct Report {
     /// Legacy field containing the selected backend's advertised operations.
     pub supported: Vec<Cap>,
     pub capabilities: Vec<CapabilityReport>,
+    pub editor_typing: EditorTyping,
     pub note: String,
 }
 
@@ -223,6 +268,7 @@ pub(super) fn report_for(backend: Result<&dyn Backend, &SelectionFailure>) -> Re
         } else {
             env("XDG_SESSION_TYPE")
         },
+        editor_typing: editor_typing_for(name.as_deref()),
         backend: name,
         supported,
         capabilities,
@@ -452,6 +498,10 @@ impl Doctor {
             };
             lines.push(format!("{name}: {state} ({detail})"));
         }
+        lines.push(format!(
+            "Verified editor typing: {}",
+            self.desktop.editor_typing.label()
+        ));
         if !self.desktop.note.is_empty() {
             lines.push(self.desktop.note.clone());
         }
@@ -503,6 +553,18 @@ mod doctor_tests {
     use super::*;
 
     #[test]
+    fn unverified_platforms_do_not_advertise_editor_typing() {
+        for backend in [
+            None,
+            Some("KDE Plasma 6"),
+            Some("Windows 11 (Win32)"),
+            Some("macOS Accessibility"),
+        ] {
+            assert_eq!(editor_typing_for(backend), EditorTyping::Unsupported);
+        }
+    }
+
+    #[test]
     fn missing_dependency_is_named_and_fails_readiness() {
         let checks = probe_with("Hyprland", |bin| bin != "wtype");
         assert!(
@@ -548,6 +610,7 @@ mod doctor_tests {
     fn advertised_window_listing_is_not_ready_without_readback() {
         let checks = probe_with("Hyprland", |_| true);
         let mut desktop = Report {
+            editor_typing: EditorTyping::Unsupported,
             desktop: "Hyprland".into(),
             session: "wayland".into(),
             backend: Some("Hyprland".into()),
