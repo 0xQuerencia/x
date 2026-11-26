@@ -393,12 +393,12 @@ impl Run<'_> {
             }
             self.reversals.extend(result.reversals);
             self.set(i, result.status, &result.detail);
+            if result.status == StepStatus::Cancelled || self.host.cancelled() {
+                self.mark_rest(i + 1, StepStatus::Skipped, "stopped before this step");
+                self.go(RunState::Cancelled);
+                return;
+            }
             match result.status {
-                StepStatus::Cancelled => {
-                    self.mark_rest(i + 1, StepStatus::Skipped, "stopped before this step");
-                    self.go(RunState::Cancelled);
-                    return;
-                }
                 StepStatus::Failed if step.on_failure == super::model::OnFailure::Stop => {
                     stopped_by = Some(format!("step {:?}", step.id));
                 }

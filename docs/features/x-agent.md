@@ -371,6 +371,7 @@ Saved runs that open a website, use a spoken action step, close a window, or
 run OpenCode require approval in Autonomous mode too. Hands-free speech can
 prepare a saved run for approval. A sequential step with `requires` waits
 for a verified predecessor. An unverified launch skips dependent steps.
+Sequential runs allow at most 20 steps and stop when they reach three minutes.
 
 ### Verified literal text in a sequential workflow
 

@@ -1924,12 +1924,14 @@ mod saved_workflows {
     fn the_step_gate_follows_the_approval_state() {
         use crate::workflows::Host;
         let r = rig();
+        let task = r.s.plan("start coding", Mode::Actions).unwrap();
         let bridge = super::super::workflow::Bridge {
             svc: r.s.clone(),
             inner: r.host.clone(),
+            stop: r.s.lock().stop.clone(),
+            task_id: Some(task.id),
         };
         let step = coding(r.home.path()).steps[0].action.clone();
-        r.s.plan("start coding", Mode::Actions).unwrap();
         assert!(!bridge.permit(&step), "planned but not approved");
         r.s.lock().phase = Phase::Running; // as approve() would, without starting the run
         assert!(bridge.permit(&step), "approved and running");
@@ -1945,17 +1947,17 @@ mod saved_workflows {
     fn the_step_gate_refuses_anything_not_in_the_approved_run() {
         use crate::workflows::Host;
         let r = rig();
+        let task = r.s.plan("start coding", Mode::Actions).unwrap();
         let bridge = super::super::workflow::Bridge {
             svc: r.s.clone(),
             inner: r.host.clone(),
+            stop: r.s.lock().stop.clone(),
+            task_id: Some(task.id),
         };
         let wf = coding(r.home.path());
         let first = wf.steps[0].action.clone();
-        // Not approved yet: nothing is permitted.
-        assert!(!bridge.permit(&first));
-        let t = r.s.plan("start coding", Mode::Actions).unwrap();
         assert!(!bridge.permit(&first), "still awaiting approval");
-        r.s.approve(t.id).unwrap();
+        r.s.approve(task.id).unwrap();
         let stranger = StepAction::OpencodeTask {
             goal: "rm things".into(),
             directory: "~/projects/my-project".into(),
