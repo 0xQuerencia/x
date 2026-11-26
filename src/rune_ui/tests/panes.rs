@@ -1760,14 +1760,21 @@ fn a_labs_link_opens_labs_pulses_its_row_and_leaves_it_off() {
     let feature = Feature::VocabularyBiasing;
     assert!(!feature.on(&rt.state.settings));
     rt.update(|ui, tx| super::super::labs::reveal(ui, Some(feature.name()), tx));
+    let (flashed, started) = rt
+        .state
+        .lab_flash
+        .expect("the requested Lab pulses immediately");
+    assert_eq!(flashed, feature);
+    assert!(!super::super::labs::poll_flash(&mut rt.state, started));
+    assert!(super::super::labs::poll_flash(
+        &mut rt.state,
+        started + std::time::Duration::from_secs(5),
+    ));
+    assert!(rt.state.lab_flash.is_none());
     settle(&mut rt);
     assert!(rt.state.labs_open);
-    assert_eq!(rt.state.lab_flash.map(|(f, _)| f), Some(feature));
     assert!(rt.find("lab-vocabulary-biasing").is_some());
     assert!(!feature.on(&rt.state.settings), "a link never flips it");
-    let later = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    assert!(super::super::labs::poll_flash(&mut rt.state, later));
-    assert!(rt.state.lab_flash.is_none());
 }
 
 #[test]
