@@ -48,7 +48,9 @@ impl Service {
         let Some(step) = s.task.as_mut().and_then(|t| t.steps.get_mut(idx)) else {
             return;
         };
-        if step.status == status || (step.status == "stopping" && status == "running") {
+        if step.status == status
+            || (step.status == "stopping" && matches!(status, "running" | "waiting_for_permission"))
+        {
             return;
         }
         step.status = status.into();

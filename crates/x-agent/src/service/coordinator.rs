@@ -251,6 +251,53 @@ impl Service {
         })
     }
 
+    pub(super) fn release_idle_graph_projects(&self, task_id: u64, active: &[&std::path::Path]) {
+        if let Ok(mut coordinator) = self.coordinator.lock()
+            && let Some(roots) = coordinator.leases.get_mut(&task_id)
+        {
+            roots.retain(|root| active.contains(&root.as_path()));
+        }
+    }
+
+    /// None means another run owns this project. True means a released
+    /// reservation was reacquired and the recorded project must be rechecked.
+    pub(super) fn try_reacquire_graph_project(
+        &self,
+        task_id: u64,
+        root: &std::path::Path,
+    ) -> Option<bool> {
+        let mut coordinator = self.coordinator.lock().ok()?;
+        if coordinator
+            .leases
+            .get(&task_id)?
+            .iter()
+            .any(|path| path == root)
+        {
+            return Some(false);
+        }
+        if coordinator.leases.iter().any(|(owner, held)| {
+            *owner != task_id
+                && held
+                    .iter()
+                    .any(|path| root.starts_with(path) || path.starts_with(root))
+        }) {
+            return None;
+        }
+        coordinator
+            .leases
+            .get_mut(&task_id)?
+            .push(root.to_path_buf());
+        Some(true)
+    }
+
+    pub(super) fn release_graph_project(&self, task_id: u64, root: &std::path::Path) {
+        if let Ok(mut coordinator) = self.coordinator.lock()
+            && let Some(roots) = coordinator.leases.get_mut(&task_id)
+        {
+            roots.retain(|held| held != root);
+        }
+    }
+
     fn for_run(&self, run: &Run) -> Self {
         let mut service = self.clone();
         service.state = Arc::clone(&run.state);
@@ -264,6 +311,23 @@ impl Service {
             .unwrap_or_else(|p| p.into_inner())
             .runs
             .clone()
+    }
+
+    /// Exact current foreground or retained background task, without fallback.
+    pub(super) fn service_for_task(&self, task_id: u64) -> Result<Self, String> {
+        if self
+            .lock()
+            .task
+            .as_ref()
+            .is_some_and(|task| task.id == task_id)
+        {
+            return Ok(self.clone());
+        }
+        self.runs()
+            .into_iter()
+            .find(|run| run.id == task_id)
+            .map(|run| self.for_run(&run))
+            .ok_or_else(|| "No task with that exact ID".into())
     }
 
     pub(super) fn background_snapshots(&self) -> Vec<BackgroundSnapshot> {
@@ -361,7 +425,12 @@ pub(super) fn cancellable_jobs(state: &State) -> Vec<usize> {
         task.steps
             .iter()
             .enumerate()
-            .filter(|(_, step)| matches!(step.status.as_str(), "pending" | "running"))
+            .filter(|(_, step)| {
+                matches!(
+                    step.status.as_str(),
+                    "pending" | "running" | "waiting_for_permission"
+                )
+            })
             .map(|(index, _)| index)
             .collect()
     })
