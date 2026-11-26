@@ -3,10 +3,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+mod renewal;
+use renewal::Renewal;
 
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +48,7 @@ impl Outcome {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NodeUpdate {
+    WaitingForPermission,
     Running,
     Finished(Outcome),
 }
@@ -72,6 +76,12 @@ pub trait Executor: Send + Sync + 'static {
     /// model output alone must never grant isolation.
     fn verified_worktree_key(&self, _node: &Node) -> Option<String> {
         None
+    }
+    /// Release reservations with no active worker while a node awaits approval.
+    fn release_idle_projects(&self, _active: &[&Node]) {}
+    /// A paused graph can dispatch only after reacquiring its project.
+    fn try_acquire_project(&self, _node: &Node) -> Result<bool, String> {
+        Ok(true)
     }
     /// Optional native diagnostic, never model prose or raw process output.
     fn outcome_reason(&self, _node: &Node) -> Option<String> {
@@ -125,6 +135,7 @@ fn resource(node: &Node, executor: &dyn Executor) -> Resource {
 pub(crate) struct JobStops {
     root: Cancellation,
     nodes: Vec<Cancellation>,
+    renewals: Arc<Mutex<HashMap<usize, Renewal>>>,
 }
 
 impl JobStops {
@@ -132,6 +143,7 @@ impl JobStops {
         Self {
             root: root.clone(),
             nodes: (0..count).map(|_| root.child()).collect(),
+            renewals: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -219,6 +231,8 @@ pub(crate) fn run_observed_scoped(
 
     loop {
         let mut progressed = false;
+        let mut waiting_for_permission = false;
+        let mut waiting_for_project = false;
         if stop.requested() {
             stop_new = true;
         }
@@ -232,6 +246,7 @@ pub(crate) fn run_observed_scoped(
                     continue;
                 }
                 if stops.requested(index) {
+                    stops.close_permission_review(index);
                     finished[index] = Some(Outcome::Cancelled);
                     notes[index] = "Individual Stop prevented dispatch".into();
                     observe(index, NodeUpdate::Finished(Outcome::Cancelled));
@@ -289,10 +304,23 @@ pub(crate) fn run_observed_scoped(
                 {
                     continue;
                 }
-                // Revoked permissions must also be checked right before dispatch.
-                if !executor.authorized(node) {
+                // Only an exact expired, unspent queued approval can wait for
+                // renewal. Revocation, changed identity and exhausted approval
+                // remain terminal refusals. No worker or resource is acquired.
+                let authorized = executor.authorized(node);
+                if !authorized && let Some(first) = stops.wait_for_permission(index) {
+                    if first {
+                        observe(index, NodeUpdate::WaitingForPermission);
+                    }
+                    waiting_for_permission = true;
+                    continue;
+                }
+                // Review can arrive between the two checks. Do not mistake a
+                // successful renewal for revocation, or skip the dispatch gate.
+                if !authorized && !executor.authorized(node) {
                     finished[index] = Some(Outcome::Failed);
-                    notes[index] = "Approval was revoked before dispatch".into();
+                    notes[index] =
+                        "Approval expired, was revoked, or no longer matches the job".into();
                     observe(index, NodeUpdate::Finished(Outcome::Failed));
                     if node.on_failure == super::model::OnFailure::Stop {
                         stop_new = true;
@@ -300,6 +328,25 @@ pub(crate) fn run_observed_scoped(
                     progressed = true;
                     continue;
                 }
+                match executor.try_acquire_project(node) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        waiting_for_project = true;
+                        continue;
+                    }
+                    Err(reason) => {
+                        stops.close_permission_review(index);
+                        finished[index] = Some(Outcome::Failed);
+                        notes[index] = reason;
+                        observe(index, NodeUpdate::Finished(Outcome::Failed));
+                        if node.on_failure == super::model::OnFailure::Stop {
+                            stop_new = true;
+                        }
+                        progressed = true;
+                        continue;
+                    }
+                }
+                stops.close_permission_review(index);
                 let runner = Arc::clone(&executor);
                 let tx = send.clone();
                 let task = node.clone();
@@ -335,9 +382,26 @@ pub(crate) fn run_observed_scoped(
             }
         }
 
+        if stop_new {
+            stops.close_permission_reviews();
+        }
+        if waiting_for_permission && !stop_new {
+            let running = active
+                .keys()
+                .map(|index| &graph.nodes[*index])
+                .collect::<Vec<_>>();
+            executor.release_idle_projects(&running);
+        }
         if active.is_empty() {
-            if !progressed || stop_new || finished.iter().all(Option::is_some) {
+            if stop_new || finished.iter().all(Option::is_some) {
                 break;
+            }
+            if !progressed {
+                if waiting_for_permission || waiting_for_project {
+                    thread::sleep(STOP_POLL);
+                } else {
+                    break;
+                }
             }
             continue;
         }
@@ -390,6 +454,7 @@ pub(crate) fn run_observed_scoped(
         }
     }
 
+    stops.close_permission_reviews();
     let interrupted = stop.requested();
     for (index, outcome) in finished.iter().enumerate() {
         if outcome.is_none() {
@@ -517,6 +582,131 @@ mod tests {
             roadmap: None,
             nodes: vec![job("front", first, &[]), job("back", second, &[])],
         }
+    }
+
+    #[test]
+    fn expired_ready_node_waits_for_exact_review_without_replaying_predecessor() {
+        queued_renewal_fixture(false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "runs a real 61-second provider predecessor"]
+    fn delayed_provider_predecessor_leaves_only_exact_queued_renewal() {
+        queued_renewal_fixture(true);
+    }
+
+    fn queued_renewal_fixture(real_delay: bool) {
+        use crate::grants::{Grants, Permission, Receipt, Scope};
+        use uuid::Uuid;
+
+        struct QueueRunner {
+            grants: Arc<Grants>,
+            receipt: Receipt,
+            scope: Scope,
+            ran: Mutex<Vec<String>>,
+            real_delay: bool,
+        }
+
+        impl Executor for QueueRunner {
+            fn authorized(&self, node: &Node) -> bool {
+                node.id != "back"
+                    || self
+                        .grants
+                        .check(&self.receipt, Permission::QueueHarness, &self.scope)
+                        .is_ok()
+            }
+
+            fn execute(&self, node: Node, stop: Cancellation) -> Outcome {
+                self.ran.lock().unwrap().push(node.id.clone());
+                if node.id == "front" {
+                    if self.real_delay {
+                        let mut fixture = std::process::Command::new("sh");
+                        fixture.args(["-c", "sleep 61 && printf fixture-provider-completed"]);
+                        let (success, output) = crate::desktop::capture_scoped(
+                            &mut fixture,
+                            Duration::from_secs(75),
+                            Some(&stop),
+                        )
+                        .unwrap();
+                        assert!(success);
+                        assert_eq!(output, b"fixture-provider-completed");
+                    } else {
+                        self.grants.expire_for_test(&self.receipt);
+                    }
+                }
+                Outcome::Verified
+            }
+        }
+
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let mut graph = graph(&first.to_string(), &second.to_string());
+        graph.nodes[1].requires.push("front".into());
+        let stop = Cancellation::default();
+        let stops = JobStops::new(graph.nodes.len(), &stop);
+        let grants = Arc::new(Grants::default());
+        let scope = Scope::Task {
+            project_id: second,
+            run_id: Uuid::new_v4(),
+            node_id: "back".into(),
+            intent: "exact reviewed recipe".into(),
+        };
+        let receipt = grants
+            .issue(
+                Permission::QueueHarness,
+                scope.clone(),
+                Duration::from_secs(60),
+                1,
+                true,
+            )
+            .unwrap();
+        stops
+            .register_renewal(
+                1,
+                Arc::clone(&grants),
+                receipt,
+                Permission::QueueHarness,
+                scope.clone(),
+            )
+            .unwrap();
+        let runner = Arc::new(QueueRunner {
+            grants,
+            receipt,
+            scope,
+            ran: Mutex::new(vec![]),
+            real_delay,
+        });
+        let mut waited = 0;
+        let report = run_observed_scoped(
+            &graph,
+            Path::new("/tmp"),
+            runner.clone(),
+            &stops,
+            2,
+            |index, update| {
+                if update == NodeUpdate::WaitingForPermission {
+                    assert_eq!(index, 1);
+                    assert_eq!(*runner.ran.lock().unwrap(), ["front"]);
+                    assert!(!runner.authorized(&graph.nodes[index]));
+                    assert_eq!(runner.grants.pending_count().unwrap(), 0);
+                    let token = stops.permission_review_token(index).unwrap();
+                    assert!(stops.renew_permission(index, Uuid::new_v4()).is_err());
+                    stops.renew_permission(index, token).unwrap();
+                    assert!(stops.renew_permission(index, token).is_err());
+                    waited += 1;
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(waited, 1);
+        assert_eq!(*runner.ran.lock().unwrap(), ["front", "back"]);
+        assert!(
+            report
+                .nodes
+                .iter()
+                .all(|node| node.outcome == Outcome::Verified)
+        );
     }
 
     #[test]

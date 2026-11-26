@@ -9,6 +9,10 @@ use crate::workflows::scheduler::Executor;
 
 pub(super) struct GraphExecutor {
     coding: ApprovedHarnessExecutor,
+    service: Service,
+    task_id: u64,
+    registry: Arc<Registry>,
+    projects: HashMap<String, Project>,
     pub(super) desktop: DesktopExecutor,
 }
 
@@ -21,6 +25,43 @@ impl Executor for GraphExecutor {
     }
     fn verified_worktree_key(&self, node: &Node) -> Option<String> {
         self.coding.verified_worktree_key(node)
+    }
+    fn release_idle_projects(&self, active: &[&Node]) {
+        let roots = active
+            .iter()
+            .filter_map(|node| self.projects.get(node.job.project_id()?))
+            .map(|project| project.root.as_path())
+            .collect::<Vec<_>>();
+        self.service
+            .release_idle_graph_projects(self.task_id, &roots);
+    }
+    fn try_acquire_project(&self, node: &Node) -> Result<bool, String> {
+        let Some(id) = node.job.project_id() else {
+            return Ok(true);
+        };
+        let expected = self
+            .projects
+            .get(id)
+            .ok_or("The reviewed project is unavailable")?;
+        let Some(reacquired) = self
+            .service
+            .try_reacquire_graph_project(self.task_id, &expected.root)
+        else {
+            return Ok(false);
+        };
+        if reacquired {
+            let unchanged = self.registry.validated_resolve(id).is_ok_and(|current| {
+                current.id == expected.id
+                    && current.root == expected.root
+                    && current.git_common_dir == expected.git_common_dir
+            });
+            if !unchanged {
+                self.service
+                    .release_graph_project(self.task_id, &expected.root);
+                return Err("The registered project changed while the node waited".into());
+            }
+        }
+        Ok(true)
     }
     fn outcome_reason(&self, node: &Node) -> Option<String> {
         match node.job {
@@ -42,6 +83,7 @@ impl Service {
         workflow: &PendingGraph,
         run: Uuid,
         stop: &Cancellation,
+        stops: &JobStops,
     ) -> Result<GraphExecutor, String> {
         let grants = self.scoped_grants();
         let mut issued = Vec::new();
@@ -54,7 +96,8 @@ impl Service {
                 .ok_or("The graph no longer has an approved task")?
                 .id;
             let mut assignments = Vec::new();
-            for (node, job) in workflow.graph.nodes.iter().zip(&workflow.jobs) {
+            for (index, (node, job)) in workflow.graph.nodes.iter().zip(&workflow.jobs).enumerate()
+            {
                 let Some(job) = job else {
                     continue;
                 };
@@ -62,12 +105,19 @@ impl Service {
                 let scope = planned_scope(node, job.project.id, run, &job.commit, &proof)?;
                 let receipt = grants.issue(
                     queue_permission(node),
-                    scope,
+                    scope.clone(),
                     Duration::from_secs(30 * 60),
                     1,
                     true,
                 )?;
                 issued.push(receipt);
+                stops.register_renewal(
+                    index,
+                    Arc::clone(&grants),
+                    receipt,
+                    queue_permission(node),
+                    scope,
+                )?;
                 assignments.push(Assignment::from_planned_scope(
                     node,
                     job.project.clone(),
@@ -132,7 +182,20 @@ impl Service {
                 Arc::clone(&grants),
                 Arc::clone(&workflow.journal),
             )?;
-            Ok(GraphExecutor { coding, desktop })
+            let projects = workflow
+                .jobs
+                .iter()
+                .flatten()
+                .map(|job| (job.project.id.to_string(), job.project.clone()))
+                .collect();
+            Ok(GraphExecutor {
+                coding,
+                service: self.clone(),
+                task_id,
+                registry: Arc::clone(&workflow.registry),
+                projects,
+                desktop,
+            })
         })();
         if result.is_err() {
             for receipt in issued {

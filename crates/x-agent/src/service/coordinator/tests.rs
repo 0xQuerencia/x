@@ -218,6 +218,35 @@ fn real_background_processes_keep_independent_state_and_foreground_commands_work
 
 #[cfg(unix)]
 #[test]
+fn permission_wait_releases_only_idle_projects_and_requires_reacquisition() {
+    let (_directory, service, _, roots) = fixture();
+    let graph = service
+        .reserve_roots(101, vec![roots[0].clone(), roots[1].clone()])
+        .unwrap();
+    assert!(service.reserve_roots(102, vec![roots[1].clone()]).is_err());
+
+    service.release_idle_graph_projects(101, &[roots[0].as_path()]);
+    assert!(!service.workers_finished());
+    assert!(service.reserve_roots(102, vec![roots[0].clone()]).is_err());
+    let independent = service.reserve_roots(102, vec![roots[1].clone()]).unwrap();
+    assert_eq!(service.try_reacquire_graph_project(101, &roots[1]), None);
+
+    drop(independent);
+    assert_eq!(
+        service.try_reacquire_graph_project(101, &roots[1]),
+        Some(true)
+    );
+    assert_eq!(
+        service.try_reacquire_graph_project(101, &roots[1]),
+        Some(false)
+    );
+    assert!(service.reserve_roots(103, vec![roots[1].clone()]).is_err());
+    drop(graph);
+    assert!(service.workers_finished());
+}
+
+#[cfg(unix)]
+#[test]
 fn project_lease_refusal_preserves_the_exact_pending_preview() {
     let (_directory, service, _, roots) = fixture();
     let first = start(&service, &roots[0]);
