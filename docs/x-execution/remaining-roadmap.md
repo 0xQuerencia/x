@@ -29,13 +29,13 @@ establish current native, installed-provider or physical acceptance.
 | P02 | Finish existing #226: exact diff/test review (B03, B11) | DONE / MERGED | [#226](https://github.com/0xQuerencia/x/pull/226), head `e155d2129ca25bc949989aec8d81d58587e01c72`, merge `45b9a7ee9ff5099fa461fc8c4133ede21ae1cef1`. |
 | P03 | Finish existing #227: correction loop (B14, A08, B04) | DONE / MERGED | [#227](https://github.com/0xQuerencia/x/pull/227), head `fc447845bd1c2e4a8d0b5d82732412ac755ce4b0`, merge `84a7a259f33abd21240cccde1419cf87578462a7`. Compile, all previews and Linux sanitizer passed. |
 | P04 | Finish existing #228: exact queued permission renewal (A03, A04, A05, C03) | DONE / MERGED | [#228](https://github.com/0xQuerencia/x/pull/228), head `053117aa86f675ce8690fb1c0f5c82663bf74f92`, merge `bd6a58461371999be8c99d179bc9e5802f0c0db1`. Preparation and desktop expiry follow-up remains in P09. |
-| P05 | Independent provider reconciliation (A02, A09, B11) | IN PROGRESS | [#231](https://github.com/0xQuerencia/x/pull/231), Local exact OpenCode readback and durable pre-dispatch checkpoint pass. A macOS real-graph fixture timed out. The revised fixture uses the real suite budget. Independent provider turn correlation beyond acknowledged sessions remains open. |
+| P05 | Independent provider reconciliation (A02, A09, B11) | IN PROGRESS | [#231](https://github.com/0xQuerencia/x/pull/231) merged as `41bb9e93fc0275f7070baf52334945b4a15a88d4`. Exact OpenCode readback and durable pre-dispatch checkpoint are available. Independent provider turn correlation beyond acknowledged sessions remains open. |
 | P06 | Reviewed retry/resume and recovery inventory (A09, A10, B11) | IN PROGRESS | [#238](https://github.com/0xQuerencia/x/pull/238) implements exact checkout open and separately reviewed cleanup. [#240](https://github.com/0xQuerencia/x/pull/240) implements reviewed retry of independent saved coding nodes with durable proof of no dispatch. Both passed disposable Git fixtures. Dependency and Roadmap-bound resume remain open. |
-| P07 | Native Work result review (B03, B10, B11) | IN PROGRESS | Local `codex/x-p07-native-work-review` adds native exact-result evidence and reuses the separate fast-forward review. Native visual and installed acceptance pending. |
-| P08 | Native correction review (B14, B10, B11) | NOT STARTED | See the original-ID evidence below. |
+| P07 | Native Work result review (B03, B10, B11) | IN PROGRESS | [#241](https://github.com/0xQuerencia/x/pull/241) adds native exact-result evidence and separate fast-forward review. Exact Git, narrow keyboard, and four light/dark fixture renders passed. Full exact-candidate tests and installed acceptance remain pending. |
+| P08 | Native correction review (B14, B10, B11) | IN PROGRESS | [#242](https://github.com/0xQuerencia/x/pull/242) shows exact failed commits, local diagnostics, correction budget and separately reviewed retests. Native fixture and both renders passed. |
 | P09 | Native queued wait, Stop and renew (A05, C02, C03, C04) | IN PROGRESS | [#235](https://github.com/0xQuerencia/x/pull/235), merge `153397e81f595f26188a640bce8e6cc14f5a343c`. Exact platform CI, native keyboard, stale-state and both goldens passed for the merged slice. [#239](https://github.com/0xQuerencia/x/pull/239) adds preparation and native input-lease expiry fixtures plus refresh for private token-only changes. |
-| P10 | Independent reviewer role and evidence (B05, B01, B04) | NOT STARTED | See the original-ID evidence below. |
-| P11 | Rich run/activity inspector (A06, B10, E10) | NOT STARTED | See the original-ID evidence below. |
+| P10 | Independent reviewer role and evidence (B05, B01, B04) | IN PROGRESS | `codex/x-p10-artifact-review` proves exact separately approved redacted context, tool refusal contract and advisory result with a disposable Git and provider fixture. Claude Code 2.1.328 exposes the required flags. Live remote acceptance remains pending. |
+| P11 | Rich run/activity inspector (A06, B10, E10) | IN PROGRESS | `codex/x-p11-run-activity` adds monotonic elapsed time, graph dependencies and stages and links after durable checkout recording, in both native foreground and background. |
 | P12 | Roadmap-to-code/PR evidence matching (B13, A11) | READY FOR CI | [#232](https://github.com/0xQuerencia/x/pull/232), head `5cbb0b3ab8be523bc8c93ac99dad4bb580901c1d`. Disposable Git and scoped PR fixtures passed. Compile and all previews passed at the previous exact head. Current stacked integration checks are pending. |
 | P13 | Orchestrator reliability acceptance and role expansion decision (A01–A12, B01–B14, C01–C04) | NOT STARTED | See the original-ID evidence below. |
 | P14 | Shared execution and evidence contract (A12, C02, C05, C06, H02) | NOT STARTED | See the original-ID evidence below. |
@@ -148,8 +148,8 @@ establish current native, installed-provider or physical acceptance.
 - P12 local roadmap tests exercised exact source SHA, closed or changed PR
   evidence, duplicate mapping collapse and verified commit ancestry in a
   disposable checkout. Physical and full J01–J24 acceptance remain pending.
-- Additional memory ownership work is in progress in
-  [#233](https://github.com/0xQuerencia/x/pull/233) and [#234](https://github.com/0xQuerencia/x/pull/234).
+- Provider output ownership merged in
+  [#233](https://github.com/0xQuerencia/x/pull/233) as `e266657b1de84812ef4ae736259907b4c8f8e4ee`. Rune ownership is tracked in [#234](https://github.com/0xQuerencia/x/pull/234).
   The provider patch removes reader threads that could outlive a run with
   an inherited pipe. The Rune patch bounds scene label storage, drops stale
   onboarding editor allocations and keeps dynamic status strings out of the
