@@ -89,7 +89,10 @@ A failing graph test can expose its bounded stdout/stderr tail in a local-only, 
 
 At dispatch, X independently rechecks the recorded failing test, worktree identity, clean inputs and immutable commit. The correction writer starts at that exact failed commit and must produce a changed descendant commit before a fresh test node can retest it. No automatic integration, remote push or silent retry is authorized. The failure text remains untrusted and local; only the explicit reviewed goal is sent. A live chain permits at most two correction attempts, one approval per source failure. Restart, a stale source, or the 30-minute review retention limit requires a new independently reviewed task, not replay. The in-memory review holds at most 16 results and is not restored from journal history.
 
-Fixed suites use the existing owned process guard. Linux and macOS retain the project lease until the launched process group is independently observed stopped, and Windows uses a private Job. Each output stream retains at most 8,192 input bytes, and the capture loop closes its pipes on Stop, timeout or read error. Process groups cover members that stay in the owned group. The Git and Cargo fixture exercises real descendant commits, passing retests, failed attempts, stale source and local-only diagnostics. The native correction panel and installed-provider acceptance remain pending.
+Fixed suites use the existing owned process guard. Linux and macOS retain the project lease until the launched process group is independently observed stopped, and Windows uses a private Job. Each output stream retains at most 8,192 input bytes, and the capture loop closes its pipes on Stop, timeout or read error. Process groups cover members that stay in the owned group. The Git and Cargo fixture exercises real descendant commits, passing retests, failed attempts, stale source and local-only diagnostics. In the native Work result, **Review failed test and correction** opens the local
+diagnostic tail and exact failed commit. It shows the remaining attempt, offers an
+explicit correction goal, and sends the resulting writer/retest graph to the
+usual separate approval card. Installed-provider acceptance remains pending.
 
 ## Explicit mixed Actions and Work proposals (C09)
 
@@ -104,6 +107,18 @@ Run `hex agent workflow worktrees` to locate a recorded run UUID and node ID, th
 This explicit local command returns repository text to the operator, not to the Decider or a coding provider; patch contents remain untrusted. It does not authorize tests, correction, integration or cleanup. In native Work, **Review Work results** lists the most recent recorded checkouts. Selecting a result shows the exact run and node, current and recorded commits, test evidence, committed file statuses and a bounded patch. Stale evidence, uncommitted files and truncated output are marked.
 
 **Open checkout** revalidates the exact Git-owned path. **Review fast-forward** is available for a current clean committed result. It opens a separate review of the primary checkout and never applies a merge on selection. The approved merge rechecks the exact reviewed commit and worktree. The Git fixture checks actual commit content and stale-test handling; installed-operator acceptance is still required.
+
+## Tool-free review of a recorded coding artifact
+
+The local `hex agent workflow artifact-review-preview <run>/<node> <commit>`
+command displays a bounded redacted diff excerpt and its review token for
+Claude Code. Review the outgoing content and use
+`hex agent workflow plan-artifact-review <run>/<node> '<commit> <review-token>'`.
+X verifies the registered project and artifact again at dispatch. The ordinary
+Work card asks for separate approval before sending the excerpt. The adapter
+starts with tools disabled and the artifact review never becomes the selected
+continuation session. Provider findings are advisory. Only a separately
+approved fixed suite provides test evidence at its recorded commit.
 
 ## Check delivery for a recorded job (A02/A09/B11)
 

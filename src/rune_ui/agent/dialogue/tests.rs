@@ -346,6 +346,14 @@ fn render_native_permission_wait_light_and_dark() {
 }
 
 fn work_result_runtime(dark: bool, stale: bool, size: (f32, f32)) -> Runtime<Ui> {
+    result_runtime(dark, super::super::results::fixture(stale), size)
+}
+
+fn result_runtime(
+    dark: bool,
+    results: super::super::results::Results,
+    size: (f32, f32),
+) -> Runtime<Ui> {
     fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
         let p = Paint::new(cx.system_dark(), cx.env().scale);
         col()
@@ -357,7 +365,7 @@ fn work_result_runtime(dark: bool, stale: bool, size: (f32, f32)) -> Runtime<Ui>
             .child(super::super::results::panel(p, &ui.agent.results))
     }
     let mut ui = fixture(false);
-    ui.agent.results = super::super::results::fixture(stale);
+    ui.agent.results = results;
     let mut rt = crate::rune_ui::offscreen::runtime(
         ui,
         view,
@@ -490,4 +498,36 @@ fn native_run_activity_keeps_exact_checkout_links_and_scoped_stop() {
 #[ignore = "writes light/dark native run activity renders"]
 fn render_native_run_activity_light_and_dark() {
     render_pair("run-activity", run_activity_runtime);
+}
+
+#[test]
+fn native_correction_review_requires_a_live_budget_and_an_explicit_goal_field() {
+    let mut rt = result_runtime(
+        false,
+        super::super::results::correction_fixture(false),
+        SIZE,
+    );
+    for key in ["work-result-correction-goal", "work-result-plan-correction"] {
+        assert!(
+            rt.elements().iter().any(|el| el.path.contains(key)),
+            "missing {key}"
+        );
+    }
+    rt.update(|ui, _| ui.agent.results = super::super::results::correction_fixture(true));
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.elements()
+            .iter()
+            .all(|el| !el.path.contains("work-result-plan-correction"))
+    );
+}
+
+#[test]
+#[ignore = "writes light/dark native correction review renders"]
+fn render_native_correction_review_light_and_dark() {
+    render_pair("correction-review", |dark| {
+        result_runtime(dark, super::super::results::correction_fixture(false), SIZE)
+    });
 }

@@ -102,6 +102,7 @@ impl State {
             graph_workflow: None,
             active_graph_stops: None,
             graph_activity: None,
+            artifact_review: None,
             pending_tests: None,
             pending_integration: None,
             project_command: None,

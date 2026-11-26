@@ -27,6 +27,16 @@ impl Service {
         run: &str,
         node: &str,
     ) -> Result<crate::worktrees::WorktreeReview, String> {
+        self.read_coding_worktree_review(run, node, true)
+            .map(|(review, _)| review)
+    }
+
+    pub(in crate::service) fn read_coding_worktree_review(
+        &self,
+        run: &str,
+        node: &str,
+        reserve: bool,
+    ) -> Result<(crate::worktrees::WorktreeReview, Project), String> {
         let run = Uuid::parse_str(run)
             .ok()
             .filter(|run| !run.is_nil())
@@ -50,7 +60,9 @@ impl Service {
         }
         let registry = Registry::new(support.to_path_buf(), home.clone());
         let project = registry.validated_resolve(&reservation.project_id().to_string())?;
-        let _lease = self.reserve_worktree_review(project.root.clone())?;
+        let _lease = reserve
+            .then(|| self.reserve_worktree_review(project.root.clone()))
+            .transpose()?;
         if exact_claim()? != claim {
             return Err("The recorded worktree changed; refresh the review".into());
         }
@@ -71,7 +83,7 @@ impl Service {
             .artifact
             .as_ref()
             .map(|proof| proof.commit().to_owned());
-        Ok(review)
+        Ok((review, project))
     }
 
     fn worktree_inventory(&self, run: Option<Uuid>) -> Result<serde_json::Value, String> {

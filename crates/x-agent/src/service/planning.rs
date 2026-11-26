@@ -472,6 +472,9 @@ impl Service {
                     .as_ref()
                     .or(s.workspace.as_ref())
                     .ok_or("Choose a project workspace first")?;
+                if let Some(review) = &options.artifact_review {
+                    review.validate_workspace(ws)?;
+                }
                 if let Some(session) = &options.session
                     && (session.workspace != *ws
                         || session.id.kind() != options.work_harness
@@ -503,7 +506,9 @@ impl Service {
                     ),
                     None => format!("Run {} in {}", options.work_harness.label(), ws.display()),
                 };
-                let access = if options.work_harness == harness::Kind::ClaudeCode
+                let access = if options.artifact_review.is_some() {
+                    "sends the explicitly reviewed diff excerpt to Claude Code with tools disabled"
+                } else if options.work_harness == harness::Kind::ClaudeCode
                     || options.work_access == harness::WorkAccess::SelectionOnly
                 {
                     "tool-free analysis of the supplied prompt; no workspace edits"
@@ -513,7 +518,14 @@ impl Service {
                 let steps = vec![
                     step(&description, access),
                     step("Stream agent activity", ""),
-                    step("Report exit status and changed files", ""),
+                    step(
+                        if options.artifact_review.is_some() {
+                            "Report advisory findings without changing verification"
+                        } else {
+                            "Report exit status and changed files"
+                        },
+                        "",
+                    ),
                 ];
                 (steps, vec![], Some(ws.display().to_string()))
             }
@@ -541,6 +553,7 @@ impl Service {
         s.create_workspace = options.new_workspace.is_some();
         s.grants = options.allow_command.into_iter().collect();
         s.guard = options.guard;
+        s.artifact_review = options.artifact_review;
         s.edit = None;
         s.computer_dialogue = None;
         s.window_dialogue = window_dialogue;

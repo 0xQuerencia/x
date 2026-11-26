@@ -21,10 +21,13 @@ use crate::projects::Registry;
 use crate::session_links::{Link as SessionLink, Store as SessionStore};
 use crate::tools::{self, Action, Risk};
 
+mod artifact_review;
 pub mod composer;
 mod computer_dialogue;
+pub use artifact_review::ArtifactReviewPreview;
 mod coordinator;
 mod corrections;
+pub use corrections::CorrectionReview;
 mod desktop_lease;
 mod edit;
 mod effects;
@@ -284,6 +287,7 @@ struct State {
     graph_workflow: Option<harness_workflow::PendingGraph>,
     active_graph_stops: Option<crate::workflows::scheduler::JobStops>,
     graph_activity: Option<graph_activity::GraphActivity>,
+    artifact_review: Option<artifact_review::Binding>,
     pending_tests: Option<test_worktree::PendingTests>,
     pending_integration: Option<integration::PendingIntegration>,
     project_command: Option<project_commands::Pending>,
@@ -295,6 +299,7 @@ struct State {
 #[derive(Default)]
 struct PlanOptions {
     composer_selection: Option<composer::Selection>,
+    artifact_review: Option<artifact_review::Binding>,
     origin: Origin,
     source: InputSource,
     guard: Option<Guard>,
@@ -394,6 +399,7 @@ impl Service {
             graph_workflow: None,
             active_graph_stops: None,
             graph_activity: None,
+            artifact_review: None,
             pending_tests: None,
             pending_integration: None,
             project_command: None,

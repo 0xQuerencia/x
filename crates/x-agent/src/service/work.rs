@@ -3,7 +3,12 @@
 use super::*;
 
 impl Service {
-    pub(super) fn run_work(&self, task: &Task, stop: &Cancellation) {
+    pub(super) fn run_work(
+        &self,
+        task: &Task,
+        stop: &Cancellation,
+        artifact_review: Option<artifact_review::Binding>,
+    ) {
         let kind = task.work_harness.unwrap_or_default();
         let (Some(adapter), Some(ws)) = (self.work_adapter(kind), task.workspace.clone()) else {
             return self.finish(
@@ -119,9 +124,32 @@ impl Service {
             }
             emit(&mut state, event.kind.as_str(), &event.text);
         });
+        let prompt = match &artifact_review {
+            Some(review) => {
+                let checked = review
+                    .validate_workspace(&ws)
+                    .and_then(|()| review.approved_prompt(self));
+                if stop.requested() {
+                    return self.finish(
+                        Phase::Cancelled,
+                        None,
+                        Some("Stopped before review delivery".into()),
+                        None,
+                    );
+                }
+                match checked {
+                    Ok(prompt) => prompt,
+                    Err(error) => {
+                        self.set_step(0, "failed");
+                        return self.finish(Phase::Failed, Some(error), None, None);
+                    }
+                }
+            }
+            None => task.text.clone(),
+        };
         let request = harness::Request {
             workspace: ws.clone(),
-            prompt: task.text.clone(),
+            prompt,
             session: task.session.as_ref().map(|session| session.id.clone()),
             access: task.work_access,
             allow_commands: std::mem::take(&mut self.lock().grants),
@@ -142,7 +170,9 @@ impl Service {
             }
         };
         let res = run.join();
-        if let Some(id) = res.accepted_session.as_ref().filter(|id| id.kind() == kind) {
+        if artifact_review.is_none()
+            && let Some(id) = res.accepted_session.as_ref().filter(|id| id.kind() == kind)
+        {
             self.record_provider_session(&harness::Session {
                 id: id.clone(),
                 title: String::new(),
@@ -150,7 +180,8 @@ impl Service {
                 updated_at: now(),
             });
         }
-        if kind == harness::Kind::ClaudeCode
+        if artifact_review.is_none()
+            && kind == harness::Kind::ClaudeCode
             && res.status == RunStatus::Completed
             && !stop.requested()
             && let Some(id) = res.accepted_session.as_ref().filter(|id| id.kind() == kind)
@@ -163,9 +194,30 @@ impl Service {
             });
         }
 
+        if artifact_review.is_some()
+            && res
+                .changed_files
+                .as_ref()
+                .is_some_and(|files| !files.is_empty())
+        {
+            self.set_step(2, "failed");
+            return self.finish(
+                Phase::Failed,
+                Some("The review workspace changed unexpectedly".into()),
+                None,
+                None,
+            );
+        }
         let ok = res.status == RunStatus::Completed;
         self.set_step(1, if ok { "done" } else { "failed" });
         self.set_step(2, if ok { "done" } else { "failed" });
+        if artifact_review.is_some() && res.status == RunStatus::Completed && !stop.requested() {
+            return self.finish(
+                Phase::Completed, None,
+                Some("Provider review finished. Findings are advisory and do not constitute test or commit evidence.".into()),
+                None,
+            );
+        }
         let closure = res.termination.map(|evidence| evidence.summary());
         match res.status {
             RunStatus::Cancelled => self.finish(
