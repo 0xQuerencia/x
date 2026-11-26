@@ -24,6 +24,7 @@ use super::{AuditKind, Cancellation, Phase, Review, Service, Task, audit_best_ef
 mod inventory;
 mod mixed;
 mod reconcile;
+mod recover;
 mod renewal;
 pub use renewal::PermissionWait;
 pub(super) use renewal::permission_waits;
