@@ -1059,8 +1059,9 @@ or `files` for another supported app. Unlike browsers, VS Code and file
 managers cannot use browser-navigation shortcuts and their UI automation
 is limited to allowed controls and literal text. Terminal access is not
 offered to the computer-use planner. `hex agent computer remote off`
-retracts remote accessibility permission; revoking a particular app's
-grant also stops future planning for that app.
+retracts remote accessibility permission. Revoking an app grant stops the
+current task if it has a pending or active Computer step for that app.
+A new task for the app needs its own explicit approval.
 
 **Limits:** X currently operates one explicitly granted app per task; it
 cannot coordinate across several apps in the same computer loop, synthesize

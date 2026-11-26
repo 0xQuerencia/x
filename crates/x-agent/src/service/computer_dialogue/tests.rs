@@ -368,6 +368,83 @@ fn revoked_remote_consent_or_changed_model_prevents_any_resumed_observation() {
 }
 
 #[test]
+fn revoking_an_app_grant_discards_its_question_and_exact_approval() {
+    let (service, screen, _, _) = rig(false, vec![ComputerStep::Ask("Which result?".into())]);
+    service.set_computer_apps(vec!["chrome".into(), "firefox".into()]);
+    let task = plan(&service, vec![computer_action()]);
+    approve(&service, task.id);
+    let question = paused(&service);
+    service
+        .answer_computer(task.id, &question.question_id, "blue")
+        .unwrap();
+    service.set_computer_apps(vec!["chrome".into()]);
+    assert_eq!(service.snapshot(0).phase, Phase::AwaitingApproval);
+    service.set_computer_apps(vec![]);
+    let cancelled = service.snapshot(0);
+    assert_eq!(cancelled.phase, Phase::Cancelled);
+    assert!(cancelled.computer_question.is_none());
+    service.set_computer_apps(vec!["chrome".into()]);
+    assert!(
+        service
+            .approve_computer_answer(task.id, &question.question_id)
+            .is_err()
+    );
+    assert_eq!(screen.observations.load(Ordering::SeqCst), 1);
+    assert_eq!(screen.clicks.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn revoking_an_app_grant_ignores_a_model_decision_already_in_flight() {
+    use std::sync::mpsc::{Receiver, Sender, channel};
+
+    struct BlockingDecision {
+        arrived: Sender<()>,
+        release: Mutex<Receiver<()>>,
+    }
+
+    impl Planner for BlockingDecision {
+        fn name(&self) -> String {
+            "blocking fixture".into()
+        }
+
+        fn decide_computer(
+            &self,
+            _: &str,
+            _: &str,
+            _: &Observation,
+            _: &[String],
+            _: bool,
+        ) -> Option<Result<ComputerStep, String>> {
+            self.arrived.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            Some(Ok(ComputerStep::Click("e1".into())))
+        }
+    }
+
+    let (service, screen, _, _) = rig(false, vec![]);
+    let (arrived, started) = channel();
+    let (release, wait_for_release) = channel();
+    service.set_planner(Some(Arc::new(BlockingDecision {
+        arrived,
+        release: Mutex::new(wait_for_release),
+    })));
+    service.set_computer_apps(vec!["chrome".into()]);
+    let task = plan(&service, vec![computer_action()]);
+    approve(&service, task.id);
+    started.recv_timeout(Duration::from_secs(5)).unwrap();
+    service.set_computer_apps(vec![]);
+    release.send(()).unwrap();
+    let cancelled = wait(&service, Phase::Cancelled);
+    assert_eq!(cancelled.task.unwrap().id, task.id);
+    assert_eq!(screen.observations.load(Ordering::SeqCst), 1);
+    assert_eq!(screen.clicks.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn repeated_questions_get_new_tokens_and_do_not_accept_old_answers() {
     let (service, _, _, _) = rig(
         true,
