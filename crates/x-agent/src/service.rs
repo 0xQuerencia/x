@@ -27,6 +27,7 @@ mod computer_dialogue;
 pub use artifact_review::ArtifactReviewPreview;
 mod coordinator;
 mod corrections;
+pub use corrections::CorrectionReview;
 mod desktop_lease;
 mod edit;
 mod effects;
