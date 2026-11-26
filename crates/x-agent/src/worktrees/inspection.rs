@@ -39,6 +39,10 @@ impl Reservation {
         self.project_id
     }
 
+    pub(crate) fn approved_base(&self) -> &str {
+        &self.approved_base
+    }
+
     pub fn resolved_commit(&self) -> Option<&str> {
         self.resolved_commit.as_deref()
     }
@@ -164,6 +168,12 @@ impl Manager {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct ChangedFile {
+    pub status: char,
+    pub path: String,
+}
+
 /// Local read-only review of the exact recorded checkout. The patch covers
 /// committed changes only; uncommitted inputs are explicitly distinguished.
 #[derive(Debug, Serialize)]
@@ -171,11 +181,15 @@ pub struct WorktreeReview {
     pub path: PathBuf,
     pub base_commit: String,
     pub current_commit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded_artifact: Option<String>,
     pub clean_inputs: bool,
     pub tracked_changes: bool,
     pub untracked_files: bool,
     /// None means the bounded committed file metadata was incomplete.
     pub binary_changes: Option<bool>,
+    pub files: Vec<ChangedFile>,
+    pub files_truncated: bool,
     pub committed_diff: String,
     pub diff_truncated: bool,
     pub test_evidence: Option<crate::verification::test_runner::TestEvidence>,
@@ -225,6 +239,14 @@ impl Manager {
         } else {
             (!files_truncated).then_some(false)
         };
+        let (names, names_truncated) = review_diff(
+            &path,
+            &reservation.approved_base,
+            &head,
+            "--name-status",
+            MAX_DIFF_BYTES,
+        )?;
+        let (files, files_truncated) = file_changes(&names, names_truncated);
         let after = review_status(&path)?;
         let Inspection::Owned {
             path: observed,
@@ -252,10 +274,13 @@ impl Manager {
                 clean_inputs && test.valid() && test.passed.is_some() && test.commit == head
             }),
             current_commit: head,
+            recorded_artifact: None,
             clean_inputs,
             tracked_changes,
             untracked_files,
             binary_changes,
+            files,
+            files_truncated,
             committed_diff: patch_text(&diff, diff_truncated),
             diff_truncated,
             test_evidence: test.cloned(),
@@ -286,7 +311,7 @@ fn review_diff(
     selection: &str,
     cap: usize,
 ) -> Result<(Vec<u8>, bool), String> {
-    let args = [
+    let mut args = vec![
         "diff",
         selection,
         "--no-ext-diff",
@@ -294,11 +319,41 @@ fn review_diff(
         "--no-color",
         "--no-renames",
         "--submodule=short",
-        base,
-        head,
-        "--",
     ];
+    if selection == "--name-status" {
+        args.push("-z");
+    }
+    args.extend([base, head, "--"]);
     crate::desktop::capture_prefix(&mut git_command(path, &args), TIMEOUT, cap)
+}
+
+fn file_changes(bytes: &[u8], truncated: bool) -> (Vec<ChangedFile>, bool) {
+    let mut fields = bytes.split_inclusive(|byte| *byte == 0);
+    let mut changes = Vec::new();
+    while let Some(status) = fields.next() {
+        let Some(path) = fields.next().and_then(|path| path.strip_suffix(&[0])) else {
+            return (changes, true);
+        };
+        let [status, 0] = status else {
+            return (changes, true);
+        };
+        if changes.len() == 128 {
+            return (changes, true);
+        }
+        let mut label = String::new();
+        for character in String::from_utf8_lossy(path).chars() {
+            if character.is_control() {
+                label.extend(character.escape_default());
+            } else {
+                label.push(character);
+            }
+        }
+        changes.push(ChangedFile {
+            status: char::from(*status),
+            path: label,
+        });
+    }
+    (changes, truncated)
 }
 
 fn patch_text(bytes: &[u8], truncated: bool) -> String {

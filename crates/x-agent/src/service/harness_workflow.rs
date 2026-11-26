@@ -25,6 +25,7 @@ mod inventory;
 mod mixed;
 mod reconcile;
 mod recover;
+pub use recover::CodingReviewEntry;
 mod renewal;
 pub use renewal::PermissionWait;
 pub(super) use renewal::permission_waits;

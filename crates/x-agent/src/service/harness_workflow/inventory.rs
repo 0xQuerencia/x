@@ -55,7 +55,7 @@ impl Service {
             return Err("The recorded worktree changed; refresh the review".into());
         }
         let manager = Manager::new(home.join(WORKTREE_FOLDER), home);
-        let review = manager.review_reserved(
+        let mut review = manager.review_reserved(
             &project,
             run,
             node,
@@ -67,6 +67,10 @@ impl Service {
         {
             return Err("The recorded worktree changed; refresh the review".into());
         }
+        review.recorded_artifact = claim
+            .artifact
+            .as_ref()
+            .map(|proof| proof.commit().to_owned());
         Ok(review)
     }
 

@@ -4,7 +4,71 @@ use super::*;
 use crate::workflows::{recovery::Dispatch, roadmap::digest};
 use crate::worktrees::Inspection;
 
+#[derive(Debug)]
+pub struct CodingReviewEntry {
+    pub run_id: String,
+    pub node_id: String,
+    pub state: State,
+}
+
 impl Service {
+    pub fn recent_coding_reviews(&self) -> Result<Vec<CodingReviewEntry>, String> {
+        let (dir, _) = self
+            .workflow_dirs
+            .lock()
+            .map_err(|_| "Workflow storage is unavailable")?
+            .clone()
+            .ok_or("Workflow storage is not configured")?;
+        let support = dir.parent().ok_or("Local data directory unavailable")?;
+        let claims = Journal::new(support.join("workflow-journal")).snapshot()?;
+        Ok(claims
+            .into_iter()
+            .rev()
+            .filter(|claim| claim.worktree.is_some())
+            .take(24)
+            .map(|claim| CodingReviewEntry {
+                run_id: claim.run_id.to_string(),
+                node_id: claim.node_id,
+                state: claim.state,
+            })
+            .collect())
+    }
+
+    pub fn plan_coding_result_integration(
+        &self,
+        run: &str,
+        node: &str,
+        reviewed_head: &str,
+    ) -> Result<Task, String> {
+        self.with_recovery_checkout(run, node, |_, project, claim, inspection| {
+            let Inspection::Owned { current_commit, .. } = inspection else {
+                return Err("The checkout is missing or changed since Work review".into());
+            };
+            if claim.state != State::Verified
+                || current_commit != reviewed_head
+                || claim
+                    .artifact
+                    .as_ref()
+                    .is_none_or(|proof| proof.commit() != reviewed_head)
+                || claim.test_evidence.as_ref().is_some_and(|evidence| {
+                    evidence.passed != Some(true) || evidence.commit != reviewed_head
+                })
+            {
+                return Err(
+                    "A current clean checkout with exact committed evidence is required".into(),
+                );
+            }
+            let reservation = claim.worktree.as_ref().ok_or("No recorded checkout")?;
+            self.plan_fast_forward_with_head(
+                &project.id.to_string(),
+                run,
+                node,
+                reservation.approved_base(),
+                Some(reviewed_head),
+            )
+        })
+    }
+
     pub fn open_coding_worktree(&self, run: &str, node: &str) -> Result<(), String> {
         self.with_desktop_control(|| {
             self.with_recovery_checkout(run, node, |_, _, _, inspection| match inspection {

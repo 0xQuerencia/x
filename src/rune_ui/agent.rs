@@ -6,6 +6,7 @@ mod composer;
 mod dialogue;
 mod edit;
 mod quick;
+mod results;
 mod runs;
 mod workflows;
 
@@ -48,6 +49,7 @@ pub(super) struct AgentPane {
     test_project: TextEdit,
     test_suite_index: usize,
     recovery_summary: Option<String>,
+    results: results::Results,
     mode: Mode,
     snapshot: Option<Snapshot>,
     /// Serialized form of the last snapshot, so polling redraws only on change.
@@ -84,6 +86,7 @@ impl Default for AgentPane {
             test_project: TextEdit::default(),
             test_suite_index: 0,
             recovery_summary: None,
+            results: Default::default(),
             mode: Mode::Actions,
             snapshot: None,
             shown: String::new(),
@@ -110,6 +113,7 @@ impl AgentPane {
         let snapshot = agent_host::service().snapshot(0);
         let composed = self.composer.poll(&snapshot);
         let answered = self.dialogue.poll(&snapshot);
+        let reviewed = self.results.poll();
         let serialized = serde_json::to_string(&snapshot).unwrap_or_default();
         let listed = (self.show_workflows || self.show_quick) && self.workflows.refresh();
         let can_undo = snapshot.phase == Phase::Completed
@@ -117,7 +121,7 @@ impl AgentPane {
         let undo_changed = can_undo != self.undo_visible;
         self.undo_visible = can_undo;
         if serialized == self.shown {
-            return listed || undo_changed || composed || answered;
+            return listed || undo_changed || composed || answered || reviewed;
         }
         if self.workspace.text.is_empty()
             && let Some(path) = &snapshot.workspace
@@ -486,6 +490,7 @@ pub(super) fn pane(ui: &Ui, p: Paint) -> (Vec<El>, El) {
         body = body.child(browser_page_handoff_row(p, pane, busy));
         body = body.child(project_tests_row(p, pane, busy));
         body = body.child(recovery_review_row(p, pane));
+        body = body.child(results::panel(p, &pane.results));
     }
     if snapshot.task.is_none() {
         body = body.child(message(

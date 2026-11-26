@@ -30,6 +30,7 @@ mod edit;
 mod effects;
 mod execution;
 mod harness_workflow;
+pub use harness_workflow::CodingReviewEntry;
 mod integration;
 mod launch;
 mod ledger;

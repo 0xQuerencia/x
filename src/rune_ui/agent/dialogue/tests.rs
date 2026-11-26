@@ -344,3 +344,66 @@ fn exact_permission_renewal_is_reachable_by_keyboard_and_stale_reviews_have_no_b
 fn render_native_permission_wait_light_and_dark() {
     render_pair("permission-wait", permission_runtime);
 }
+
+fn work_result_runtime(dark: bool, stale: bool, size: (f32, f32)) -> Runtime<Ui> {
+    fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
+        let p = Paint::new(cx.system_dark(), cx.env().scale);
+        col()
+            .key("root")
+            .w_full()
+            .h_full()
+            .padding(24.0)
+            .fill(p.k.c.bg_base)
+            .child(super::super::results::panel(p, &ui.agent.results))
+    }
+    let mut ui = fixture(false);
+    ui.agent.results = super::super::results::fixture(stale);
+    let mut rt = crate::rune_ui::offscreen::runtime(
+        ui,
+        view,
+        size,
+        Env::new(dark, 1.0),
+        TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES),
+    );
+    rt.frame(0.0);
+    rt
+}
+
+#[test]
+fn native_work_result_reviews_exact_artifacts_with_narrow_keyboard_controls() {
+    let mut rt = work_result_runtime(false, false, (410.0, 700.0));
+    let reached = (0..12).any(|_| {
+        rt.key(KeyEvent {
+            key: Key::Tab,
+            mods: Mods::default(),
+        });
+        rt.frame(0.0);
+        rt.elements()
+            .iter()
+            .any(|el| el.focused && el.path.contains("work-result-integrate"))
+    });
+    assert!(reached);
+    rt.update(|ui, _| ui.agent.results = super::super::results::fixture(true));
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.elements()
+            .iter()
+            .all(|el| !el.path.contains("work-result-integrate"))
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains("work-result-open"))
+    );
+}
+
+#[test]
+#[ignore = "writes light/dark native Work result renders for visual inspection"]
+fn render_native_work_results_light_and_dark() {
+    render_pair("work-result", |dark| work_result_runtime(dark, false, SIZE));
+    render_pair("work-result-stale", |dark| {
+        work_result_runtime(dark, true, SIZE)
+    });
+}
