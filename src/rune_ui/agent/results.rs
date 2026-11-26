@@ -129,6 +129,8 @@ pub(super) fn panel(p: Paint, results: &Results) -> El {
                 results.entries.clear();
                 results.selected = None;
                 results.review = None;
+                results.correction = None;
+                results.goal = TextEdit::default();
                 results.note = None;
             }
         },
