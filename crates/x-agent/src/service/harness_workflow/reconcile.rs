@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::harness::{Kind, SessionId};
+use crate::workflows::recovery::Dispatch;
 use crate::worktrees::Inspection;
 
 impl Service {
@@ -48,9 +49,13 @@ impl Service {
             .map(SessionId::try_from)
             .transpose()?;
         let (delivery, provider_record) = match (&session, inspection) {
-            (None, _) if reservation.resolved_commit().is_none() && claim.attempt == 1 => {
-                // The first checkout is durably recorded before the executor can
-                // activate authority or dispatch a provider request.
+            (None, _)
+                if claim.dispatch == Some(Dispatch::Pending)
+                    || (claim.dispatch.is_none()
+                        && reservation.resolved_commit().is_none()
+                        && claim.attempt == 1) =>
+            {
+                // Older attempts only prove the boundary before preparation.
                 ("not_dispatched", "not_applicable")
             }
             (None, _) => ("uncertain", "no_exact_session"),

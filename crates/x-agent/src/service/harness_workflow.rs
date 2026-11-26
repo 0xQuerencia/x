@@ -616,6 +616,7 @@ mod reconciliation_tests {
                 artifact: None,
                 test_evidence: None,
                 worktree: None,
+                dispatch: None,
                 desktop: None,
             },
             Claim {
@@ -628,6 +629,7 @@ mod reconciliation_tests {
                 artifact: None,
                 test_evidence: None,
                 worktree: None,
+                dispatch: None,
                 desktop: None,
             },
         ];
@@ -659,6 +661,7 @@ mod reconciliation_tests {
                 artifact: None,
                 test_evidence: None,
                 worktree: None,
+                dispatch: None,
                 desktop: None,
             },
             Claim {
@@ -671,6 +674,7 @@ mod reconciliation_tests {
                 artifact: None,
                 test_evidence: None,
                 worktree: None,
+                dispatch: None,
                 desktop: None,
             },
         ];

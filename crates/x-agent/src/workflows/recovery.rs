@@ -31,6 +31,13 @@ pub enum State {
     Cancelled,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Dispatch {
+    Pending,
+    MayHaveStarted,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Claim {
     pub run_id: Uuid,
@@ -48,6 +55,8 @@ pub struct Claim {
     /// Durable preparation intent; historical data never restores run authority.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<Reservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) dispatch: Option<Dispatch>,
     /// Desktop execution is recorded independently of provider delivery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub desktop: Option<DesktopClaim>,
@@ -173,6 +182,7 @@ impl Journal {
                 evidence_id: None,
                 artifact: None,
                 test_evidence: None,
+                dispatch: worktree.as_ref().map(|_| Dispatch::Pending),
                 worktree,
                 desktop: desktop.then_some(DesktopClaim { outcome: None }),
             };
@@ -227,6 +237,25 @@ impl Journal {
                 .ok_or("This job has no preparation reservation")?;
             let changed = reservation.record_checkout(checkout)?;
             Ok(((), changed))
+        })
+    }
+
+    /// Persist the last locally provable no-dispatch boundary before any
+    /// external process can start. Old journal entries lack this evidence.
+    pub(super) fn mark_dispatch(&self, attempt: &Claim) -> Result<(), String> {
+        self.update(|data| {
+            let claim = active_attempt(data, attempt)?;
+            if claim.dispatch != Some(Dispatch::Pending)
+                || claim
+                    .worktree
+                    .as_ref()
+                    .and_then(Reservation::resolved_commit)
+                    .is_none()
+            {
+                return Err("This job has no prepared, undispatched claim".into());
+            }
+            claim.dispatch = Some(Dispatch::MayHaveStarted);
+            Ok(((), true))
         })
     }
 
@@ -382,6 +411,7 @@ impl Journal {
             claim.test_evidence = None;
             if let Some(reservation) = &mut claim.worktree {
                 reservation.reset_preparation();
+                claim.dispatch = Some(Dispatch::Pending);
             }
             Ok((claim.clone(), true))
         })
@@ -471,6 +501,17 @@ impl Journal {
                         .worktree
                         .as_ref()
                         .is_some_and(|worktree| !worktree.valid())
+                    || (claim.dispatch.is_some() && claim.worktree.is_none())
+                    || (claim.dispatch == Some(Dispatch::MayHaveStarted)
+                        && claim
+                            .worktree
+                            .as_ref()
+                            .and_then(Reservation::resolved_commit)
+                            .is_none())
+                    || (claim.dispatch == Some(Dispatch::Pending)
+                        && (claim.evidence_id.is_some()
+                            || claim.artifact.is_some()
+                            || claim.test_evidence.is_some()))
                     || claim.desktop.as_ref().is_some_and(|desktop| {
                         claim.worktree.is_some()
                             || claim.evidence_id.is_some()
